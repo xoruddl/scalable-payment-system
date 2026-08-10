@@ -1,0 +1,6 @@
+spring:
+  application:
+    name: transfer-service
+
+server:
+  port: 8082

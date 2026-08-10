@@ -1,0 +1,8 @@
+plugins {
+	id 'org.springframework.boot'
+}
+
+dependencies {
+	// Phase 4에서 Spring Cloud Config Server 의존성 및 Git 백엔드 설정 추가 예정
+	implementation 'org.springframework.boot:spring-boot-starter'
+}

@@ -35,3 +35,16 @@ out/
 
 ### VS Code ###
 .vscode/
+
+### OS ###
+.DS_Store
+Thumbs.db
+
+### Logs & env ###
+*.log
+.env
+.env.*
+
+### Docker / K8s local artifacts ###
+*.local.yaml
+*.local.yml

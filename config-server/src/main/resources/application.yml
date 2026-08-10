@@ -1,0 +1,8 @@
+spring:
+  application:
+    name: config-server
+
+server:
+  port: 8888
+
+# Phase 4에서 @EnableConfigServer 및 Git 기반 config repo 연동 설정 추가 예정

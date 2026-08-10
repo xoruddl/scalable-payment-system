@@ -14,10 +14,10 @@
 ---
 
 ## Phase 0. 프로젝트 기반 설정
-- [ ] git 저장소 초기화, `.gitignore` 정리
-- [ ] Gradle 멀티모듈 구조로 전환 (`account-service`, `transfer-service`, `ledger-service`, `gateway`, `config-server` 등)
-- [ ] 도메인 모델 설계: 계좌(Account), 거래(Transaction), 원장(Ledger), 멱등성 키(IdempotencyKey)
-- [ ] API 설계 문서 작성 (계좌 생성/조회, 송금 요청/조회, 거래 내역 조회)
+- [x] git 저장소 초기화, `.gitignore` 정리
+- [x] Gradle 멀티모듈 구조로 전환 (`account-service`, `transfer-service`, `ledger-service`, `gateway`, `config-server` 등)
+- [x] 도메인 모델 설계: 계좌(Account), 거래(Transaction), 원장(Ledger), 멱등성 키(IdempotencyKey)
+- [x] API 설계 문서 작성 (계좌 생성/조회, 송금 요청/조회, 거래 내역 조회)
 
 ## Phase 1. 핵심 도메인 서비스 구현
 - [ ] **Account Service**: 계좌 생성/조회, 잔액 관리 (Spring MVC + JPA/Hibernate + MySQL)

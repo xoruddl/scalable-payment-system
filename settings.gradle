@@ -1,1 +1,7 @@
-rootProject.name = 'work'
+rootProject.name = 'remittance-system'
+
+include 'account-service'
+include 'transfer-service'
+include 'ledger-service'
+include 'gateway'
+include 'config-server'
