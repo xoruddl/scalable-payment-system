@@ -1,0 +1,32 @@
+# Phase 1 로컬 개발용 DB만 띄우는 compose 파일.
+# 전체 서비스 + Kafka 등을 포함하는 정식 docker-compose.yml은 Phase 6에서 별도로 구성한다.
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: remittance-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+    ports:
+      - "3306:3306"
+    volumes:
+      - remittance-mysql-data:/var/lib/mysql
+      - ./docker/mysql-init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-proot"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  mongo:
+    image: mongo:7
+    container_name: remittance-mongo
+    environment:
+      MONGO_INITDB_DATABASE: ledger_db
+    ports:
+      - "27017:27017"
+    volumes:
+      - remittance-mongo-data:/data/db
+
+volumes:
+  remittance-mysql-data:
+  remittance-mongo-data:

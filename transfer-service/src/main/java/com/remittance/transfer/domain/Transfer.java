@@ -67,4 +67,27 @@ public class Transfer {
 		this.status = TransferStatus.PENDING;
 		this.requestedAt = Instant.now();
 	}
+
+	public void markDebitCompleted() {
+		this.status = TransferStatus.DEBIT_COMPLETED;
+	}
+
+	public void markCreditCompleted() {
+		this.status = TransferStatus.CREDIT_COMPLETED;
+	}
+
+	public void markCompensating() {
+		this.status = TransferStatus.COMPENSATING;
+	}
+
+	public void markCompleted() {
+		this.status = TransferStatus.COMPLETED;
+		this.completedAt = Instant.now();
+	}
+
+	public void markFailed(String reason) {
+		this.status = TransferStatus.FAILED;
+		this.failureReason = reason;
+		this.completedAt = Instant.now();
+	}
 }

@@ -1,0 +1,11 @@
+spring:
+  application:
+    name: account-service
+  datasource:
+    url: jdbc:h2:mem:account_db;MODE=MySQL
+    username: sa
+    password: ""
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    open-in-view: false

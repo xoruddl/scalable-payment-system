@@ -1,5 +1,8 @@
 package com.remittance.account.domain;
 
+import com.remittance.account.exception.AccountNotActiveException;
+import com.remittance.account.exception.CurrencyMismatchException;
+import com.remittance.account.exception.InsufficientBalanceException;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -67,5 +70,39 @@ public class Account {
 		this.status = AccountStatus.ACTIVE;
 		this.createdAt = Instant.now();
 		this.updatedAt = Instant.now();
+	}
+
+	public void debit(BigDecimal amount, String currency) {
+		validateActiveAndCurrency(currency);
+		if (this.balance.compareTo(amount) < 0) {
+			throw new InsufficientBalanceException(this.accountId);
+		}
+		this.balance = this.balance.subtract(amount);
+		this.updatedAt = Instant.now();
+	}
+
+	public void credit(BigDecimal amount, String currency) {
+		validateActiveAndCurrency(currency);
+		this.balance = this.balance.add(amount);
+		this.updatedAt = Instant.now();
+	}
+
+	public void freeze() {
+		this.status = AccountStatus.FROZEN;
+		this.updatedAt = Instant.now();
+	}
+
+	public void close() {
+		this.status = AccountStatus.CLOSED;
+		this.updatedAt = Instant.now();
+	}
+
+	private void validateActiveAndCurrency(String currency) {
+		if (this.status != AccountStatus.ACTIVE) {
+			throw new AccountNotActiveException(this.accountId, this.status);
+		}
+		if (!this.currency.equals(currency)) {
+			throw new CurrencyMismatchException(this.accountId, this.currency, currency);
+		}
 	}
 }

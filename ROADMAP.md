@@ -20,10 +20,10 @@
 - [x] API 설계 문서 작성 (계좌 생성/조회, 송금 요청/조회, 거래 내역 조회)
 
 ## Phase 1. 핵심 도메인 서비스 구현
-- [ ] **Account Service**: 계좌 생성/조회, 잔액 관리 (Spring MVC + JPA/Hibernate + MySQL)
-- [ ] **Transfer Service**: 송금 요청 처리, 상태 관리 (요청 → 처리중 → 완료/실패)
-- [ ] **Ledger Service**: 거래 내역 저장/조회 (Spring WebFlux + MongoDB, 조회 트래픽 대응 목적)
-- [ ] 낙관적 락(`@Version`)으로 동시 잔액 갱신 충돌 처리
+- [x] **Account Service**: 계좌 생성/조회, 잔액 관리 (Spring MVC + JPA/Hibernate + MySQL)
+- [x] **Transfer Service**: 송금 요청 처리, 상태 관리 (요청 → 처리중 → 완료/실패)
+- [x] **Ledger Service**: 거래 내역 저장/조회 (Spring WebFlux + MongoDB, 조회 트래픽 대응 목적)
+- [x] 낙관적 락(`@Version`)으로 동시 잔액 갱신 충돌 처리
 
 ## Phase 2. 분산 환경 데이터 정합성
 - [ ] 멱등성 처리: 송금 요청에 idempotency key 적용 (중복 요청 방지)

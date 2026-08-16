@@ -1,0 +1,17 @@
+spring:
+  application:
+    name: transfer-service
+  datasource:
+    url: jdbc:h2:mem:transfer_db;MODE=MySQL
+    username: sa
+    password: ""
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    open-in-view: false
+
+services:
+  account:
+    base-url: http://localhost:18081
+  ledger:
+    base-url: http://localhost:18083

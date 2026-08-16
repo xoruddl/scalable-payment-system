@@ -5,6 +5,7 @@ import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import org.springframework.data.annotation.Id;
+import org.springframework.data.mongodb.core.index.CompoundIndex;
 import org.springframework.data.mongodb.core.index.Indexed;
 import org.springframework.data.mongodb.core.mapping.Document;
 
@@ -17,6 +18,7 @@ import java.util.UUID;
  * 두 건의 Transaction으로 원장에 남는다.
  */
 @Document(collection = "transactions")
+@CompoundIndex(name = "accountId_recordedAt", def = "{'accountId': 1, 'recordedAt': -1}")
 @Getter
 @Builder
 @NoArgsConstructor

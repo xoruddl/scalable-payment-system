@@ -2,9 +2,5 @@ spring:
   application:
     name: ledger-service
   mongodb:
-    uri: mongodb://localhost:27017/ledger_db
     representation:
       uuid: standard
-
-server:
-  port: 8083
