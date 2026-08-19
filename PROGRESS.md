@@ -117,7 +117,7 @@ Phase 1은 "일단 동작하게" 만드는 단계라, 아래는 **알면서 순�
 | 1 | 멱등성 처리 | ✅ `2172086` |
 | 2 | Redis 분산 락 | ✅ `39d12f0` |
 | 3 | Outbox 패턴 + Kafka 인프라 | ✅ `419bb88` |
-| — | (곁가지) 기술 스택 정비 — Java 21, Actuator, CI | ✅ |
+| — | (곁가지) 기술 스택 정비 — Java 21, Actuator, CI | ✅ `e97e67d` |
 | 4 | Choreography Saga 전환 | ⬜ 다음 |
 | 5 | 정합성 대사 배치 | ⬜ |
 
@@ -347,6 +347,10 @@ Step 4로 넘어가기 전에 잠시 멈추고, 참고 삼아 보던 f-lab-edu/l
 | **micrometer-registry-prometheus** | 이게 없으면 `/actuator/prometheus` 엔드포인트가 아예 생기지 않습니다 |
 | **GitHub Actions 빌드 워크플로** | 멀티모듈이라 로컬에서 한 모듈만 돌리다 다른 모듈이 깨진 걸 놓치기 쉽습니다 |
 
+CI는 두 개의 job으로 나눴습니다. `build`(전체 빌드·테스트)와 `lint-workflows`(워크플로 파일 자체 검사).
+후자는 actionlint 공식 이미지를 직접 씁니다 — 래퍼 액션을 거치지 않아 의존성이 하나 줄어듭니다.
+워크플로 오타를 푸시하고 나서야 발견하는 일을 막아줍니다.
+
 의도적으로 **안 맞춘 것**: Spring Security/JWT, springdoc(Swagger).
 이 프로젝트의 목적은 분산 시스템 패턴 검증이라 인증·API 문서는 곁가지입니다.
 인증은 Phase 4에서 Gateway 필터로 한 번에 다루는 편이 낫습니다.
@@ -377,6 +381,8 @@ CI를 붙이자마자 문제가 드러났습니다. Step 0의 재현 테스트 2
 - `./gradlew build` — **BUILD SUCCESSFUL**, 49건 전부 통과
   (account 20 / transfer 21 / ledger 6 / gateway 1 / config-server 1)
 - `./gradlew reproductionTest` — 2건 red 유지. 분리 후에도 재현 테스트가 살아 있음을 확인
+- `actionlint` 로컬 실행 — 지적사항 0건 (문법·액션 참조·표현식·셸 스크립트)
+- 다만 **Actions 실제 실행은 아직 확인 못 했습니다.** 푸시 후 확인 필요
 
 ---
 
