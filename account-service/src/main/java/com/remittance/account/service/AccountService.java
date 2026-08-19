@@ -61,23 +61,30 @@ public class AccountService {
 	 * 락은 변경하는 계좌 하나에만 건다. 범위를 넓히면 데드락과 처리량 저하로 이어진다.
 	 */
 	public Account debit(UUID accountId, BigDecimal amount, String currency) {
-		return withAccountLock(accountId,
-				() -> withOptimisticRetry(accountId, account -> account.debit(amount, currency)));
+		return guarded(accountId, () -> applyMutation(accountId, account -> account.debit(amount, currency)));
 	}
 
 	public Account credit(UUID accountId, BigDecimal amount, String currency) {
-		return withAccountLock(accountId,
-				() -> withOptimisticRetry(accountId, account -> account.credit(amount, currency)));
+		return guarded(accountId, () -> applyMutation(accountId, account -> account.credit(amount, currency)));
 	}
 
-	private Account withAccountLock(UUID accountId, Supplier<Account> action) {
+	/**
+	 * 잔액을 바꾸는 <b>모든</b> 경로가 거쳐야 하는 동시성 방어. REST 진입점(debit/credit)뿐 아니라
+	 * Kafka 컨슈머로 들어오는 Saga 단계도 이 메서드를 통해 실행한다 — 두 경로가 같은 계좌를
+	 * 동시에 건드릴 수 있으므로, 방어가 한쪽에만 있으면 없는 것과 같다.
+	 */
+	public <T> T guarded(UUID accountId, Supplier<T> action) {
+		return withAccountLock(accountId, () -> withOptimisticRetry(accountId, action));
+	}
+
+	private <T> T withAccountLock(UUID accountId, Supplier<T> action) {
 		return distributedLock.executeWithLock("lock:account:" + accountId, LOCK_TTL, LOCK_WAIT_TIMEOUT, action);
 	}
 
-	private Account withOptimisticRetry(UUID accountId, Consumer<Account> mutation) {
+	private <T> T withOptimisticRetry(UUID accountId, Supplier<T> action) {
 		for (int attempt = 1; attempt <= MAX_OPTIMISTIC_LOCK_RETRIES; attempt++) {
 			try {
-				return applyMutation(accountId, mutation);
+				return action.get();
 			} catch (ObjectOptimisticLockingFailureException e) {
 				if (attempt == MAX_OPTIMISTIC_LOCK_RETRIES) {
 					throw new ConcurrentUpdateException(accountId);

@@ -6,6 +6,21 @@ spring:
     representation:
       uuid: standard
 
+  kafka:
+    bootstrap-servers: localhost:9092
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      # 유실을 막기 위해 모든 ISR의 응답을 기다린다 (돈이 걸린 이벤트이므로)
+      acks: all
+      retries: 3
+    consumer:
+      group-id: ledger-service
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      # 서비스를 새로 붙였을 때 이미 쌓인 이벤트부터 처리하도록 한다.
+      auto-offset-reset: earliest
+
 server:
   port: 8083
 

@@ -26,17 +26,23 @@
 - [x] 낙관적 락(`@Version`)으로 동시 잔액 갱신 충돌 처리
 
 ## Phase 2. 분산 환경 데이터 정합성
-- [ ] 멱등성 처리: 송금 요청에 idempotency key 적용 (중복 요청 방지)
-- [ ] 분산 락: Redis(Redisson) 또는 Zookeeper로 계좌별 동시 이체 직렬화
+- [x] 멱등성 처리: 송금 요청에 idempotency key 적용 (중복 요청 방지)
+- [x] 분산 락: Redis로 계좌별 동시 이체 직렬화 (Redisson 대신 `SET NX PX` + Lua 직접 구현)
 - [ ] Saga 패턴(Choreography): 출금 → 입금 → 원장 기록 단계별 보상 트랜잭션 설계
-- [ ] Outbox 패턴: DB 트랜잭션과 이벤트 발행의 원자성 보장 (Kafka 연계)
+      — 정상 흐름은 Step 4a에서 완료, **보상 트랜잭션이 Step 4b로 남음**
+- [x] Outbox 패턴: DB 트랜잭션과 이벤트 발행의 원자성 보장 (Kafka 연계)
 - [ ] 정합성 검증 배치/스케줄러: 계좌 잔액 합 vs 원장 합 대사(reconciliation) 로직
 
 ## Phase 3. 이벤트 기반 아키텍처
-- [ ] Kafka 토픽 설계 (`transfer.requested`, `transfer.completed`, `transfer.failed`)
-- [ ] Transfer Service → Kafka Producer (Outbox 기반)
-- [ ] Ledger Service → Kafka Consumer (거래 내역 적재)
-- [ ] Notification 관련 이벤트 컨슈머 (알림 발송 시뮬레이션)
+
+> Kafka를 Phase 2로 당겨왔기 때문에 아래 세 항목은 Phase 2에서 이미 끝났습니다.
+> Phase 3는 **토픽 확장과 새 컨슈머**가 중심이 됩니다.
+
+- [x] Kafka 토픽 설계 — 실제로는 Saga 단계별로 더 늘어남
+      (`transfer.requested` / `debited` / `credited` / `ledger-recorded` / `completed` / `failed`)
+- [x] Transfer Service → Kafka Producer (Outbox 기반)
+- [x] Ledger Service → Kafka Consumer (거래 내역 적재)
+- [ ] Notification 관련 이벤트 컨슈머 (알림 발송 시뮬레이션) — `transfer.completed`를 구독
 
 ## Phase 4. API Gateway & 설정 관리
 - [ ] Spring Cloud Gateway로 단일 진입점 구성 (라우팅, 인증 필터)

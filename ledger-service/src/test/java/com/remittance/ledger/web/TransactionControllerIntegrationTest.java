@@ -1,6 +1,6 @@
 package com.remittance.ledger.web;
 
-import com.remittance.ledger.AbstractMongoIntegrationTest;
+import com.remittance.ledger.AbstractIntegrationTest;
 import com.remittance.ledger.domain.TransactionDirection;
 import com.remittance.ledger.web.dto.RecordTransactionRequest;
 import com.remittance.ledger.web.dto.TransactionPageResponse;
@@ -16,7 +16,7 @@ import java.util.UUID;
 
 @SpringBootTest
 @AutoConfigureWebTestClient
-class TransactionControllerIntegrationTest extends AbstractMongoIntegrationTest {
+class TransactionControllerIntegrationTest extends AbstractIntegrationTest {
 
 	@Autowired
 	private WebTestClient webTestClient;
@@ -48,15 +48,16 @@ class TransactionControllerIntegrationTest extends AbstractMongoIntegrationTest 
 	@Test
 	void 페이지네이션_cursor로_다음페이지_조회() {
 		UUID accountId = UUID.randomUUID();
-		UUID transferId = UUID.randomUUID();
 
+		// 원장 기록은 (송금 + 계좌 + 방향)을 자연키로 삼아 멱등하다.
+		// 같은 송금으로 세 건을 넣으면 한 건으로 합쳐지므로, 서로 다른 송금이어야 한다.
 		webTestClient.post().uri("/internal/transactions")
 				.bodyValue(List.of(
-						new RecordTransactionRequest(transferId, accountId, TransactionDirection.DEBIT,
+						new RecordTransactionRequest(UUID.randomUUID(), accountId, TransactionDirection.DEBIT,
 								BigDecimal.valueOf(10), BigDecimal.valueOf(90)),
-						new RecordTransactionRequest(transferId, accountId, TransactionDirection.DEBIT,
+						new RecordTransactionRequest(UUID.randomUUID(), accountId, TransactionDirection.DEBIT,
 								BigDecimal.valueOf(20), BigDecimal.valueOf(70)),
-						new RecordTransactionRequest(transferId, accountId, TransactionDirection.DEBIT,
+						new RecordTransactionRequest(UUID.randomUUID(), accountId, TransactionDirection.DEBIT,
 								BigDecimal.valueOf(30), BigDecimal.valueOf(40))))
 				.exchange()
 				.expectStatus().isCreated();

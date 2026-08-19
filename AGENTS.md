@@ -89,6 +89,27 @@ DTO가 중복되더라도 서비스 경계를 유지하는 쪽을 택했습니�
 `gateway`와 `config-server`는 아직 Phase 0 스켈레톤입니다.
 특히 `config-server`는 지금 실행해도 즉시 종료됩니다 — 버그가 아니라 미구현 상태입니다.
 
+### 송금 흐름 (Phase 2 Step 4a 이후)
+
+서비스 간 동기 호출은 없습니다. **각 서비스가 이벤트를 보고 스스로 다음을 발행**합니다(Choreography Saga).
+
+```
+POST /transfers ─▶ Transfer  transfer.requested       (202 즉시 반환, 상태 PENDING)
+                   Account   출금 ─▶ transfer.debited
+                   Account   입금 ─▶ transfer.credited
+                   Ledger    원장 기록 ─▶ transfer.ledger-recorded
+                   Transfer  상태 갱신 ─▶ COMPLETED (+ transfer.completed)
+```
+
+**흐름 전체를 한눈에 볼 수 있는 코드가 없다**는 게 이 방식의 대가입니다.
+이벤트 계약은 각 서비스의 `messaging/TransferEvents`에 같은 내용으로 중복 정의되어 있으니
+(공유 모듈을 두지 않기로 했으므로) **필드를 바꿀 때는 세 곳을 함께 확인**하세요.
+
+컨슈머는 이벤트를 두 번 받을 수 있습니다(at-least-once). 서비스마다 대응 방식이 다릅니다.
+- **Account**: 잔액 변경은 되돌릴 수 없으므로 `processed_events`에 처리 흔적을 남깁니다 (잔액 변경과 같은 트랜잭션).
+- **Transfer**: 상태 전이에 "기대한 이전 단계일 때만" 조건을 걸어 자연스럽게 멱등합니다.
+- **Ledger**: 문서 _id를 거래의 자연키(송금+계좌+방향)로 만들어 재기록이 덮어쓰기가 되게 합니다.
+
 ## 실행 · 테스트
 
 ```bash
@@ -113,9 +134,9 @@ docker compose -f docker-compose.dev.yml up -d
 
 | 베이스 | 띄우는 컨테이너 |
 |---|---|
-| `AbstractIntegrationTest` (account) | MySQL + Redis |
+| `AbstractIntegrationTest` (account) | MySQL + Redis + Kafka |
 | `AbstractIntegrationTest` (transfer) | MySQL + Kafka |
-| `AbstractMongoIntegrationTest` (ledger) | MongoDB |
+| `AbstractIntegrationTest` (ledger) | MongoDB + Kafka |
 
 **인메모리 DB(H2)를 쓰지 마세요.** 운영과 같은 MySQL을 컨테이너로 띄웁니다.
 H2로 돌리던 시절, 테스트를 전부 통과하고도 MySQL에서만 터지는 버그가 두 번 있었습니다 —

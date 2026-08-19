@@ -4,6 +4,7 @@ import com.redis.testcontainers.RedisContainer;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.MySQLContainer;
+import org.testcontainers.kafka.KafkaContainer;
 import org.testcontainers.utility.DockerImageName;
 
 /**
@@ -36,9 +37,13 @@ public abstract class AbstractIntegrationTest {
 	private static final RedisContainer REDIS_CONTAINER =
 			new RedisContainer(DockerImageName.parse("redis:7-alpine"));
 
+	private static final KafkaContainer KAFKA_CONTAINER =
+			new KafkaContainer(DockerImageName.parse("apache/kafka:4.1.0"));
+
 	static {
 		MYSQL_CONTAINER.start();
 		REDIS_CONTAINER.start();
+		KAFKA_CONTAINER.start();
 	}
 
 	@DynamicPropertySource
@@ -48,5 +53,6 @@ public abstract class AbstractIntegrationTest {
 		registry.add("spring.datasource.password", MYSQL_CONTAINER::getPassword);
 		registry.add("spring.data.redis.host", REDIS_CONTAINER::getHost);
 		registry.add("spring.data.redis.port", REDIS_CONTAINER::getFirstMappedPort);
+		registry.add("spring.kafka.bootstrap-servers", KAFKA_CONTAINER::getBootstrapServers);
 	}
 }

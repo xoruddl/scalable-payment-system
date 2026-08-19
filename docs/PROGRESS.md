@@ -18,21 +18,21 @@
 ```
 Phase 0  ✅  프로젝트 기반 설정
 Phase 1  ✅  핵심 도메인 서비스 (Account / Transfer / Ledger)
-Phase 2  🔄  분산 환경 데이터 정합성   ← 지금 여기 (Step 3/5 완료)
+Phase 2  🔄  분산 환경 데이터 정합성   ← 지금 여기 (Step 4a 완료, 남은 건 4b·5)
 Phase 3~11   미착수
 ```
 
 **작업 브랜치**: `feature/phase-2-data-consistency`
-**빌드 상태**: 🟢 `./gradlew build` 통과 (테스트 49건)
-아직 해결되지 않은 재현 테스트 2건은 `reproduction` 태그로 본 빌드에서 분리되어 있습니다 —
+**빌드 상태**: 🟢 `./gradlew test` 통과 (테스트 357건)
+아직 해결되지 않은 재현 테스트는 `reproduction` 태그로 본 빌드에서 분리되어 있습니다 —
 `./gradlew reproductionTest`로 따로 돌리며, **지금은 실패하는 것이 정상**입니다.
 
 | 재현 테스트 | 상태 |
 |---|---|
 | 동시 출금 (#1) | ✅ Step 2에서 해결 |
 | 멱등성 (#2) | ✅ Step 1에서 해결 |
-| 원장 기록 실패 (#3) | 🔴 Step 4에서 해결 예정 |
-| 보상 재시도 (#4) | 🔴 Step 4에서 해결 예정 |
+| 원장 기록 실패 (#3) | ✅ Step 4a에서 해결 (원장 기록 이벤트가 와야 COMPLETED) |
+| 보상 재시도 (#4) | 🔴 Step 4b에서 해결 예정 — account-service로 옮겨 다시 씀 |
 
 ### 시스템 구성
 
@@ -126,7 +126,8 @@ Phase 1은 "일단 동작하게" 만드는 단계라, 아래는 **알면서 순�
 | 2 | Redis 분산 락 | ✅ `39d12f0` |
 | 3 | Outbox 패턴 + Kafka 인프라 | ✅ `419bb88` |
 | — | (곁가지) 기술 스택 정비 — Java 21, Actuator, CI | ✅ `e97e67d` |
-| 4 | Choreography Saga 전환 | ⬜ 다음 |
+| 4a | Choreography Saga 전환 — 정상 흐름 | ✅ (이번 Step) |
+| 4b | 보상 트랜잭션 + 컨슈머 재시도/DLT | ⬜ 다음 |
 | 5 | 정합성 대사 배치 | ⬜ |
 
 ### 설계 결정
@@ -391,6 +392,105 @@ CI를 붙이자마자 문제가 드러났습니다. Step 0의 재현 테스트 2
 - `./gradlew reproductionTest` — 2건 red 유지. 분리 후에도 재현 테스트가 살아 있음을 확인
 - `actionlint` 로컬 실행 — 지적사항 0건 (문법·액션 참조·표현식·셸 스크립트)
 - 다만 **Actions 실제 실행은 아직 확인 못 했습니다.** 푸시 후 확인 필요
+
+---
+
+### Step 4a — Choreography Saga 전환 (정상 흐름) ✅
+
+**목표**: 요청 스레드 안에서 다른 서비스를 순서대로 호출하던 흐름을, 이벤트로 이어지는 흐름으로 바꾸기.
+Step 4는 크기가 커서 **4a(정상 흐름) / 4b(실패·보상)**로 나눴습니다.
+
+#### 무엇이 바뀌었나
+
+전에는 `TransferService`가 요청 스레드 안에서 출금 → 입금 → 원장기록을 차례로 **호출**했습니다.
+이제는 이벤트 하나만 남기고 202로 돌아옵니다.
+
+```
+POST /transfers ─▶ Transfer  transfer.requested       (여기서 응답. 상태 PENDING)
+                   Account   출금 ─▶ transfer.debited
+                   Account   입금 ─▶ transfer.credited
+                   Ledger    원장 기록 ─▶ transfer.ledger-recorded
+                   Transfer  상태 갱신 ─▶ COMPLETED (+ transfer.completed)
+```
+
+- **얻은 것**: 요청 스레드가 다른 서비스의 응답 시간에 묶이지 않고, 중간에 한 서비스가 죽어도
+  이벤트가 브로커에 남아 되살아나면 이어집니다.
+- **잃은 것**: 응답을 받은 시점에 송금이 끝난 게 아닙니다. 클라이언트는 조회해야 합니다.
+  그리고 **흐름 전체를 한눈에 볼 수 있는 코드가 없어졌습니다** — 오케스트레이션을 버린 대가입니다.
+  그래서 흐름 그림을 `AGENTS.md`와 `TransferService` 클래스 주석에 남겨뒀습니다.
+
+`AccountClient`/`LedgerClient`와 그에 딸린 DTO·설정·예외(잔액부족 등 5개)는 역할이 사라져 삭제했습니다.
+계좌 오류는 이제 HTTP 응답이 아니라 송금의 최종 상태로 드러납니다.
+
+#### 원장 기록까지 끝나야 COMPLETED
+
+Step 0 재현 테스트 #3이 지적한 문제입니다. 입금 시점에 완료로 찍으면, 원장 기록이 실패했을 때
+**"송금은 성공인데 원장에는 없는"** 상태가 남습니다. 그래서 완료 판정을 원장 기록 이벤트까지 미뤘습니다.
+`CREDIT_COMPLETED` → (`transfer.ledger-recorded`) → `COMPLETED`.
+
+#### 컨슈머 멱등성 — 서비스마다 방법이 다르다
+
+Outbox 릴레이는 at-least-once입니다(발행 성공 직후 마킹 전에 죽으면 재발행).
+같은 이벤트가 두 번 와도 결과가 같아야 하는데, **작업의 성격에 따라 방법이 다릅니다.**
+
+| 서비스 | 방법 | 이유 |
+|---|---|---|
+| Account | `processed_events` 테이블에 처리 흔적 (잔액 변경과 같은 트랜잭션) | 잔액 변경은 되돌릴 수 없어 "했는지"를 따로 기록해야 함 |
+| Transfer | 상태 전이에 "기대한 이전 단계일 때만" 조건 | 상태 머신이라 지나간 단계는 자연스럽게 무시됨 |
+| Ledger | 문서 `_id`를 자연키(송금+계좌+방향)로 | 같은 _id에 덮어쓰기가 되므로 줄이 늘지 않음 |
+
+Account의 흔적 기록은 **조회 후 INSERT가 아니라 INSERT 먼저**입니다. 조회로 판단하면 두 스레드가
+동시에 "없다"를 보고 둘 다 처리할 수 있어서, PK unique 제약에 맡깁니다.
+그리고 `ProcessedEvent`에 `Persistable`을 구현했습니다 — Step 1의 `IdempotencyKey`와 같은 함정으로,
+PK를 직접 지정하면 Spring Data가 INSERT 대신 merge(UPDATE)를 해서 중복이 **조용히 통과**합니다.
+
+#### Ledger에는 Outbox를 두지 않았다
+
+Outbox는 "DB 커밋"과 "이벤트 발행"을 원자적으로 묶는 장치인데, Ledger는 그 둘이 어긋나도 스스로 복구됩니다.
+기록은 됐는데 발행이 실패하면 오프셋이 커밋되지 않아 재전송되고, **기록이 멱등하므로** 다시 기록해도 그대로인 채
+발행만 다시 됩니다. 즉 *멱등한 쓰기 + 발행 후 ack* 조합이면 같은 보장을 얻습니다.
+(게다가 MongoDB는 단일 노드에서 다중 문서 트랜잭션을 못 써서, Outbox를 둬도 원자적이지 않습니다.)
+
+#### 그 외 결정
+
+- **잔액 변경 경로는 하나로 모았다.** REST 진입점과 Kafka 컨슈머가 같은 계좌를 동시에 건드릴 수 있으므로,
+  둘 다 `AccountService.guarded()`(분산 락 + 낙관적 락 재시도)를 지나게 했습니다. 방어가 한쪽에만 있으면 없는 것과 같습니다.
+- **토픽을 `NewTopic` 빈으로 명시 생성.** 브로커 자동 생성에 맡기면 파티션이 1개로 고정되고,
+  나중에 늘리면 키 분배가 달라져 순서 보장이 깨집니다. 파티션 3개 / 키는 송금 ID.
+- **이벤트 본문에 `@JsonIgnoreProperties(ignoreUnknown = true)`.** 발행하는 쪽이 필드를 추가해도
+  소비하는 쪽이 깨지지 않아야 각자 배포할 수 있습니다.
+- **이벤트에 다음 단계가 필요한 값을 다 실어 보낸다**(변경 후 잔액 등). 되묻느라 동기 호출을 하면 바꾼 의미가 없습니다.
+
+#### 검증
+
+`./gradlew test` — **357건 전부 통과**. 새로 쓴 테스트는 다음과 같습니다.
+
+| 테스트 | 확인하는 것 |
+|---|---|
+| `TransferSagaServiceTest` (account, 4건) | 출금/입금 + 다음 이벤트 기록, 중복 이벤트, 잔액 부족 시 아무것도 안 남김 |
+| `TransferEventConsumerTest` (account) | 실제 Kafka JSON → 출금까지 도달하는 배선 |
+| `TransferSagaConsumerTest` (transfer, 2건) | 세 이벤트를 순서대로 받아 마지막에야 COMPLETED / 재전송에도 안 되돌아감 |
+| `TransferServiceTest` (transfer, 6건) | 접수만 하고 반환, 상태 전이 규칙 |
+| `TransferAcceptanceFailureTest` (transfer) | 접수 실패 시 키가 남아 재시도가 409로 막힘 |
+| `TransferCreditedConsumerTest` (ledger, 3건) | 두 줄 기록, 중복 수신에도 두 줄, ledger-recorded 발행 |
+
+**테스트가 진짜로 잡는지도 확인했습니다** (`AGENTS.md`의 "검증 방법" 규칙).
+세 가지 방어 장치를 하나씩 되돌려 red가 되는 걸 봤습니다.
+
+| 되돌린 것 | 빨개진 테스트 |
+|---|---|
+| Account의 `processed_events` INSERT 제거 | `같은_접수_이벤트를_두_번_받아도_출금은_한_번만_된다` |
+| Ledger의 결정적 _id → 랜덤 UUID | `같은_이벤트를_두_번_받아도_원장은_두_줄뿐이다` |
+| 입금 시점에 `markCompleted()` 호출 | `입금까지만_끝난_송금은_COMPLETED가_아니다` 외 2건 |
+
+`./gradlew reproductionTest` — 1건 red 유지 (`입금이_실패하면_출금이_보상되어야_한다`).
+Step 4b 대상입니다.
+
+#### 남은 것 (Step 4b)
+
+- 입금 실패 시 출금 보상 (`transfer.credit-failed` → 환불 → `transfer.failed`)
+- 지금은 잔액 부족 등으로 단계가 실패하면 **송금이 PENDING인 채로 멈춥니다** (로그만 남김)
+- 컨슈머 재시도 정책과 DLT — 지금은 spring-kafka 기본 동작에 맡기고 있습니다
 
 ---
 

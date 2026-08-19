@@ -91,9 +91,9 @@ paths:
       tags: [Transfer]
       summary: 송금 요청
       description: |
-        송금을 요청합니다. Saga 오케스트레이션으로 출금 → 입금 → 원장 기록 순으로 진행되며,
-        중간 단계 실패 시 보상 트랜잭션(출금 롤백)이 수행됩니다.
-        `Idempotency-Key` 헤더는 필수이며, 동일 키로 재요청 시 최초 처리 결과를 그대로 반환합니다.
+        송금을 **접수**합니다. 접수만 하고 즉시 반환하며, 실제 처리는 이벤트 기반 Saga(Choreography)로
+        출금 → 입금 → 원장 기록 순으로 진행됩니다. 중간 단계 실패 시 보상 트랜잭션(출금 롤백)이 수행됩니다.
+        `Idempotency-Key` 헤더는 필수이며, 동일 키로 재요청 시 최초 접수한 송금을 그대로 반환합니다.
       parameters:
         - name: Idempotency-Key
           in: header
@@ -111,8 +111,9 @@ paths:
       responses:
         '202':
           description: |
-            송금 요청 접수 완료 (비동기 처리). 최종 상태는 GET /transfers/{transferId}로 폴링하거나
-            웹훅/이벤트 구독으로 확인합니다.
+            송금 요청 접수 완료. 응답의 `status`는 항상 `PENDING`이며, 이 시점에는 아직 잔액이 움직이지
+            않았습니다. 최종 상태는 GET /transfers/{transferId}로 폴링하거나 이벤트 구독으로 확인합니다.
+            잔액 부족 같은 실패도 이 시점이 아니라 최종 상태(`FAILED`)로 드러납니다.
           content:
             application/json:
               schema:
@@ -120,7 +121,7 @@ paths:
         '400':
           $ref: '#/components/responses/BadRequest'
         '409':
-          description: 잔액 부족 또는 동시 요청으로 인한 즉시 거절
+          description: 동일 Idempotency-Key의 접수가 아직 진행 중
           content:
             application/json:
               schema:

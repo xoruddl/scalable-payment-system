@@ -1,13 +1,10 @@
 package com.remittance.transfer.service;
 
-import com.remittance.transfer.client.AccountClient;
-import com.remittance.transfer.client.LedgerClient;
-import com.remittance.transfer.client.dto.AccountBalanceResponse;
-import com.remittance.transfer.client.dto.RecordTransactionRequest;
 import com.remittance.transfer.domain.Transfer;
 import com.remittance.transfer.domain.TransferStatus;
-import com.remittance.transfer.exception.InsufficientBalanceException;
 import com.remittance.transfer.exception.InvalidTransferRequestException;
+import com.remittance.transfer.messaging.TransferEvents;
+import com.remittance.transfer.outbox.TransferEventType;
 import com.remittance.transfer.outbox.TransferOutboxRecorder;
 import com.remittance.transfer.repository.TransferRepository;
 import com.remittance.transfer.web.dto.CreateTransferRequest;
@@ -17,7 +14,8 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.math.BigDecimal;
-import java.util.List;
+import java.time.Instant;
+import java.util.Optional;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -26,9 +24,12 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
+/**
+ * Step 4a 이후의 Transfer Service는 두 가지 일만 한다 — <b>접수</b>와 <b>상태 추적</b>.
+ * 출금·입금·원장기록은 이벤트를 받은 다른 서비스가 알아서 한다.
+ */
 @ExtendWith(MockitoExtension.class)
 class TransferServiceTest {
 
@@ -36,120 +37,127 @@ class TransferServiceTest {
 	private TransferRepository transferRepository;
 
 	@Mock
-	private AccountClient accountClient;
-
-	@Mock
-	private LedgerClient ledgerClient;
-
-	@Mock
 	private IdempotencyService idempotencyService;
 
 	@Mock
 	private TransferOutboxRecorder outboxRecorder;
 
-	private TransferService transferService;
+	private TransferService transferService() {
+		return new TransferService(transferRepository, idempotencyService, outboxRecorder);
+	}
 
 	private final UUID fromAccountId = UUID.randomUUID();
 	private final UUID toAccountId = UUID.randomUUID();
-	// Transfer가 금액을 scale 2로 정규화하므로, 스텁도 같은 표현이어야 매칭된다
+	// Transfer가 금액을 scale 2로 정규화하므로 스텁도 같은 표현이어야 매칭된다
 	// (BigDecimal.equals()는 scale까지 비교한다)
 	private final BigDecimal amount = new BigDecimal("1000.00");
 
-	private void setUp() {
-		transferService = new TransferService(
-				transferRepository, accountClient, ledgerClient, idempotencyService, outboxRecorder);
-	}
-
-	/** 상태 변경 저장은 이제 Outbox 레코더를 통해 일어나므로, 인자를 그대로 돌려주게 한다. */
 	private void stubSaveReturnsArgument() {
 		given(outboxRecorder.record(any(Transfer.class), any()))
 				.willAnswer(invocation -> invocation.getArgument(0));
 	}
 
-	@Test
-	void 출금_입금_모두_성공하면_완료되고_원장에_기록된다() {
-		setUp();
-		stubSaveReturnsArgument();
-		given(accountClient.debit(eq(fromAccountId), eq(amount), eq("KRW"), any()))
-				.willReturn(new AccountBalanceResponse(fromAccountId, BigDecimal.valueOf(4000), "KRW", 2L));
-		given(accountClient.credit(eq(toAccountId), eq(amount), eq("KRW"), any()))
-				.willReturn(new AccountBalanceResponse(toAccountId, BigDecimal.valueOf(6000), "KRW", 2L));
+	private Transfer newTransfer() {
+		return Transfer.builder()
+				.fromAccountId(fromAccountId).toAccountId(toAccountId)
+				.amount(amount).currency("KRW").build();
+	}
 
-		Transfer result = transferService.requestTransfer("key-" + UUID.randomUUID(),
-				new CreateTransferRequest(fromAccountId, toAccountId, amount, "KRW", null));
-
-		assertThat(result.getStatus()).isEqualTo(TransferStatus.COMPLETED);
-		verify(ledgerClient).recordTransactions(List.of(
-				new RecordTransactionRequest(result.getTransferId(), fromAccountId,
-						com.remittance.transfer.client.dto.TransactionDirection.DEBIT, amount, BigDecimal.valueOf(4000)),
-				new RecordTransactionRequest(result.getTransferId(), toAccountId,
-						com.remittance.transfer.client.dto.TransactionDirection.CREDIT, amount, BigDecimal.valueOf(6000))
-		));
+	private void stubFind(Transfer transfer) {
+		given(transferRepository.findByTransferId(transfer.getTransferId())).willReturn(Optional.of(transfer));
 	}
 
 	@Test
-	void 출금_실패시_실패로_저장되고_예외가_전파된다() {
-		setUp();
+	void 접수하면_PENDING으로_남기고_transfer_requested만_발행한다() {
 		stubSaveReturnsArgument();
-		given(accountClient.debit(eq(fromAccountId), eq(amount), eq("KRW"), any()))
-				.willThrow(new InsufficientBalanceException(fromAccountId));
+		String key = "key-" + UUID.randomUUID();
 
-		assertThatThrownBy(() -> transferService.requestTransfer("key-" + UUID.randomUUID(),
-				new CreateTransferRequest(fromAccountId, toAccountId, amount, "KRW", null)))
-				.isInstanceOf(InsufficientBalanceException.class);
-
-		verify(accountClient, never()).credit(eq(toAccountId), any(), any(), any());
-		verify(ledgerClient, never()).recordTransactions(any());
-	}
-
-	@Test
-	void 입금_실패시_출금을_보상하고_실패로_종결한다() {
-		setUp();
-		stubSaveReturnsArgument();
-		given(accountClient.debit(eq(fromAccountId), eq(amount), eq("KRW"), any()))
-				.willReturn(new AccountBalanceResponse(fromAccountId, BigDecimal.valueOf(4000), "KRW", 2L));
-		given(accountClient.credit(eq(toAccountId), eq(amount), eq("KRW"), any()))
-				.willThrow(new InsufficientBalanceException(toAccountId));
-		given(accountClient.credit(eq(fromAccountId), eq(amount), eq("KRW"), any()))
-				.willReturn(new AccountBalanceResponse(fromAccountId, BigDecimal.valueOf(5000), "KRW", 3L));
-
-		Transfer result = transferService.requestTransfer("key-" + UUID.randomUUID(),
+		Transfer result = transferService().requestTransfer(key,
 				new CreateTransferRequest(fromAccountId, toAccountId, amount, "KRW", null));
 
-		assertThat(result.getStatus()).isEqualTo(TransferStatus.FAILED);
-		assertThat(result.getFailureReason()).contains("보상 완료");
-		verify(accountClient, times(1)).credit(eq(fromAccountId), eq(amount), eq("KRW"), any());
-		verify(ledgerClient, never()).recordTransactions(any());
-	}
-
-	@Test
-	void 입금_실패후_보상마저_실패하면_수동개입_메시지를_남긴다() {
-		setUp();
-		stubSaveReturnsArgument();
-		given(accountClient.debit(eq(fromAccountId), eq(amount), eq("KRW"), any()))
-				.willReturn(new AccountBalanceResponse(fromAccountId, BigDecimal.valueOf(4000), "KRW", 2L));
-		given(accountClient.credit(eq(toAccountId), eq(amount), eq("KRW"), any()))
-				.willThrow(new InsufficientBalanceException(toAccountId));
-		given(accountClient.credit(eq(fromAccountId), eq(amount), eq("KRW"), any()))
-				.willThrow(new RuntimeException("account service down"));
-
-		Transfer result = transferService.requestTransfer("key-" + UUID.randomUUID(),
-				new CreateTransferRequest(fromAccountId, toAccountId, amount, "KRW", null));
-
-		assertThat(result.getStatus()).isEqualTo(TransferStatus.FAILED);
-		assertThat(result.getFailureReason()).contains("보상 실패");
+		assertThat(result.getStatus())
+				.as("응답 시점에는 아직 아무 돈도 움직이지 않았다")
+				.isEqualTo(TransferStatus.PENDING);
+		verify(outboxRecorder).record(any(Transfer.class), eq(TransferEventType.REQUESTED));
+		verify(idempotencyService).complete(key, result.getTransferId());
 	}
 
 	@Test
 	void 출금_입금_계좌가_같으면_멱등성_키를_소모하지_않고_즉시_예외() {
-		setUp();
 		CreateTransferRequest request =
 				new CreateTransferRequest(fromAccountId, fromAccountId, amount, "KRW", null);
 
-		assertThatThrownBy(() -> transferService.requestTransfer("key-1", request))
+		assertThatThrownBy(() -> transferService().requestTransfer("key-1", request))
 				.isInstanceOf(InvalidTransferRequestException.class);
 
-		verify(transferRepository, never()).save(any());
+		verify(outboxRecorder, never()).record(any(), any());
 		verify(idempotencyService, never()).reserve(any(), any());
+	}
+
+	@Test
+	void 출금_이벤트를_받으면_DEBIT_COMPLETED로_올라간다() {
+		Transfer transfer = newTransfer();
+		stubFind(transfer);
+
+		transferService().applyDebited(new TransferEvents.Debited(
+				transfer.getTransferId(), BigDecimal.valueOf(4_000), Instant.now()));
+
+		assertThat(transfer.getStatus()).isEqualTo(TransferStatus.DEBIT_COMPLETED);
+	}
+
+	@Test
+	void 원장_기록까지_끝나야_COMPLETED가_된다() {
+		Transfer transfer = newTransfer();
+		transfer.markDebitCompleted();
+		transfer.markCreditCompleted();
+		stubFind(transfer);
+		stubSaveReturnsArgument();
+
+		transferService().applyLedgerRecorded(
+				new TransferEvents.LedgerRecorded(transfer.getTransferId(), Instant.now()));
+
+		assertThat(transfer.getStatus()).isEqualTo(TransferStatus.COMPLETED);
+		verify(outboxRecorder).record(transfer, TransferEventType.COMPLETED);
+	}
+
+	/**
+	 * 입금까지만 끝난 시점에 완료로 찍으면, 원장 기록이 실패했을 때
+	 * "송금은 성공인데 원장에는 없는" 불일치가 남는다. Phase 1이 정확히 그랬다.
+	 */
+	@Test
+	void 입금까지만_끝난_송금은_COMPLETED가_아니다() {
+		Transfer transfer = newTransfer();
+		transfer.markDebitCompleted();
+		stubFind(transfer);
+
+		transferService().applyCredited(new TransferEvents.Credited(
+				transfer.getTransferId(), BigDecimal.valueOf(4_000), BigDecimal.valueOf(6_000), Instant.now()));
+
+		assertThat(transfer.getStatus())
+				.as("원장 기록 이벤트가 오기 전까지는 완료가 아니다")
+				.isEqualTo(TransferStatus.CREDIT_COMPLETED);
+	}
+
+	/**
+	 * 이벤트는 at-least-once라 같은 이벤트가 다시 올 수 있다.
+	 * 이미 지나간 단계면 아무 일도 일어나지 않아야 한다.
+	 */
+	@Test
+	void 같은_이벤트를_다시_받아도_상태가_되돌아가지_않는다() {
+		Transfer transfer = newTransfer();
+		transfer.markDebitCompleted();
+		transfer.markCreditCompleted();
+		transfer.markCompleted();
+		Instant completedAt = transfer.getCompletedAt();
+		stubFind(transfer);
+
+		transferService().applyDebited(new TransferEvents.Debited(
+				transfer.getTransferId(), BigDecimal.valueOf(4_000), Instant.now()));
+		transferService().applyLedgerRecorded(
+				new TransferEvents.LedgerRecorded(transfer.getTransferId(), Instant.now()));
+
+		assertThat(transfer.getStatus()).isEqualTo(TransferStatus.COMPLETED);
+		assertThat(transfer.getCompletedAt()).isEqualTo(completedAt);
+		verify(outboxRecorder, never()).record(any(), any());
 	}
 }
