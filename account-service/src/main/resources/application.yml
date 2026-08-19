@@ -19,3 +19,17 @@ spring:
 
 server:
   port: 8081
+
+# Actuator: 헬스체크·메트릭 노출.
+# health 상세는 K8s probe(Phase 7), prometheus는 메트릭 수집(Phase 9)에서 쓴다.
+# 운영에서는 별도 포트/네트워크로 분리해야 하지만, 로컬 단계에서는 앱 포트에 함께 둔다.
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: always
+      probes:
+        enabled: true

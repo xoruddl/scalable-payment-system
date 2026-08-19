@@ -10,6 +10,7 @@ import com.remittance.transfer.exception.InsufficientBalanceException;
 import com.remittance.transfer.outbox.TransferOutboxRecorder;
 import com.remittance.transfer.repository.TransferRepository;
 import com.remittance.transfer.web.dto.CreateTransferRequest;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -39,6 +40,7 @@ import static org.springframework.test.web.client.response.MockRestResponseCreat
  *
  * Step 3~4(Outbox + Choreography Saga)에서 이벤트 기반 재시도가 들어가면 green이 된다.
  */
+@Tag("reproduction")
 @ExtendWith(MockitoExtension.class)
 class TransferConsistencyReproductionTest {
 

@@ -117,6 +117,7 @@ Phase 1은 "일단 동작하게" 만드는 단계라, 아래는 **알면서 순�
 | 1 | 멱등성 처리 | ✅ `2172086` |
 | 2 | Redis 분산 락 | ✅ `39d12f0` |
 | 3 | Outbox 패턴 + Kafka 인프라 | ✅ `419bb88` |
+| — | (곁가지) 기술 스택 정비 — Java 21, Actuator, CI | ✅ |
 | 4 | Choreography Saga 전환 | ⬜ 다음 |
 | 5 | 정합성 대사 배치 | ⬜ |
 
@@ -329,6 +330,53 @@ LONGTEXT로 잡았습니다. (테스트 DB와 운영 DB가 다를 때 생기는 
   → 브로커 복구 후 **릴레이가 자동으로 재발행**해 미발행 0으로 회복 (Outbox의 핵심 계약 확인)
 
 **커밋**: `419bb88`
+
+---
+
+### 곁가지 — 기술 스택 정비 (Step 3 이후, Step 4 시작 전)
+
+Step 4로 넘어가기 전에 잠시 멈추고, 참고 삼아 보던 f-lab-edu/limited-drop-commerce와
+스택을 비교해 뒤처진 부분을 맞췄습니다.
+
+#### 무엇을 왜 맞췄나
+
+| 항목 | 이유 |
+|---|---|
+| **Java 17 → 21** | 21은 LTS이고, Phase 5 과부하 대응에서 가상 스레드를 실험하려면 필요합니다 |
+| **Actuator (5개 서비스 전부)** | Phase 7 K8s의 liveness/readiness probe, Phase 9 Prometheus 스크래핑의 전제조건 |
+| **micrometer-registry-prometheus** | 이게 없으면 `/actuator/prometheus` 엔드포인트가 아예 생기지 않습니다 |
+| **GitHub Actions 빌드 워크플로** | 멀티모듈이라 로컬에서 한 모듈만 돌리다 다른 모듈이 깨진 걸 놓치기 쉽습니다 |
+
+의도적으로 **안 맞춘 것**: Spring Security/JWT, springdoc(Swagger).
+이 프로젝트의 목적은 분산 시스템 패턴 검증이라 인증·API 문서는 곁가지입니다.
+인증은 Phase 4에서 Gateway 필터로 한 번에 다루는 편이 낫습니다.
+
+#### JDK 21을 어떻게 확보했나
+
+`settings.gradle`에 foojay 툴체인 리졸버를 넣어, JDK 21이 없는 환경에서는
+Gradle이 알아서 받아오게 했습니다. 개발자마다 깔린 JDK가 달라도, CI에서도 같은 버전으로 빌드됩니다.
+
+로컬에는 Corretto 21을 따로 설치하고 IntelliJ의 **프로젝트 SDK와 Gradle JVM도 21로** 맞췄습니다.
+이걸 안 맞추면 IDE는 상위 JDK의 API 표면을 보여주면서 경고를 안 하는데,
+정작 Gradle 빌드는 21로 컴파일해서 **IDE에서만 멀쩡하고 빌드에서 터지는** 상황이 생깁니다.
+(Step 3의 `@Lob` 문제 — H2에선 통과하고 MySQL에서 터진 것 — 과 같은 종류의 함정)
+
+#### 재현 테스트를 태그로 분리
+
+CI를 붙이자마자 문제가 드러났습니다. Step 0의 재현 테스트 2건이 **일부러 red**로 남아 있어서
+`./gradlew build`가 항상 실패하고, CI가 "빌드가 깨졌다"는 신호로서 무의미해집니다.
+
+`@Tag("reproduction")`을 붙이고 기본 `test`에서 제외했습니다.
+대신 `./gradlew reproductionTest`로 따로 돌려볼 수 있고, 이쪽은 실패해도 빌드를 세우지 않습니다.
+**Step 4에서 green이 되면 태그를 떼면 됩니다.**
+
+#### 검증
+
+- 5개 모듈 전부 클린 컴파일, 생성된 바이트코드 major version 65 (= Java 21)
+- IntelliJ가 실제로 Corretto 21로 Gradle 데몬을 기동하는 것까지 프로세스에서 확인
+- `./gradlew build` — **BUILD SUCCESSFUL**, 49건 전부 통과
+  (account 20 / transfer 21 / ledger 6 / gateway 1 / config-server 1)
+- `./gradlew reproductionTest` — 2건 red 유지. 분리 후에도 재현 테스트가 살아 있음을 확인
 
 ---
 
