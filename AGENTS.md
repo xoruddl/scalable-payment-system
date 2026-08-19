@@ -59,8 +59,8 @@ DTO가 중복되더라도 서비스 경계를 유지하는 쪽을 택했습니�
 ## 실행 · 테스트
 
 ```bash
-# 1. 로컬 인프라 기동 (DB만 Docker, 서비스 컨테이너화는 Phase 6)
-docker compose -f docker-compose.dev-db.yml up -d
+# 1. 로컬 인프라 기동 (DB·Redis만 Docker, 서비스 컨테이너화는 Phase 6)
+docker compose -f docker-compose.dev.yml up -d
 
 # 2. 테스트
 ./gradlew :account-service:test :transfer-service:test :ledger-service:test
@@ -71,7 +71,16 @@ docker compose -f docker-compose.dev-db.yml up -d
 
 - `account-service` / `transfer-service`는 **MySQL이 떠 있지 않으면 부팅 자체가 실패**합니다
   (JPA가 시작 시점에 DB에 붙어 dialect를 판별하기 때문).
-- `ledger-service`의 Testcontainers 통합 테스트는 Docker 데몬이 필요합니다.
+- Testcontainers를 쓰는 통합 테스트는 Docker 데몬이 필요합니다.
+
+### 통합 테스트용 컨테이너
+
+`AbstractRedisIntegrationTest` / `AbstractMongoIntegrationTest`를 상속해서 씁니다.
+두 베이스 모두 **싱글턴 컨테이너 패턴**(static 블록에서 한 번 start + `@DynamicPropertySource`)입니다.
+
+> ⚠️ `@Testcontainers` + `@Container` 조합으로 바꾸지 마세요. 그 조합은 **테스트 클래스가 끝날 때마다
+> 컨테이너를 멈추기** 때문에, 베이스를 상속한 클래스가 둘 이상이면 두 번째부터
+> "Unable to connect"로 실패합니다. (Step 2에서 실제로 겪음)
 
 ## 환경 주의사항
 

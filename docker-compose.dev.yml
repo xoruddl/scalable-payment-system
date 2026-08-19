@@ -1,5 +1,5 @@
-# Phase 1 로컬 개발용 DB만 띄우는 compose 파일.
-# 전체 서비스 + Kafka 등을 포함하는 정식 docker-compose.yml은 Phase 6에서 별도로 구성한다.
+# 로컬 개발용 인프라(DB·Redis 등)만 띄우는 compose 파일.
+# 서비스 자체를 컨테이너로 올리는 정식 docker-compose.yml은 Phase 6에서 별도로 구성한다.
 services:
   mysql:
     image: mysql:8.0
@@ -26,6 +26,18 @@ services:
       - "27017:27017"
     volumes:
       - remittance-mongo-data:/data/db
+
+  # Phase 2 Step 2: 계좌별 동시 이체를 직렬화하는 분산 락 저장소
+  redis:
+    image: redis:7-alpine
+    container_name: remittance-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
 volumes:
   remittance-mysql-data:

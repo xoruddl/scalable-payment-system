@@ -1,18 +1,28 @@
 package com.remittance.ledger;
 
-import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
+import org.springframework.test.context.DynamicPropertyRegistry;
+import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.MongoDBContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
 /**
  * Mongo가 필요한 통합 테스트의 공통 베이스. 로컬에서 Docker가 실행 중이어야 한다.
+ *
+ * <p><b>싱글턴 컨테이너 패턴</b>을 쓴다. {@code @Testcontainers} + {@code @Container} 조합은
+ * 테스트 클래스가 끝날 때마다 컨테이너를 멈추기 때문에, 이 베이스를 상속한 클래스가 둘 이상이 되면
+ * 두 번째부터 이미 죽은 컨테이너에 붙어 실패한다. (account-service에서 실제로 겪은 문제)
  */
-@Testcontainers
 public abstract class AbstractMongoIntegrationTest {
 
-	@Container
-	@ServiceConnection
-	static final MongoDBContainer MONGO_CONTAINER = new MongoDBContainer(DockerImageName.parse("mongo:7"));
+	private static final MongoDBContainer MONGO_CONTAINER =
+			new MongoDBContainer(DockerImageName.parse("mongo:7"));
+
+	static {
+		MONGO_CONTAINER.start();
+	}
+
+	@DynamicPropertySource
+	static void mongoProperties(DynamicPropertyRegistry registry) {
+		registry.add("spring.mongodb.uri", MONGO_CONTAINER::getReplicaSetUrl);
+	}
 }

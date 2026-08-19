@@ -28,7 +28,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * Step 2에서 Redis 분산 락으로 계좌별 출금/입금을 직렬화하면 green이 된다.
  */
 @SpringBootTest
-class AccountConcurrencyReproductionTest {
+class AccountConcurrencyReproductionTest extends com.remittance.account.AbstractRedisIntegrationTest {
 
 	@Autowired
 	private AccountService accountService;

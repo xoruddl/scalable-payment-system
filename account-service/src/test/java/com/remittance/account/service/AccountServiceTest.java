@@ -4,6 +4,7 @@ import com.remittance.account.domain.Account;
 import com.remittance.account.domain.AccountType;
 import com.remittance.account.exception.AccountNotFoundException;
 import com.remittance.account.exception.ConcurrentUpdateException;
+import com.remittance.account.lock.DistributedLock;
 import com.remittance.account.repository.AccountRepository;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -15,6 +16,7 @@ import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import java.math.BigDecimal;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.function.Supplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -29,8 +31,18 @@ class AccountServiceTest {
 	@Mock
 	private AccountRepository accountRepository;
 
+	@Mock
+	private DistributedLock distributedLock;
+
 	@InjectMocks
 	private AccountService accountService;
+
+	/** 락 자체는 여기서 검증 대상이 아니므로, 그냥 통과시켜 원래 동작을 실행하게 한다. */
+	@SuppressWarnings("unchecked")
+	private void passThroughLock() {
+		given(distributedLock.executeWithLock(any(), any(), any(), any()))
+				.willAnswer(invocation -> ((Supplier<Account>) invocation.getArgument(3)).get());
+	}
 
 	@Test
 	void 계좌가_없으면_예외() {
@@ -43,6 +55,7 @@ class AccountServiceTest {
 
 	@Test
 	void 낙관적_락_충돌시_재조회_후_재시도한다() {
+		passThroughLock();
 		UUID accountId = UUID.randomUUID();
 		Account account = Account.builder().ownerId(UUID.randomUUID()).currency("KRW")
 				.accountType(AccountType.PERSONAL).build();
@@ -62,6 +75,7 @@ class AccountServiceTest {
 
 	@Test
 	void 재시도를_모두_소진하면_예외() {
+		passThroughLock();
 		UUID accountId = UUID.randomUUID();
 		Account account = Account.builder().ownerId(UUID.randomUUID()).currency("KRW")
 				.accountType(AccountType.PERSONAL).build();

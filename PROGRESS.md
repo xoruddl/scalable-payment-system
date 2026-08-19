@@ -18,13 +18,13 @@
 ```
 Phase 0  ✅  프로젝트 기반 설정
 Phase 1  ✅  핵심 도메인 서비스 (Account / Transfer / Ledger)
-Phase 2  🔄  분산 환경 데이터 정합성   ← 지금 여기 (Step 1/5 완료)
+Phase 2  🔄  분산 환경 데이터 정합성   ← 지금 여기 (Step 2/5 완료)
 Phase 3~11   미착수
 ```
 
 **작업 브랜치**: `feature/phase-2-data-consistency`
-**빌드 상태**: 🔴 의도적 red — Step 0의 재현 테스트 4개 중 **1개 해결(멱등성), 3개 남음**
-(남은 3개는 Step 2~4에서 green이 됩니다. 이 red 상태는 feature 브랜치 안에서만 존재하며 `main`으로 가지 않습니다)
+**빌드 상태**: 🔴 의도적 red — Step 0의 재현 테스트 4개 중 **2개 해결(멱등성·동시성), 2개 남음**
+(남은 2개는 Step 3~4에서 green이 됩니다. 이 red 상태는 feature 브랜치 안에서만 존재하며 `main`으로 가지 않습니다)
 
 ### 시스템 구성
 
@@ -36,7 +36,7 @@ Phase 3~11   미착수
 | gateway | 8080 | (Phase 4에서 구현) | — |
 | config-server | 8888 | (Phase 4에서 구현) | — |
 
-로컬 DB는 Docker로 띄웁니다: `docker compose -f docker-compose.dev-db.yml up -d`
+로컬 인프라(MySQL·MongoDB·Redis)는 Docker로 띄웁니다: `docker compose -f docker-compose.dev.yml up -d`
 서비스 자체의 컨테이너화는 Phase 6 예정 — 지금은 `./gradlew :{서비스}:bootRun`으로 직접 실행합니다.
 
 ---
@@ -64,7 +64,7 @@ Phase 3~11   미착수
 - **Transfer Service**: `RestClient`로 Account를 동기 호출해 출금 → 입금 순차 처리
 - **Ledger Service**: WebFlux + Reactive MongoDB, 커서 기반 페이지네이션으로 거래 내역 조회
 - 낙관적 락(`@Version`) 충돌 시 재조회 후 최대 5회 재시도
-- 로컬 개발용 `docker-compose.dev-db.yml` (MySQL + MongoDB만)
+- 로컬 개발용 `docker-compose.dev-db.yml` (MySQL + MongoDB만) — Step 2에서 Redis가 추가되며 `docker-compose.dev.yml`로 이름이 바뀝니다
 
 ### 의도적으로 남겨둔 것
 
@@ -115,8 +115,8 @@ Phase 1은 "일단 동작하게" 만드는 단계라, 아래는 **알면서 순�
 |---|---|---|
 | 0 | 문제 재현 (실패하는 테스트) | ✅ `ac3b4ac` |
 | 1 | 멱등성 처리 | ✅ `2172086` |
-| 2 | Redis 분산 락 | ⬜ 다음 |
-| 3 | Outbox 패턴 + Kafka 인프라 | ⬜ |
+| 2 | Redis 분산 락 | ✅ `STEP2HASH` |
+| 3 | Outbox 패턴 + Kafka 인프라 | ⬜ 다음 |
 | 4 | Choreography Saga 전환 | ⬜ |
 | 5 | 정합성 대사 배치 | ⬜ |
 
@@ -204,6 +204,73 @@ DB가 조용히 잘라내기 전에 거절하도록 했습니다.
   실패한 요청도 키가 `FAILED`로 남아 재요청 2회가 새 송금을 만들지 않음(총 건수 8 → 8 유지)
 
 **커밋**: `2172086`
+
+---
+
+### Step 2 — Redis 분산 락 ✅
+
+**목표**: 같은 계좌에 출금이 동시에 몰려도 정상 요청이 실패하지 않게 하기
+
+#### 라이브러리 선택 — 토스 사례 조사
+
+"토스 스펙으로 해달라"는 요청에 따라 [토스 기술블로그](https://toss.tech/article/slash23-corebanking)를 확인했습니다.
+원문에서 확인된 것은 다음과 같습니다.
+
+- **"Redis Global Lock과 더불어 DB Layer에서 동시성을 제어하기 위한 JPA의 `@Lock` 어노테이션을 통해 해결했어요"**
+- **"계좌 단위 현재 잔액 데이터에 대해서만 고유하게 Row Locking이 걸리도록 개발"**
+- "Lock을 잡아야 하는 데이터를 명확히 식별하고, 갱신하는 데이터에 대해서만 Lock을 획득해야
+  데드락과 시스템 성능 저하를 예방할 수 있습니다"
+
+즉 토스가 공개한 핵심은 **특정 라이브러리가 아니라 (1) Redis 락 + DB 레이어 락의 이중 방어,
+(2) 락 범위를 계좌 단위로 최소화**입니다. 어떤 Redis 클라이언트를 쓰는지는 공개 자료에 없습니다.
+
+> 첫 검색 결과 요약에는 "RedLock을 쓴다"는 내용이 있었지만, 원문을 직접 열어 확인하니
+> **RedLock 언급은 없었습니다.** 검색 요약을 그대로 믿으면 안 되는 사례로 남겨둡니다.
+
+그래서 **아키텍처는 토스를 따르고, 라이브러리는 직접 구현**하기로 했습니다.
+Redisson(3.52.0)은 BOM 관리 대상이 아닌 데다, 넣어보니 Jackson 2가 Jackson 3와 공존하게 되고
+서블릿 서비스에 Netty 전체가 딸려오며, Redisson이 빌드된 Netty 4.1을 Boot가 4.2.15로 올려버려
+런타임 호환성 리스크까지 있었습니다.
+
+#### 구현
+
+`spring-boot-starter-data-redis`(Lettuce, BOM 관리)만으로 `DistributedLock`을 구현했습니다.
+
+- **획득**: `SET key <내 토큰> NX PX <ttl>` — 키가 없을 때만 성공
+- **해제**: 저장된 값이 **내 토큰일 때만** 삭제 (Lua 스크립트로 비교+삭제를 원자적으로)
+  - 단순 `DEL`을 쓰면, 내 작업이 늦어져 TTL로 락이 풀린 뒤 다른 서버가 잡은 락을 지워버릴 수 있음
+- **락 키**: `lock:account:{accountId}` — 변경하는 계좌 하나에만 (토스의 "락 범위 최소화")
+- **이중 방어**: 낙관적 락(`@Version`) 재시도를 **그대로 유지**. 분산 락은 정상 경로 직렬화,
+  낙관적 락은 락이 TTL로 풀리거나 Redis 장애로 우회된 경우를 잡는 최후 안전망
+  - 토스는 DB 레이어를 비관적 락(`@Lock` row locking)으로 잡았고 우리는 낙관적 락이라는 차이가 있습니다.
+    성능 비교는 Phase 10 부하 테스트에서 해볼 만한 소재입니다.
+
+> ⚠️ 직접 구현이라 **자동 갱신(watchdog)이 없습니다.** TTL(3초)보다 오래 걸리는 작업을
+> 이 락으로 감싸면 안 됩니다.
+
+`docker-compose.dev-db.yml`에 Redis를 추가하면서, 더는 DB만 담지 않으므로
+**`docker-compose.dev.yml`로 이름을 변경**했습니다.
+
+#### 겪은 문제 — Testcontainers 컨테이너가 클래스마다 죽음
+
+`@Testcontainers` + `@Container`를 공통 베이스 클래스에 두었더니, **테스트 클래스가 끝날 때마다
+컨테이너가 멈춰서** 베이스를 상속한 두 번째 클래스부터 `Unable to connect to Redis`로 실패했습니다.
+처음엔 통과하는 것처럼 보였는데, 알고 보니 docker-compose로 띄운 **로컬 Redis에 붙고 있었을 뿐**이었습니다.
+
+→ static 블록에서 한 번만 start하는 **싱글턴 컨테이너 패턴** + `@DynamicPropertySource`로 변경.
+ledger-service의 Mongo 베이스도 같은 잠재 버그가 있어(테스트 클래스가 하나뿐이라 안 드러났을 뿐) 함께 고쳤습니다.
+`AGENTS.md`에도 재발 방지용으로 적어두었습니다.
+
+#### 검증
+
+- account-service 테스트 20건 전부 통과 — 재현 테스트 #1(동시 출금)이 **green**으로 전환
+- `DistributedLockTest` 5건으로 락 자체를 검증: 임계구역 상호배제, 정상/예외 종료 시 해제,
+  대기 타임아웃, **남의 락은 지우지 않음**
+- 실제 HTTP e2e: 잔액 10,000에 동시 출금 20건 × 100원 → **20건 전부 200**, 최종 잔액 정확히 8,000
+  (Step 0 재현 시엔 `ConcurrentUpdateException` 다발이었음)
+- 실패 경로(409) 포함해 Redis에 잔여 락 키 0건 확인
+
+**커밋**: `STEP2HASH`
 
 ---
 
