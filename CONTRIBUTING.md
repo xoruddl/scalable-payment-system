@@ -41,6 +41,45 @@
   - 도메인 모델 설계: Account, Transfer/IdempotencyKey, Transaction(원장)
   ```
 
+## 브랜치 전략
+
+[git flow](https://nvie.com/posts/a-successful-git-branching-model/)를 따릅니다.
+단, git flow의 `master` 역할은 `main` 브랜치가 맡습니다.
+
+| 브랜치 | 역할 | 분기 원본 | 머지 대상 |
+|---|---|---|---|
+| `main` | 제품으로 출시될 수 있는 상태 | — | — |
+| `develop` | 다음 출시 버전을 개발하는 통합 브랜치 | `main` | — |
+| `feature/*` | 기능 개발 | `develop` | `develop` |
+| `release/*` | 이번 출시 버전 준비 | `develop` | `main` + `develop` |
+| `hotfix/*` | 출시 버전에서 발생한 버그 수정 | `main` | `main` + `develop` |
+
+### 명명 규칙
+
+- `feature/phase-2-data-consistency` — Phase 단위 작업은 `feature/phase-{번호}-{주제}`
+- `release/phase-2` — 출시 준비
+- `hotfix/{요약}` — 예: `hotfix/transfer-balance-mismatch`
+
+### 규칙
+
+- **`main`에 직접 커밋하지 않는다.** 항상 `release/*` 또는 `hotfix/*`를 거친다.
+- `main`은 언제나 빌드/테스트가 통과하는 상태를 유지한다.
+  실패하는 테스트(문제 재현용 등)는 `feature/*` 안에서만 존재할 수 있다.
+- 하나의 `feature/*` 브랜치 안에서는 작업 흐름 단위로 커밋을 쪼갠다.
+  (예: Phase 2는 Step 0~5를 각각 별도 커밋으로)
+
+### 출시 주기와 태그
+
+`ROADMAP.md`의 **Phase 하나를 한 번의 출시로 본다.**
+
+```
+feature/phase-N-* → develop → release/phase-N → main (+ 태그) → develop 역머지
+```
+
+Phase 완료 시 `main`에 `phase-N-complete` 형식의 annotated 태그를 단다.
+나중에 특정 Phase 시점의 코드로 되돌아가거나, 카나리 배포·롤백 실습(Phase 7~8)의
+기준점으로 활용한다.
+
 ## 진행 방식
 
 `ROADMAP.md`의 Phase 단위로 진행하며, Phase 완료 시 체크박스를 갱신한다.
