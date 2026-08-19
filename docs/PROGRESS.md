@@ -126,7 +126,7 @@ Phase 1은 "일단 동작하게" 만드는 단계라, 아래는 **알면서 순�
 | 2 | Redis 분산 락 | ✅ `39d12f0` |
 | 3 | Outbox 패턴 + Kafka 인프라 | ✅ `419bb88` |
 | — | (곁가지) 기술 스택 정비 — Java 21, Actuator, CI | ✅ `e97e67d` |
-| 4a | Choreography Saga 전환 — 정상 흐름 | ✅ (이번 Step) |
+| 4a | Choreography Saga 전환 — 정상 흐름 | ✅ `5214917` |
 | 4b | 보상 트랜잭션 + 컨슈머 재시도/DLT | ⬜ 다음 |
 | 5 | 정합성 대사 배치 | ⬜ |
 
