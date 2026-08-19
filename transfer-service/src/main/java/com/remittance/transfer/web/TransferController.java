@@ -27,12 +27,9 @@ public class TransferController {
 
 	@PostMapping
 	public ResponseEntity<TransferResponse> requestTransfer(
-			// TODO(Phase 2): 멱등성 키 저장/중복요청 검증. Phase 1에서는 계약만 맞추고 로직은 없음.
-			@RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey,
+			@RequestHeader("Idempotency-Key") String idempotencyKey,
 			@Valid @RequestBody CreateTransferRequest request) {
-		Transfer transfer = transferService.requestTransfer(
-				request.fromAccountId(), request.toAccountId(), request.amount(), request.currency(),
-				request.memo());
+		Transfer transfer = transferService.requestTransfer(idempotencyKey, request);
 		return ResponseEntity.status(HttpStatus.ACCEPTED).body(TransferResponse.from(transfer));
 	}
 

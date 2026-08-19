@@ -9,6 +9,7 @@ import com.remittance.transfer.domain.TransferStatus;
 import com.remittance.transfer.exception.InsufficientBalanceException;
 import com.remittance.transfer.exception.InvalidTransferRequestException;
 import com.remittance.transfer.repository.TransferRepository;
+import com.remittance.transfer.web.dto.CreateTransferRequest;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -39,14 +40,19 @@ class TransferServiceTest {
 	@Mock
 	private LedgerClient ledgerClient;
 
+	@Mock
+	private IdempotencyService idempotencyService;
+
 	private TransferService transferService;
 
 	private final UUID fromAccountId = UUID.randomUUID();
 	private final UUID toAccountId = UUID.randomUUID();
-	private final BigDecimal amount = BigDecimal.valueOf(1000);
+	// Transfer가 금액을 scale 2로 정규화하므로, 스텁도 같은 표현이어야 매칭된다
+	// (BigDecimal.equals()는 scale까지 비교한다)
+	private final BigDecimal amount = new BigDecimal("1000.00");
 
 	private void setUp() {
-		transferService = new TransferService(transferRepository, accountClient, ledgerClient);
+		transferService = new TransferService(transferRepository, accountClient, ledgerClient, idempotencyService);
 	}
 
 	private void stubSaveReturnsArgument() {
@@ -62,7 +68,7 @@ class TransferServiceTest {
 		given(accountClient.credit(eq(toAccountId), eq(amount), eq("KRW"), any()))
 				.willReturn(new AccountBalanceResponse(toAccountId, BigDecimal.valueOf(6000), "KRW", 2L));
 
-		Transfer result = transferService.requestTransfer(fromAccountId, toAccountId, amount, "KRW", null);
+		Transfer result = transferService.executeTransfer(fromAccountId, toAccountId, amount, "KRW", null);
 
 		assertThat(result.getStatus()).isEqualTo(TransferStatus.COMPLETED);
 		verify(ledgerClient).recordTransactions(List.of(
@@ -80,7 +86,7 @@ class TransferServiceTest {
 		given(accountClient.debit(eq(fromAccountId), eq(amount), eq("KRW"), any()))
 				.willThrow(new InsufficientBalanceException(fromAccountId));
 
-		assertThatThrownBy(() -> transferService.requestTransfer(fromAccountId, toAccountId, amount, "KRW", null))
+		assertThatThrownBy(() -> transferService.executeTransfer(fromAccountId, toAccountId, amount, "KRW", null))
 				.isInstanceOf(InsufficientBalanceException.class);
 
 		verify(accountClient, never()).credit(eq(toAccountId), any(), any(), any());
@@ -98,7 +104,7 @@ class TransferServiceTest {
 		given(accountClient.credit(eq(fromAccountId), eq(amount), eq("KRW"), any()))
 				.willReturn(new AccountBalanceResponse(fromAccountId, BigDecimal.valueOf(5000), "KRW", 3L));
 
-		Transfer result = transferService.requestTransfer(fromAccountId, toAccountId, amount, "KRW", null);
+		Transfer result = transferService.executeTransfer(fromAccountId, toAccountId, amount, "KRW", null);
 
 		assertThat(result.getStatus()).isEqualTo(TransferStatus.FAILED);
 		assertThat(result.getFailureReason()).contains("보상 완료");
@@ -117,17 +123,22 @@ class TransferServiceTest {
 		given(accountClient.credit(eq(fromAccountId), eq(amount), eq("KRW"), any()))
 				.willThrow(new RuntimeException("account service down"));
 
-		Transfer result = transferService.requestTransfer(fromAccountId, toAccountId, amount, "KRW", null);
+		Transfer result = transferService.executeTransfer(fromAccountId, toAccountId, amount, "KRW", null);
 
 		assertThat(result.getStatus()).isEqualTo(TransferStatus.FAILED);
 		assertThat(result.getFailureReason()).contains("보상 실패");
 	}
 
 	@Test
-	void 출금_입금_계좌가_같으면_즉시_예외() {
+	void 출금_입금_계좌가_같으면_멱등성_키를_소모하지_않고_즉시_예외() {
 		setUp();
-		assertThatThrownBy(() -> transferService.requestTransfer(fromAccountId, fromAccountId, amount, "KRW", null))
+		CreateTransferRequest request =
+				new CreateTransferRequest(fromAccountId, fromAccountId, amount, "KRW", null);
+
+		assertThatThrownBy(() -> transferService.requestTransfer("key-1", request))
 				.isInstanceOf(InvalidTransferRequestException.class);
+
 		verify(transferRepository, never()).save(any());
+		verify(idempotencyService, never()).reserve(any(), any());
 	}
 }

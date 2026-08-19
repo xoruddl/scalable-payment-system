@@ -13,7 +13,10 @@ import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
+import com.remittance.transfer.exception.InvalidTransferRequestException;
+
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.Instant;
 import java.util.UUID;
 
@@ -56,16 +59,33 @@ public class Transfer {
 
 	private Instant completedAt;
 
+	/** 금액 컬럼의 scale. 저장 전에 이 표현으로 통일한다. */
+	private static final int AMOUNT_SCALE = 2;
+
 	@Builder
 	public Transfer(UUID fromAccountId, UUID toAccountId, BigDecimal amount, String currency, String memo) {
 		this.transferId = UUID.randomUUID();
 		this.fromAccountId = fromAccountId;
 		this.toAccountId = toAccountId;
-		this.amount = amount;
+		this.amount = normalizeAmount(amount);
 		this.currency = currency;
 		this.memo = memo;
 		this.status = TransferStatus.PENDING;
 		this.requestedAt = Instant.now();
+	}
+
+	/**
+	 * 3000과 3000.00은 같은 금액이지만 BigDecimal로는 표현이 다르다. 정규화해두지 않으면
+	 * 최초 응답(요청받은 표현)과 멱등 재요청 응답(DB를 거친 표현)이 달라져 멱등성 계약이 깨진다.
+	 * 컬럼이 담을 수 없는 정밀도는 DB가 조용히 잘라내기 전에 여기서 거절한다.
+	 */
+	private static BigDecimal normalizeAmount(BigDecimal amount) {
+		try {
+			return amount.setScale(AMOUNT_SCALE, RoundingMode.UNNECESSARY);
+		} catch (ArithmeticException e) {
+			throw new InvalidTransferRequestException(
+					"금액은 소수점 " + AMOUNT_SCALE + "자리까지만 지원합니다: " + amount.toPlainString());
+		}
 	}
 
 	public void markDebitCompleted() {

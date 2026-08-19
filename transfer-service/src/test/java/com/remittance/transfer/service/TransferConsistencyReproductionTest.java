@@ -70,9 +70,10 @@ class TransferConsistencyReproductionTest {
 				.andRespond(withServerError());
 		LedgerClient ledgerClient = new LedgerClient(builder.build());
 
-		TransferService transferService = new TransferService(transferRepository, accountClient, ledgerClient);
+		TransferService transferService = new TransferService(
+				transferRepository, accountClient, ledgerClient, Mockito.mock(IdempotencyService.class));
 
-		Transfer result = transferService.requestTransfer(fromAccountId, toAccountId, amount, "KRW", null);
+		Transfer result = transferService.executeTransfer(fromAccountId, toAccountId, amount, "KRW", null);
 
 		assertThat(result.getStatus())
 				.as("원장 기록이 실패했는데 COMPLETED로 끝나면 잔액과 원장이 영구히 어긋난다")
@@ -93,9 +94,10 @@ class TransferConsistencyReproductionTest {
 				.willReturn(new AccountBalanceResponse(fromAccountId, BigDecimal.valueOf(5_000), "KRW", 3L));
 
 		TransferService transferService = new TransferService(
-				transferRepository, accountClient, Mockito.mock(LedgerClient.class));
+				transferRepository, accountClient, Mockito.mock(LedgerClient.class),
+				Mockito.mock(IdempotencyService.class));
 
-		Transfer result = transferService.requestTransfer(fromAccountId, toAccountId, amount, "KRW", null);
+		Transfer result = transferService.executeTransfer(fromAccountId, toAccountId, amount, "KRW", null);
 
 		verify(accountClient, atLeast(2))
 				.credit(eq(fromAccountId), any(), any(), any());
