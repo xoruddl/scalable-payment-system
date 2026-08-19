@@ -3,6 +3,7 @@ package com.remittance.ledger.service;
 import com.remittance.ledger.domain.Transaction;
 import com.remittance.ledger.exception.TransactionNotFoundException;
 import com.remittance.ledger.repository.TransactionRepository;
+import com.remittance.ledger.support.Timestamps;
 import com.remittance.ledger.web.dto.RecordTransactionRequest;
 import com.remittance.ledger.web.dto.TransactionPageResponse;
 import com.remittance.ledger.web.dto.TransactionResponse;
@@ -27,7 +28,7 @@ public class TransactionService {
 	private final ReactiveMongoTemplate mongoTemplate;
 
 	public Mono<Void> recordTransactions(List<RecordTransactionRequest> requests) {
-		Instant recordedAt = Instant.now();
+		Instant recordedAt = Timestamps.now();
 		List<Transaction> transactions = requests.stream()
 				.map(req -> Transaction.builder()
 						.transactionId(UUID.randomUUID())

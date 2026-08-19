@@ -14,6 +14,7 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 
 import com.remittance.transfer.exception.InvalidTransferRequestException;
+import com.remittance.transfer.support.Timestamps;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -71,7 +72,7 @@ public class Transfer {
 		this.currency = currency;
 		this.memo = memo;
 		this.status = TransferStatus.PENDING;
-		this.requestedAt = Instant.now();
+		this.requestedAt = Timestamps.now();
 	}
 
 	/**
@@ -102,12 +103,12 @@ public class Transfer {
 
 	public void markCompleted() {
 		this.status = TransferStatus.COMPLETED;
-		this.completedAt = Instant.now();
+		this.completedAt = Timestamps.now();
 	}
 
 	public void markFailed(String reason) {
 		this.status = TransferStatus.FAILED;
 		this.failureReason = reason;
-		this.completedAt = Instant.now();
+		this.completedAt = Timestamps.now();
 	}
 }

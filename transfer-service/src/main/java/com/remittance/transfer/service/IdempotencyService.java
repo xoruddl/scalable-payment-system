@@ -2,6 +2,7 @@ package com.remittance.transfer.service;
 
 import com.remittance.transfer.domain.IdempotencyKey;
 import com.remittance.transfer.repository.IdempotencyKeyRepository;
+import com.remittance.transfer.support.Timestamps;
 import com.remittance.transfer.web.dto.CreateTransferRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -12,7 +13,6 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
-import java.time.Instant;
 import java.util.HexFormat;
 import java.util.Optional;
 import java.util.UUID;
@@ -70,7 +70,7 @@ public class IdempotencyService {
 		idempotencyKeyRepository.saveAndFlush(IdempotencyKey.builder()
 				.key(key)
 				.requestHash(requestHash)
-				.expiresAt(Instant.now().plus(RETENTION))
+				.expiresAt(Timestamps.now().plus(RETENTION))
 				.build());
 	}
 

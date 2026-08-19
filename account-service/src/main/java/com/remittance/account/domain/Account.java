@@ -3,6 +3,7 @@ package com.remittance.account.domain;
 import com.remittance.account.exception.AccountNotActiveException;
 import com.remittance.account.exception.CurrencyMismatchException;
 import com.remittance.account.exception.InsufficientBalanceException;
+import com.remittance.account.support.Timestamps;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -68,8 +69,8 @@ public class Account {
 		this.accountType = accountType;
 		this.balance = BigDecimal.ZERO;
 		this.status = AccountStatus.ACTIVE;
-		this.createdAt = Instant.now();
-		this.updatedAt = Instant.now();
+		this.createdAt = Timestamps.now();
+		this.updatedAt = Timestamps.now();
 	}
 
 	public void debit(BigDecimal amount, String currency) {
@@ -78,23 +79,23 @@ public class Account {
 			throw new InsufficientBalanceException(this.accountId);
 		}
 		this.balance = this.balance.subtract(amount);
-		this.updatedAt = Instant.now();
+		this.updatedAt = Timestamps.now();
 	}
 
 	public void credit(BigDecimal amount, String currency) {
 		validateActiveAndCurrency(currency);
 		this.balance = this.balance.add(amount);
-		this.updatedAt = Instant.now();
+		this.updatedAt = Timestamps.now();
 	}
 
 	public void freeze() {
 		this.status = AccountStatus.FROZEN;
-		this.updatedAt = Instant.now();
+		this.updatedAt = Timestamps.now();
 	}
 
 	public void close() {
 		this.status = AccountStatus.CLOSED;
-		this.updatedAt = Instant.now();
+		this.updatedAt = Timestamps.now();
 	}
 
 	private void validateActiveAndCurrency(String currency) {

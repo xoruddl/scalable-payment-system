@@ -1,5 +1,6 @@
 package com.remittance.transfer.domain;
 
+import com.remittance.transfer.support.Timestamps;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -62,7 +63,7 @@ public class IdempotencyKey implements Persistable<String> {
 		this.key = key;
 		this.requestHash = requestHash;
 		this.status = IdempotencyStatus.IN_PROGRESS;
-		this.createdAt = Instant.now();
+		this.createdAt = Timestamps.now();
 		this.expiresAt = expiresAt;
 	}
 

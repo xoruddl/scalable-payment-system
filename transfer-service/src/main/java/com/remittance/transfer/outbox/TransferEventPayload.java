@@ -2,6 +2,7 @@ package com.remittance.transfer.outbox;
 
 import com.remittance.transfer.domain.Transfer;
 import com.remittance.transfer.domain.TransferStatus;
+import com.remittance.transfer.support.Timestamps;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -27,7 +28,7 @@ public record TransferEventPayload(
 				transfer.getAmount(),
 				transfer.getCurrency(),
 				transfer.getFailureReason(),
-				Instant.now()
+				Timestamps.now()
 		);
 	}
 }

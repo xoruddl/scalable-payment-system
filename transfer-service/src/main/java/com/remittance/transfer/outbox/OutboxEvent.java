@@ -1,5 +1,6 @@
 package com.remittance.transfer.outbox;
 
+import com.remittance.transfer.support.Timestamps;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
@@ -73,10 +74,10 @@ public class OutboxEvent {
 		this.aggregateId = aggregateId;
 		this.eventType = eventType;
 		this.payload = payload;
-		this.createdAt = Instant.now();
+		this.createdAt = Timestamps.now();
 	}
 
 	public void markPublished() {
-		this.publishedAt = Instant.now();
+		this.publishedAt = Timestamps.now();
 	}
 }
