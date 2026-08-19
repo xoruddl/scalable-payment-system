@@ -115,7 +115,7 @@ Phase 1은 "일단 동작하게" 만드는 단계라, 아래는 **알면서 순�
 |---|---|---|
 | 0 | 문제 재현 (실패하는 테스트) | ✅ `ac3b4ac` |
 | 1 | 멱등성 처리 | ✅ `2172086` |
-| 2 | Redis 분산 락 | ✅ `STEP2HASH` |
+| 2 | Redis 분산 락 | ✅ `39d12f0` |
 | 3 | Outbox 패턴 + Kafka 인프라 | ⬜ 다음 |
 | 4 | Choreography Saga 전환 | ⬜ |
 | 5 | 정합성 대사 배치 | ⬜ |
@@ -270,7 +270,7 @@ ledger-service의 Mongo 베이스도 같은 잠재 버그가 있어(테스트 �
   (Step 0 재현 시엔 `ConcurrentUpdateException` 다발이었음)
 - 실패 경로(409) 포함해 Redis에 잔여 락 키 0건 확인
 
-**커밋**: `STEP2HASH`
+**커밋**: `39d12f0`
 
 ---
 
