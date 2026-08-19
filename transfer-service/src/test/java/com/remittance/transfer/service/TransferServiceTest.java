@@ -8,6 +8,7 @@ import com.remittance.transfer.domain.Transfer;
 import com.remittance.transfer.domain.TransferStatus;
 import com.remittance.transfer.exception.InsufficientBalanceException;
 import com.remittance.transfer.exception.InvalidTransferRequestException;
+import com.remittance.transfer.outbox.TransferOutboxRecorder;
 import com.remittance.transfer.repository.TransferRepository;
 import com.remittance.transfer.web.dto.CreateTransferRequest;
 import org.junit.jupiter.api.Test;
@@ -43,6 +44,9 @@ class TransferServiceTest {
 	@Mock
 	private IdempotencyService idempotencyService;
 
+	@Mock
+	private TransferOutboxRecorder outboxRecorder;
+
 	private TransferService transferService;
 
 	private final UUID fromAccountId = UUID.randomUUID();
@@ -52,11 +56,14 @@ class TransferServiceTest {
 	private final BigDecimal amount = new BigDecimal("1000.00");
 
 	private void setUp() {
-		transferService = new TransferService(transferRepository, accountClient, ledgerClient, idempotencyService);
+		transferService = new TransferService(
+				transferRepository, accountClient, ledgerClient, idempotencyService, outboxRecorder);
 	}
 
+	/** 상태 변경 저장은 이제 Outbox 레코더를 통해 일어나므로, 인자를 그대로 돌려주게 한다. */
 	private void stubSaveReturnsArgument() {
-		given(transferRepository.save(any(Transfer.class))).willAnswer(invocation -> invocation.getArgument(0));
+		given(outboxRecorder.record(any(Transfer.class), any()))
+				.willAnswer(invocation -> invocation.getArgument(0));
 	}
 
 	@Test
@@ -68,7 +75,8 @@ class TransferServiceTest {
 		given(accountClient.credit(eq(toAccountId), eq(amount), eq("KRW"), any()))
 				.willReturn(new AccountBalanceResponse(toAccountId, BigDecimal.valueOf(6000), "KRW", 2L));
 
-		Transfer result = transferService.executeTransfer(fromAccountId, toAccountId, amount, "KRW", null);
+		Transfer result = transferService.requestTransfer("key-" + UUID.randomUUID(),
+				new CreateTransferRequest(fromAccountId, toAccountId, amount, "KRW", null));
 
 		assertThat(result.getStatus()).isEqualTo(TransferStatus.COMPLETED);
 		verify(ledgerClient).recordTransactions(List.of(
@@ -86,7 +94,8 @@ class TransferServiceTest {
 		given(accountClient.debit(eq(fromAccountId), eq(amount), eq("KRW"), any()))
 				.willThrow(new InsufficientBalanceException(fromAccountId));
 
-		assertThatThrownBy(() -> transferService.executeTransfer(fromAccountId, toAccountId, amount, "KRW", null))
+		assertThatThrownBy(() -> transferService.requestTransfer("key-" + UUID.randomUUID(),
+				new CreateTransferRequest(fromAccountId, toAccountId, amount, "KRW", null)))
 				.isInstanceOf(InsufficientBalanceException.class);
 
 		verify(accountClient, never()).credit(eq(toAccountId), any(), any(), any());
@@ -104,7 +113,8 @@ class TransferServiceTest {
 		given(accountClient.credit(eq(fromAccountId), eq(amount), eq("KRW"), any()))
 				.willReturn(new AccountBalanceResponse(fromAccountId, BigDecimal.valueOf(5000), "KRW", 3L));
 
-		Transfer result = transferService.executeTransfer(fromAccountId, toAccountId, amount, "KRW", null);
+		Transfer result = transferService.requestTransfer("key-" + UUID.randomUUID(),
+				new CreateTransferRequest(fromAccountId, toAccountId, amount, "KRW", null));
 
 		assertThat(result.getStatus()).isEqualTo(TransferStatus.FAILED);
 		assertThat(result.getFailureReason()).contains("보상 완료");
@@ -123,7 +133,8 @@ class TransferServiceTest {
 		given(accountClient.credit(eq(fromAccountId), eq(amount), eq("KRW"), any()))
 				.willThrow(new RuntimeException("account service down"));
 
-		Transfer result = transferService.executeTransfer(fromAccountId, toAccountId, amount, "KRW", null);
+		Transfer result = transferService.requestTransfer("key-" + UUID.randomUUID(),
+				new CreateTransferRequest(fromAccountId, toAccountId, amount, "KRW", null));
 
 		assertThat(result.getStatus()).isEqualTo(TransferStatus.FAILED);
 		assertThat(result.getFailureReason()).contains("보상 실패");

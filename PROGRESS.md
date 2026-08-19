@@ -18,7 +18,7 @@
 ```
 Phase 0  ✅  프로젝트 기반 설정
 Phase 1  ✅  핵심 도메인 서비스 (Account / Transfer / Ledger)
-Phase 2  🔄  분산 환경 데이터 정합성   ← 지금 여기 (Step 2/5 완료)
+Phase 2  🔄  분산 환경 데이터 정합성   ← 지금 여기 (Step 3/5 완료)
 Phase 3~11   미착수
 ```
 
@@ -36,7 +36,7 @@ Phase 3~11   미착수
 | gateway | 8080 | (Phase 4에서 구현) | — |
 | config-server | 8888 | (Phase 4에서 구현) | — |
 
-로컬 인프라(MySQL·MongoDB·Redis)는 Docker로 띄웁니다: `docker compose -f docker-compose.dev.yml up -d`
+로컬 인프라(MySQL·MongoDB·Redis·Kafka)는 Docker로 띄웁니다: `docker compose -f docker-compose.dev.yml up -d`
 서비스 자체의 컨테이너화는 Phase 6 예정 — 지금은 `./gradlew :{서비스}:bootRun`으로 직접 실행합니다.
 
 ---
@@ -116,8 +116,8 @@ Phase 1은 "일단 동작하게" 만드는 단계라, 아래는 **알면서 순�
 | 0 | 문제 재현 (실패하는 테스트) | ✅ `ac3b4ac` |
 | 1 | 멱등성 처리 | ✅ `2172086` |
 | 2 | Redis 분산 락 | ✅ `39d12f0` |
-| 3 | Outbox 패턴 + Kafka 인프라 | ⬜ 다음 |
-| 4 | Choreography Saga 전환 | ⬜ |
+| 3 | Outbox 패턴 + Kafka 인프라 | ✅ `STEP3HASH` |
+| 4 | Choreography Saga 전환 | ⬜ 다음 |
 | 5 | 정합성 대사 배치 | ⬜ |
 
 ### 설계 결정
@@ -271,6 +271,64 @@ ledger-service의 Mongo 베이스도 같은 잠재 버그가 있어(테스트 �
 - 실패 경로(409) 포함해 Redis에 잔여 락 키 0건 확인
 
 **커밋**: `39d12f0`
+
+---
+
+### Step 3 — Outbox 패턴 + Kafka 인프라 ✅
+
+**목표**: "DB 상태 변경"과 "이벤트 발행"의 원자성 확보. **흐름은 아직 바꾸지 않고** 이벤트 발행 기반만 깔기
+
+#### 왜 필요한가
+
+DB와 Kafka는 서로 다른 시스템이라 하나의 트랜잭션으로 묶을 수 없습니다.
+
+- 상태만 저장되고 발행이 실패하면 → **이벤트 유실**
+- 발행만 되고 상태 저장이 롤백되면 → **있지도 않은 일이 알려짐**
+
+그래서 발행하는 대신 **같은 트랜잭션 안에서 `outbox_events` 테이블에 INSERT**하고,
+별도 릴레이가 그 테이블을 읽어 Kafka로 보냅니다.
+
+#### 구현
+
+| 구성요소 | 역할 |
+|---|---|
+| `OutboxEvent` | 이벤트 저장 테이블. `publishedAt`이 null이면 미발행 |
+| `TransferOutboxRecorder` | **송금 상태 변경 + 이벤트 기록을 한 트랜잭션으로** 묶는 지점 |
+| `OutboxRelay` | 0.5초마다 미발행 이벤트를 폴링해 Kafka로 발행 후 `publishedAt` 마킹 |
+
+- 토픽: `transfer.requested` / `transfer.completed` / `transfer.failed`
+- **파티션 키 = 애그리거트 ID(transferId)** — 같은 송금의 이벤트가 한 파티션에 모여 순서가 보장됩니다
+- 발행 실패 시 마킹하지 않고 배치를 중단 → 다음 폴링에서 재시도 (순서 보존)
+- Kafka 4.x는 **KRaft 전용**이라 Zookeeper 없이 단일 노드가 broker+controller를 겸합니다
+- `acks: all` — 돈이 걸린 이벤트이므로 모든 ISR 응답을 기다립니다
+
+> ⚠️ 이 구조는 **at-least-once**입니다. "발행은 성공했는데 마킹 직전에 죽는" 경우 같은 이벤트가
+> 두 번 발행될 수 있습니다. 소비하는 쪽이 멱등해야 하며, Step 4에서 컨슈머를 만들 때 다룹니다.
+
+#### 정리한 것 — `executeTransfer` 제거
+
+테스트 전용으로 남겨뒀던 `executeTransfer`가 송금 생성 경로를 이중화하고 있어서,
+Outbox를 붙이자 **한쪽 경로에만 이벤트가 기록되는 불일치**가 생겼습니다.
+제거하고 테스트가 실제 진입점(`requestTransfer`)을 쓰도록 바꿨습니다.
+
+#### 겪은 문제 — `@Lob`이 MySQL에서 TINYTEXT가 됨
+
+`@Lob String payload`만 붙였더니 Hibernate가 기본 길이(255)를 보고 MySQL에 **TINYTEXT**로 만들었고,
+이벤트 본문이 들어가지 못해 `Data too long for column 'payload'`로 송금이 500을 냈습니다.
+
+**H2로 돌린 테스트는 전부 통과했고, MySQL e2e에서야 드러났습니다.** 길이를 `Length.LONG32`로 명시해
+LONGTEXT로 잡았습니다. (테스트 DB와 운영 DB가 다를 때 생기는 전형적인 함정)
+
+#### 검증
+
+- transfer-service 테스트 23건 중 21건 통과 (남은 2건은 Step 4 대상)
+- `OutboxRelayTest`: 기록된 이벤트가 결국 발행되고 `publishedAt`이 채워짐, 메시지 키가 transferId임을 확인
+- e2e: 성공/실패 송금 각각 `transfer.requested`+`transfer.completed` / `+transfer.failed` 기록,
+  전부 발행 완료(미발행 0), Kafka 콘솔 컨슈머로 실제 메시지 확인
+- **브로커 장애 시나리오**: Kafka를 내린 상태에서도 송금은 202로 정상 처리되고 이벤트 2건이 미발행으로 남음
+  → 브로커 복구 후 **릴레이가 자동으로 재발행**해 미발행 0으로 회복 (Outbox의 핵심 계약 확인)
+
+**커밋**: `STEP3HASH`
 
 ---
 

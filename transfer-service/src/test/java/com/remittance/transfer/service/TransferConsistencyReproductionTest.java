@@ -7,7 +7,9 @@ import com.remittance.transfer.domain.Transfer;
 import com.remittance.transfer.domain.TransferStatus;
 import com.remittance.transfer.exception.AccountServiceException;
 import com.remittance.transfer.exception.InsufficientBalanceException;
+import com.remittance.transfer.outbox.TransferOutboxRecorder;
 import com.remittance.transfer.repository.TransferRepository;
+import com.remittance.transfer.web.dto.CreateTransferRequest;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -46,12 +48,16 @@ class TransferConsistencyReproductionTest {
 	@Mock
 	private AccountClient accountClient;
 
+	@Mock
+	private TransferOutboxRecorder outboxRecorder;
+
 	private final UUID fromAccountId = UUID.randomUUID();
 	private final UUID toAccountId = UUID.randomUUID();
 	private final BigDecimal amount = BigDecimal.valueOf(1_000);
 
 	private void stubSaveReturnsArgument() {
-		given(transferRepository.save(any(Transfer.class))).willAnswer(invocation -> invocation.getArgument(0));
+		given(outboxRecorder.record(any(Transfer.class), any()))
+				.willAnswer(invocation -> invocation.getArgument(0));
 	}
 
 	@Test
@@ -71,9 +77,10 @@ class TransferConsistencyReproductionTest {
 		LedgerClient ledgerClient = new LedgerClient(builder.build());
 
 		TransferService transferService = new TransferService(
-				transferRepository, accountClient, ledgerClient, Mockito.mock(IdempotencyService.class));
+				transferRepository, accountClient, ledgerClient, Mockito.mock(IdempotencyService.class), outboxRecorder);
 
-		Transfer result = transferService.executeTransfer(fromAccountId, toAccountId, amount, "KRW", null);
+		Transfer result = transferService.requestTransfer("key-" + UUID.randomUUID(),
+				new CreateTransferRequest(fromAccountId, toAccountId, amount, "KRW", null));
 
 		assertThat(result.getStatus())
 				.as("원장 기록이 실패했는데 COMPLETED로 끝나면 잔액과 원장이 영구히 어긋난다")
@@ -95,9 +102,10 @@ class TransferConsistencyReproductionTest {
 
 		TransferService transferService = new TransferService(
 				transferRepository, accountClient, Mockito.mock(LedgerClient.class),
-				Mockito.mock(IdempotencyService.class));
+				Mockito.mock(IdempotencyService.class), outboxRecorder);
 
-		Transfer result = transferService.executeTransfer(fromAccountId, toAccountId, amount, "KRW", null);
+		Transfer result = transferService.requestTransfer("key-" + UUID.randomUUID(),
+				new CreateTransferRequest(fromAccountId, toAccountId, amount, "KRW", null));
 
 		verify(accountClient, atLeast(2))
 				.credit(eq(fromAccountId), any(), any(), any());

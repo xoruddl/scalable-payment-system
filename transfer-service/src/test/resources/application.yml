@@ -10,8 +10,20 @@ spring:
       ddl-auto: create-drop
     open-in-view: false
 
+  kafka:
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+
 services:
   account:
     base-url: http://localhost:18081
   ledger:
     base-url: http://localhost:18083
+
+outbox:
+  relay:
+    # Kafka가 없는 테스트 컨텍스트에서 릴레이가 계속 재시도하지 않도록 기본은 끔.
+    # Outbox 발행을 검증하는 테스트만 켠다.
+    enabled: false
+    interval-ms: 200

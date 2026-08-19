@@ -12,6 +12,8 @@ import com.remittance.transfer.exception.IdempotencyConflictException;
 import com.remittance.transfer.exception.IdempotencyInProgressException;
 import com.remittance.transfer.exception.InvalidTransferRequestException;
 import com.remittance.transfer.exception.TransferNotFoundException;
+import com.remittance.transfer.outbox.TransferEventType;
+import com.remittance.transfer.outbox.TransferOutboxRecorder;
 import com.remittance.transfer.repository.TransferRepository;
 import com.remittance.transfer.web.dto.CreateTransferRequest;
 import lombok.RequiredArgsConstructor;
@@ -41,6 +43,7 @@ public class TransferService {
 	private final AccountClient accountClient;
 	private final LedgerClient ledgerClient;
 	private final IdempotencyService idempotencyService;
+	private final TransferOutboxRecorder outboxRecorder;
 
 	/**
 	 * 송금 요청의 공개 진입점. 같은 Idempotency-Key로 다시 들어온 요청은 재처리하지 않고
@@ -108,35 +111,22 @@ public class TransferService {
 				.orElseThrow(() -> new TransferNotFoundException(existing.getTransferId()));
 	}
 
-	/**
-	 * 실제 송금 처리(Saga 본체). 멱등성 판정을 통과한 요청만 여기에 도달한다.
-	 * Step 4에서 이 동기 흐름이 이벤트 기반으로 교체된다.
-	 */
-	public Transfer executeTransfer(UUID fromAccountId, UUID toAccountId, BigDecimal amount, String currency,
-			String memo) {
-		Transfer transfer = transferRepository.save(
-				Transfer.builder()
-						.fromAccountId(fromAccountId)
-						.toAccountId(toAccountId)
-						.amount(amount)
-						.currency(currency)
-						.memo(memo)
-						.build());
-		runSaga(transfer);
-		return transfer;
-	}
-
 	private Transfer createTransfer(CreateTransferRequest request) {
-		return transferRepository.save(
+		return outboxRecorder.record(
 				Transfer.builder()
 						.fromAccountId(request.fromAccountId())
 						.toAccountId(request.toAccountId())
 						.amount(request.amount())
 						.currency(request.currency())
 						.memo(request.memo())
-						.build());
+						.build(),
+				TransferEventType.REQUESTED);
 	}
 
+	/**
+	 * Saga 본체. 멱등성 판정을 통과한 요청만 여기에 도달한다.
+	 * Step 4에서 이 동기 흐름이 이벤트 기반으로 교체된다.
+	 */
 	private void runSaga(Transfer transfer) {
 		AccountBalanceResponse debited = debit(transfer);
 		AccountBalanceResponse credited = credit(transfer);
@@ -156,7 +146,7 @@ public class TransferService {
 			return response;
 		} catch (RuntimeException e) {
 			transfer.markFailed("출금 실패: " + e.getMessage());
-			transferRepository.save(transfer);
+			outboxRecorder.record(transfer, TransferEventType.FAILED);
 			throw e;
 		}
 	}
@@ -168,7 +158,7 @@ public class TransferService {
 					transfer.getTransferId());
 			transfer.markCreditCompleted();
 			transfer.markCompleted();
-			transferRepository.save(transfer);
+			outboxRecorder.record(transfer, TransferEventType.COMPLETED);
 			return response;
 		} catch (RuntimeException e) {
 			compensateDebit(transfer, e);
@@ -187,7 +177,7 @@ public class TransferService {
 			log.error("보상 트랜잭션 실패 - 수동 개입 필요 (transferId={})", transfer.getTransferId(), compensationFailure);
 			transfer.markFailed("보상 실패 - 수동 개입 필요: " + creditFailure.getMessage());
 		}
-		transferRepository.save(transfer);
+		outboxRecorder.record(transfer, TransferEventType.FAILED);
 	}
 
 	private void recordLedger(Transfer transfer, AccountBalanceResponse debited, AccountBalanceResponse credited) {

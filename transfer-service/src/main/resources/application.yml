@@ -13,8 +13,21 @@ spring:
       hibernate:
         format_sql: true
 
+  kafka:
+    bootstrap-servers: localhost:9092
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      # 유실을 막기 위해 모든 ISR의 응답을 기다린다 (돈이 걸린 이벤트이므로)
+      acks: all
+      retries: 3
+
 server:
   port: 8082
+
+outbox:
+  relay:
+    interval-ms: 500
 
 services:
   account:
