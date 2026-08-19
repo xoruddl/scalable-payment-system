@@ -1,13 +1,12 @@
 spring:
   application:
     name: transfer-service
-  datasource:
-    url: jdbc:h2:mem:transfer_db;MODE=MySQL
-    username: sa
-    password: ""
+  # datasource / kafka 접속 정보는 AbstractIntegrationTest가 컨테이너 값으로 주입한다.
   jpa:
     hibernate:
-      ddl-auto: create-drop
+      # 여러 테스트 컨텍스트가 같은 컨테이너 DB를 공유하므로 create-drop은 쓰지 않는다.
+      # 한 컨텍스트가 내려가며 테이블을 지우면 살아있는 다른 컨텍스트가 깨진다.
+      ddl-auto: update
     open-in-view: false
 
   kafka:

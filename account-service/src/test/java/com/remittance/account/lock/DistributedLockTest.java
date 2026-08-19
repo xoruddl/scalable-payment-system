@@ -1,6 +1,6 @@
 package com.remittance.account.lock;
 
-import com.remittance.account.AbstractRedisIntegrationTest;
+import com.remittance.account.AbstractIntegrationTest;
 import com.remittance.account.exception.LockAcquisitionException;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -20,7 +20,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @SpringBootTest
-class DistributedLockTest extends AbstractRedisIntegrationTest {
+class DistributedLockTest extends AbstractIntegrationTest {
 
 	@Autowired
 	private DistributedLock distributedLock;

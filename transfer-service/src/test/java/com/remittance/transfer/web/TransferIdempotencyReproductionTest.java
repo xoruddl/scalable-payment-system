@@ -37,7 +37,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  */
 @SpringBootTest
 @AutoConfigureMockMvc
-class TransferIdempotencyReproductionTest {
+class TransferIdempotencyReproductionTest extends com.remittance.transfer.AbstractIntegrationTest {
 
 	@Autowired
 	private MockMvc mockMvc;

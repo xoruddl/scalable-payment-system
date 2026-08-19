@@ -19,7 +19,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 @SpringBootTest
 @AutoConfigureMockMvc
-class AccountControllerIntegrationTest extends com.remittance.account.AbstractRedisIntegrationTest {
+class AccountControllerIntegrationTest extends com.remittance.account.AbstractIntegrationTest {
 
 	@Autowired
 	private MockMvc mockMvc;

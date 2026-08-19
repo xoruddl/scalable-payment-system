@@ -1,6 +1,6 @@
 package com.remittance.transfer.outbox;
 
-import com.remittance.transfer.AbstractKafkaIntegrationTest;
+import com.remittance.transfer.AbstractIntegrationTest;
 import com.remittance.transfer.domain.Transfer;
 import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
@@ -27,7 +27,7 @@ import static org.awaitility.Awaitility.await;
  * "DB에 커밋된 이벤트는 결국 Kafka로 발행된다"가 핵심 계약이다.
  */
 @SpringBootTest(properties = "outbox.relay.enabled=true")
-class OutboxRelayTest extends AbstractKafkaIntegrationTest {
+class OutboxRelayTest extends AbstractIntegrationTest {
 
 	@Autowired
 	private TransferOutboxRecorder outboxRecorder;

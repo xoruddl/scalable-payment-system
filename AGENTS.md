@@ -78,13 +78,30 @@ docker compose -f docker-compose.dev.yml up -d
 
 ### 통합 테스트용 컨테이너
 
-`AbstractRedisIntegrationTest`(account) / `AbstractMongoIntegrationTest`(ledger) /
-`AbstractKafkaIntegrationTest`(transfer)를 상속해서 씁니다.
-세 베이스 모두 **싱글턴 컨테이너 패턴**(static 블록에서 한 번 start + `@DynamicPropertySource`)입니다.
+각 서비스의 통합 테스트 베이스를 상속해서 씁니다. Java는 단일 상속이라,
+**그 서비스가 필요로 하는 컨테이너를 베이스 하나에 모아**둡니다.
+
+| 베이스 | 띄우는 컨테이너 |
+|---|---|
+| `AbstractIntegrationTest` (account) | MySQL + Redis |
+| `AbstractIntegrationTest` (transfer) | MySQL + Kafka |
+| `AbstractMongoIntegrationTest` (ledger) | MongoDB |
+
+**인메모리 DB(H2)를 쓰지 마세요.** 운영과 같은 MySQL을 컨테이너로 띄웁니다.
+H2로 돌리던 시절, 테스트를 전부 통과하고도 MySQL에서만 터지는 버그가 두 번 있었습니다 —
+`@Lob` 컬럼이 TINYTEXT로 만들어져 "Data too long", 그리고 예약어(`key`) 문제입니다.
 
 > ⚠️ `@Testcontainers` + `@Container` 조합으로 바꾸지 마세요. 그 조합은 **테스트 클래스가 끝날 때마다
 > 컨테이너를 멈추기** 때문에, 베이스를 상속한 클래스가 둘 이상이면 두 번째부터
 > "Unable to connect"로 실패합니다. (Step 2에서 실제로 겪음)
+> 모든 베이스는 **싱글턴 컨테이너 패턴**(static 블록에서 한 번 start + `@DynamicPropertySource`)입니다.
+
+### 로컬에서 잡히지 않는 것
+
+**시각 정밀도 문제는 macOS에서 재현되지 않습니다.** macOS의 `Instant.now()`는 애초에
+마이크로초까지만 주지만 Linux는 나노초까지 줍니다. `support/Timestamps`의 잘라내기를 없애도
+로컬 테스트는 통과하고 **CI(Linux)에서만 실패**합니다. 시각을 다루는 코드를 고쳤다면
+로컬 통과만 믿지 말고 CI 결과를 확인하세요.
 
 ## 환경 주의사항
 
