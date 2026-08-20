@@ -1,21 +1,18 @@
 package com.remittance.ledger.messaging;
 
-import com.remittance.ledger.domain.TransactionDirection;
 import com.remittance.ledger.service.TransactionService;
-import com.remittance.ledger.web.dto.RecordTransactionRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.kafka.annotation.KafkaListener;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.ObjectMapper;
 
-import java.util.List;
+import java.util.UUID;
 
 /**
- * 입금까지 끝난 송금을 원장에 남기고, 끝났음을 알린다.
- * 하나의 송금은 출금(DEBIT)/입금(CREDIT) 두 줄로 기록된다.
+ * 잔액이 움직였다는 소식을 받아 원장에 한 줄 남기고, 송금이라면 기록이 끝났음을 알린다.
  *
- * <p><b>여기엔 Outbox를 두지 않았다.</b> Outbox는 "DB 커밋"과 "이벤트 발행"을 원자적으로 묶기 위한
+ * <p><b>여기엔 Outbox를 두지 않았다.</b> Outbox는 "DB 커밋"과 "이벤트 발행"을 원자적으로 묶는
  * 장치인데, 이 서비스는 그 둘이 어긋나도 스스로 복구된다.
  * <ul>
  *   <li>기록은 성공했는데 발행이 실패하면 → 오프셋이 커밋되지 않아 이벤트가 재전송되고,
@@ -30,26 +27,31 @@ import java.util.List;
  */
 @Component
 @RequiredArgsConstructor
-public class TransferCreditedConsumer {
+public class BalanceChangedConsumer {
 
 	private final TransactionService transactionService;
 	private final KafkaTemplate<String, String> kafkaTemplate;
 	private final ObjectMapper objectMapper;
 
-	@KafkaListener(topics = TransferEvents.CREDITED, groupId = "${spring.kafka.consumer.group-id}")
-	public void onCredited(String payload) {
-		TransferEvents.Credited event = objectMapper.readValue(payload, TransferEvents.Credited.class);
+	@KafkaListener(topics = AccountEvents.BALANCE_CHANGED, groupId = "${spring.kafka.consumer.group-id}")
+	public void onBalanceChanged(String payload) {
+		AccountEvents.BalanceChanged event =
+				objectMapper.readValue(payload, AccountEvents.BalanceChanged.class);
 
-		transactionService.recordTransactions(List.of(
-				new RecordTransactionRequest(event.transferId(), event.fromAccountId(),
-						TransactionDirection.DEBIT, event.amount(), event.fromBalanceAfter()),
-				new RecordTransactionRequest(event.transferId(), event.toAccountId(),
-						TransactionDirection.CREDIT, event.amount(), event.toBalanceAfter())
-		), event.occurredAt()).block();
+		transactionService.record(event).block();
 
+		// 송금의 정상 흐름 두 줄이 다 모였을 때만 알린다. 환불 줄은 종결 신호가 아니다 —
+		// 그건 Account가 transfer.debit-reversed로 따로 알린다.
+		if (event.transferId() != null && event.reason().isTransferLeg()
+				&& Boolean.TRUE.equals(transactionService.isTransferFullyRecorded(event.transferId()).block())) {
+			announceRecorded(event.transferId(), event);
+		}
+	}
+
+	private void announceRecorded(UUID transferId, AccountEvents.BalanceChanged event) {
 		TransferEvents.LedgerRecorded recorded =
-				new TransferEvents.LedgerRecorded(event.transferId(), event.occurredAt());
-		kafkaTemplate.send(TransferEvents.LEDGER_RECORDED, event.transferId().toString(),
+				new TransferEvents.LedgerRecorded(transferId, event.occurredAt());
+		kafkaTemplate.send(TransferEvents.LEDGER_RECORDED, transferId.toString(),
 				objectMapper.writeValueAsString(recorded)).join();
 	}
 }

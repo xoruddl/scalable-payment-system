@@ -1,5 +1,6 @@
 package com.remittance.ledger.config;
 
+import com.remittance.ledger.messaging.AccountEvents;
 import com.remittance.ledger.messaging.TransferEvents;
 import org.apache.kafka.clients.admin.NewTopic;
 import org.springframework.context.annotation.Bean;
@@ -34,7 +35,7 @@ public class KafkaTopicsConfig {
 
 	private static final List<String> PUBLISHED = List.of(TransferEvents.LEDGER_RECORDED);
 
-	private static final List<String> CONSUMED = List.of(TransferEvents.CREDITED);
+	private static final List<String> CONSUMED = List.of(AccountEvents.BALANCE_CHANGED);
 
 	/** 처리하지 못한 메시지가 가는 곳({@link KafkaErrorHandlingConfig}). 마지막 안전망이라 자동 생성에 맡기지 않는다. */
 	private static List<String> deadLetterTopicsOf(List<String> consumed) {

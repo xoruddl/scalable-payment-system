@@ -1,5 +1,6 @@
 package com.remittance.account.config;
 
+import com.remittance.account.messaging.AccountEvents;
 import com.remittance.account.messaging.TransferEvents;
 import org.apache.kafka.clients.admin.NewTopic;
 import org.springframework.context.annotation.Bean;
@@ -38,6 +39,7 @@ public class KafkaTopicsConfig {
 	private static final int REPLICAS = 1;
 
 	private static final List<String> PUBLISHED = List.of(
+			AccountEvents.BALANCE_CHANGED,
 			TransferEvents.DEBITED,
 			TransferEvents.CREDITED,
 			TransferEvents.DEBIT_FAILED,

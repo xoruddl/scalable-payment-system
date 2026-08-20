@@ -5,6 +5,7 @@ import com.remittance.account.exception.AccountNotActiveException;
 import com.remittance.account.exception.AccountNotFoundException;
 import com.remittance.account.exception.CurrencyMismatchException;
 import com.remittance.account.exception.InsufficientBalanceException;
+import com.remittance.account.messaging.AccountEvents;
 import com.remittance.account.messaging.TransferEvents;
 import com.remittance.account.service.AccountService;
 import com.remittance.account.support.Timestamps;
@@ -58,6 +59,8 @@ public class TransferSagaService {
 				account -> new TransferEvents.Debited(
 						event.transferId(), event.fromAccountId(), event.toAccountId(),
 						event.amount(), event.currency(), account.getBalance(), Timestamps.now()),
+				new SagaStepExecutor.BalanceChange(AccountEvents.BalanceChangeReason.TRANSFER_DEBIT,
+						AccountEvents.TransactionDirection.DEBIT, event.amount()),
 				// 출금이 실패했으면 아직 움직인 돈이 없다. 되돌릴 것 없이 송금만 종결하면 된다.
 				reason -> new Fallback(TransferEvents.DEBIT_FAILED, new TransferEvents.DebitFailed(
 						event.transferId(), event.fromAccountId(), event.toAccountId(),
@@ -73,6 +76,8 @@ public class TransferSagaService {
 						event.transferId(), event.fromAccountId(), event.toAccountId(),
 						event.amount(), event.currency(), event.fromBalanceAfter(), account.getBalance(),
 						Timestamps.now()),
+				new SagaStepExecutor.BalanceChange(AccountEvents.BalanceChangeReason.TRANSFER_CREDIT,
+						AccountEvents.TransactionDirection.CREDIT, event.amount()),
 				// 여기서부터가 진짜 문제다. 출금은 이미 나갔는데 입금이 안 됐으므로 돈이 공중에 뜬다.
 				reason -> new Fallback(TransferEvents.CREDIT_FAILED, new TransferEvents.CreditFailed(
 						event.transferId(), event.fromAccountId(), event.toAccountId(),
@@ -94,6 +99,8 @@ public class TransferSagaService {
 				account -> new TransferEvents.DebitReversed(
 						event.transferId(), event.fromAccountId(), event.amount(), event.currency(),
 						account.getBalance(), event.failureReason(), Timestamps.now()),
+				new SagaStepExecutor.BalanceChange(AccountEvents.BalanceChangeReason.TRANSFER_REFUND,
+						AccountEvents.TransactionDirection.CREDIT, event.amount()),
 				null);
 	}
 
@@ -103,12 +110,12 @@ public class TransferSagaService {
 	 */
 	private void runStep(String consumedEventType, UUID transferId, UUID accountId,
 			Consumer<Account> mutation, String nextEventType, Function<Account, Object> nextEventBody,
-			Function<String, Fallback> fallback) {
+			SagaStepExecutor.BalanceChange balanceChange, Function<String, Fallback> fallback) {
 		try {
 			// 잔액 변경이므로 REST 진입점과 똑같은 동시성 방어(분산 락 + 낙관적 락)를 거친다.
 			accountService.guarded(accountId, () -> {
 				sagaStepExecutor.execute(consumedEventType, transferId, accountId,
-						mutation, nextEventType, nextEventBody);
+						mutation, nextEventType, nextEventBody, balanceChange);
 				return null;
 			});
 		} catch (DataIntegrityViolationException duplicate) {

@@ -27,14 +27,14 @@ import static org.awaitility.Awaitility.await;
 @Import(KafkaErrorHandlingTest.DeadLetterProbe.class)
 class KafkaErrorHandlingTest extends AbstractIntegrationTest {
 
-	private static final String CREDITED_DLT = TransferEvents.CREDITED + ".DLT";
+	private static final String BALANCE_CHANGED_DLT = AccountEvents.BALANCE_CHANGED + ".DLT";
 
 	@TestConfiguration
 	static class DeadLetterProbe {
 
 		final BlockingQueue<String> received = new LinkedBlockingQueue<>();
 
-		@KafkaListener(topics = CREDITED_DLT, groupId = "dead-letter-probe")
+		@KafkaListener(topics = BALANCE_CHANGED_DLT, groupId = "dead-letter-probe")
 		void onDeadLetter(String payload) {
 			received.add(payload);
 		}
@@ -51,7 +51,7 @@ class KafkaErrorHandlingTest extends AbstractIntegrationTest {
 		UUID transferId = UUID.randomUUID();
 		String broken = "{\"transferId\":\"" + transferId + "\", 이건 JSON이 아니다";
 
-		kafkaTemplate.send(TransferEvents.CREDITED, transferId.toString(), broken).join();
+		kafkaTemplate.send(AccountEvents.BALANCE_CHANGED, transferId.toString(), broken).join();
 
 		await().atMost(Duration.ofSeconds(60)).untilAsserted(() ->
 				assertThat(deadLetterProbe.received)

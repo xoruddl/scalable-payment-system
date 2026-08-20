@@ -5,6 +5,7 @@ import com.remittance.account.domain.AccountType;
 import com.remittance.account.exception.AccountNotFoundException;
 import com.remittance.account.exception.ConcurrentUpdateException;
 import com.remittance.account.lock.DistributedLock;
+import com.remittance.account.messaging.AccountEvents;
 import com.remittance.account.repository.AccountRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
@@ -14,7 +15,6 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.util.UUID;
-import java.util.function.Consumer;
 import java.util.function.Supplier;
 
 @Service
@@ -30,6 +30,7 @@ public class AccountService {
 
 	private final AccountRepository accountRepository;
 	private final DistributedLock distributedLock;
+	private final BalanceMutationExecutor mutationExecutor;
 
 	@Transactional
 	public Account createAccount(UUID ownerId, String currency, AccountType accountType) {
@@ -61,11 +62,17 @@ public class AccountService {
 	 * 락은 변경하는 계좌 하나에만 건다. 범위를 넓히면 데드락과 처리량 저하로 이어진다.
 	 */
 	public Account debit(UUID accountId, BigDecimal amount, String currency) {
-		return guarded(accountId, () -> applyMutation(accountId, account -> account.debit(amount, currency)));
+		return guarded(accountId, () -> mutationExecutor.execute(accountId,
+				account -> account.debit(amount, currency),
+				AccountEvents.BalanceChangeReason.WITHDRAWAL,
+				AccountEvents.TransactionDirection.DEBIT, amount));
 	}
 
 	public Account credit(UUID accountId, BigDecimal amount, String currency) {
-		return guarded(accountId, () -> applyMutation(accountId, account -> account.credit(amount, currency)));
+		return guarded(accountId, () -> mutationExecutor.execute(accountId,
+				account -> account.credit(amount, currency),
+				AccountEvents.BalanceChangeReason.DEPOSIT,
+				AccountEvents.TransactionDirection.CREDIT, amount));
 	}
 
 	/**
@@ -92,12 +99,6 @@ public class AccountService {
 			}
 		}
 		throw new ConcurrentUpdateException(accountId);
-	}
-
-	private Account applyMutation(UUID accountId, Consumer<Account> mutation) {
-		Account account = findByAccountId(accountId);
-		mutation.accept(account);
-		return accountRepository.saveAndFlush(account);
 	}
 
 	private Account findByAccountId(UUID accountId) {

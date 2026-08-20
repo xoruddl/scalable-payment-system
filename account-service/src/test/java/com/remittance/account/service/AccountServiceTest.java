@@ -34,6 +34,9 @@ class AccountServiceTest {
 	@Mock
 	private DistributedLock distributedLock;
 
+	@Mock
+	private BalanceMutationExecutor mutationExecutor;
+
 	@InjectMocks
 	private AccountService accountService;
 
@@ -61,8 +64,7 @@ class AccountServiceTest {
 				.accountType(AccountType.PERSONAL).build();
 		account.credit(BigDecimal.valueOf(1000), "KRW");
 
-		given(accountRepository.findByAccountId(accountId)).willReturn(Optional.of(account));
-		given(accountRepository.saveAndFlush(any(Account.class)))
+		given(mutationExecutor.execute(any(), any(), any(), any(), any()))
 				.willThrow(new ObjectOptimisticLockingFailureException(Account.class, accountId))
 				.willThrow(new ObjectOptimisticLockingFailureException(Account.class, accountId))
 				.willReturn(account);
@@ -70,18 +72,14 @@ class AccountServiceTest {
 		Account result = accountService.credit(accountId, BigDecimal.valueOf(100), "KRW");
 
 		assertThat(result).isSameAs(account);
-		verify(accountRepository, times(3)).saveAndFlush(any(Account.class));
+		verify(mutationExecutor, times(3)).execute(any(), any(), any(), any(), any());
 	}
 
 	@Test
 	void 재시도를_모두_소진하면_예외() {
 		passThroughLock();
 		UUID accountId = UUID.randomUUID();
-		Account account = Account.builder().ownerId(UUID.randomUUID()).currency("KRW")
-				.accountType(AccountType.PERSONAL).build();
-
-		given(accountRepository.findByAccountId(accountId)).willReturn(Optional.of(account));
-		given(accountRepository.saveAndFlush(any(Account.class)))
+		given(mutationExecutor.execute(any(), any(), any(), any(), any()))
 				.willThrow(new ObjectOptimisticLockingFailureException(Account.class, accountId));
 
 		assertThatThrownBy(() -> accountService.credit(accountId, BigDecimal.valueOf(100), "KRW"))

@@ -3,6 +3,8 @@ package com.remittance.account.saga;
 import com.remittance.account.domain.Account;
 import com.remittance.account.domain.ProcessedEvent;
 import com.remittance.account.exception.AccountNotFoundException;
+import com.remittance.account.messaging.AccountEvents;
+import com.remittance.account.outbox.BalanceJournal;
 import com.remittance.account.outbox.OutboxEvent;
 import com.remittance.account.outbox.OutboxEventRepository;
 import com.remittance.account.repository.AccountRepository;
@@ -40,16 +42,30 @@ public class SagaStepExecutor {
 	private final AccountRepository accountRepository;
 	private final ProcessedEventRepository processedEventRepository;
 	private final OutboxEventRepository outboxEventRepository;
+	private final BalanceJournal balanceJournal;
 	private final ObjectMapper objectMapper;
+
+	/**
+	 * 이 단계가 잔액을 어떻게 움직였는지 — 분개장에 남길 내용이다.
+	 * 금액만으로는 "송금 출금"과 "보상 환불"을 구분할 수 없어 이유를 함께 넘긴다.
+	 */
+	public record BalanceChange(
+			AccountEvents.BalanceChangeReason reason,
+			AccountEvents.TransactionDirection direction,
+			java.math.BigDecimal amount
+	) {
+	}
 
 	/**
 	 * @param consumedEventType 방금 소비한 이벤트 타입. 중복 판정 키의 일부가 된다.
 	 * @param accountId         잔액을 변경할 계좌. 호출부가 이 계좌의 락을 이미 잡고 있어야 한다.
 	 * @param nextEventBody     변경 <b>후</b>의 계좌를 받아 다음 이벤트 본문을 만든다.
+	 * @param balanceChange     분개장에 남길 내용. 잔액 변경과 같은 트랜잭션에 들어가야 한다.
 	 */
 	@Transactional
 	public void execute(String consumedEventType, UUID transferId, UUID accountId,
-			Consumer<Account> mutation, String nextEventType, Function<Account, Object> nextEventBody) {
+			Consumer<Account> mutation, String nextEventType, Function<Account, Object> nextEventBody,
+			BalanceChange balanceChange) {
 		// 이미 처리한 이벤트면 PK 중복으로 여기서 DataIntegrityViolationException이 난다.
 		// 조회 후 INSERT가 아니라 INSERT 먼저인 이유는, 두 스레드가 동시에 "없다"를 보는 경합을 막기 위함.
 		processedEventRepository.saveAndFlush(new ProcessedEvent(consumedEventType, transferId));
@@ -60,6 +76,9 @@ public class SagaStepExecutor {
 		accountRepository.saveAndFlush(account);
 
 		record(transferId, nextEventType, nextEventBody.apply(account));
+		// 잔액이 움직였으면 반드시 분개장에도 남는다 — 입출금 API와 같은 규칙이다.
+		balanceJournal.record(account, balanceChange.reason(), balanceChange.direction(),
+				balanceChange.amount(), transferId);
 	}
 
 	/**
