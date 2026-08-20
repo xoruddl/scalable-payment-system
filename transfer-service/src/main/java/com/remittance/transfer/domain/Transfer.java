@@ -8,6 +8,7 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import jakarta.persistence.Version;
 import lombok.AccessLevel;
 import lombok.Builder;
 import lombok.Getter;
@@ -53,6 +54,20 @@ public class Transfer {
 	@Column(nullable = false, length = 20)
 	private TransferStatus status;
 
+	/**
+	 * Saga 단계마다 토픽이 다르고, 토픽마다 리스너 스레드가 다르다. 여러 리스너가 같은 송금 행을
+	 * 동시에 읽고 쓸 수 있으므로 <b>마지막에 커밋한 쪽이 이기는 것을 막아야 한다.</b>
+	 *
+	 * <p>이게 없던 Step 4c까지는 실제로 덮였다 — {@code markFailed()}가 실행되어
+	 * {@code transfer.failed}까지 발행된 송금이, 뒤늦게 커밋된 출금 이벤트에 밀려
+	 * {@code DEBIT_COMPLETED}로 남았다. 바깥에는 실패라고 알려놓고 자기 기록은 진행 중인 상태다.
+	 *
+	 * <p>충돌하면 {@code TransferService}가 다시 읽어 전이 조건을 <b>처음부터 다시 판단</b>한다.
+	 * 그래야 그 사이 바뀐 상태를 반영한 결정을 내린다.
+	 */
+	@Version
+	private long version;
+
 	private String failureReason;
 
 	@Column(nullable = false, updatable = false)
@@ -89,21 +104,22 @@ public class Transfer {
 		}
 	}
 
-	public void markDebitCompleted() {
-		this.status = TransferStatus.DEBIT_COMPLETED;
-	}
-
-	public void markCreditCompleted() {
-		this.status = TransferStatus.CREDIT_COMPLETED;
+	/**
+	 * 정상 흐름을 한 단계 이상 진행시킨다.
+	 *
+	 * <p>단계를 하나씩 올리는 메서드를 따로 두지 않는 이유는, 이벤트가 단계마다 다른 토픽으로 와서
+	 * <b>순서가 뒤바뀔 수 있기</b> 때문이다. 뒤 단계가 먼저 도착하면 건너뛰어서라도 그 단계로 간다.
+	 * 진행해도 되는지는 {@code TransferStateUpdater}가 판단한다.
+	 */
+	public void advanceTo(TransferStatus target) {
+		this.status = target;
+		if (target == TransferStatus.COMPLETED) {
+			this.completedAt = Timestamps.now();
+		}
 	}
 
 	public void markCompensating() {
 		this.status = TransferStatus.COMPENSATING;
-	}
-
-	public void markCompleted() {
-		this.status = TransferStatus.COMPLETED;
-		this.completedAt = Timestamps.now();
 	}
 
 	public void markFailed(String reason) {

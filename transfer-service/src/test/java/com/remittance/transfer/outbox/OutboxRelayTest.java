@@ -2,6 +2,7 @@ package com.remittance.transfer.outbox;
 
 import com.remittance.transfer.AbstractIntegrationTest;
 import com.remittance.transfer.domain.Transfer;
+import com.remittance.transfer.domain.TransferStatus;
 import org.apache.kafka.clients.consumer.Consumer;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
@@ -63,9 +64,7 @@ class OutboxRelayTest extends AbstractIntegrationTest {
 	@Test
 	void 발행된_메시지는_애그리거트ID를_키로_갖고_payload를_담는다() {
 		Transfer completed = newTransfer();
-		completed.markDebitCompleted();
-		completed.markCreditCompleted();
-		completed.markCompleted();
+		completed.advanceTo(TransferStatus.COMPLETED);
 		Transfer transfer = outboxRecorder.record(completed, TransferEventType.COMPLETED);
 
 		try (Consumer<String, String> consumer = newConsumer()) {

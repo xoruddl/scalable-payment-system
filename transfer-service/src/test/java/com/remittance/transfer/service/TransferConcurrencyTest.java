@@ -7,7 +7,6 @@ import com.remittance.transfer.messaging.TransferEvents;
 import com.remittance.transfer.outbox.TransferEventType;
 import com.remittance.transfer.outbox.TransferOutboxRecorder;
 import com.remittance.transfer.repository.TransferRepository;
-import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -27,7 +26,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.willAnswer;
 
 /**
- * Phase 2 Step 4d — 문제 재현 테스트 (현재는 실패한다).
+ * Phase 2 Step 4d — e2e에서 드러난 결함에 대한 회귀 테스트.
  *
  * <p>세 서비스를 실제로 띄운 e2e에서 드러난 문제다. Saga 단계마다 토픽이 다르고
  * <b>토픽마다 리스너 스레드가 다르다.</b> 여러 리스너가 같은 송금 행을 동시에
@@ -46,9 +45,8 @@ import static org.mockito.BDDMockito.willAnswer;
  * ("Cannot call abstract real method"). 반면 {@code save}는 <b>실제로 부르지 않아도 된다</b> —
  * 이미 영속 상태인 엔티티라 커밋 시점의 변경 감지로 어차피 UPDATE가 나간다.
  */
-@Tag("reproduction")
 @SpringBootTest
-class TransferConcurrencyReproductionTest extends AbstractIntegrationTest {
+class TransferConcurrencyTest extends AbstractIntegrationTest {
 
 	@Autowired
 	private TransferService transferService;

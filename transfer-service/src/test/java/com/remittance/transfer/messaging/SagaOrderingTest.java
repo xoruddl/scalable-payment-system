@@ -7,7 +7,6 @@ import com.remittance.transfer.outbox.TransferEventType;
 import com.remittance.transfer.outbox.TransferOutboxRecorder;
 import com.remittance.transfer.repository.TransferRepository;
 import com.remittance.transfer.service.TransferService;
-import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -19,7 +18,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Phase 2 Step 4d — 문제 재현 테스트 (현재는 실패한다).
+ * Phase 2 Step 4d — e2e에서 드러난 결함에 대한 회귀 테스트.
  *
  * <p>세 서비스를 실제로 띄운 e2e에서 드러난 문제다. Saga 단계마다 <b>토픽이 다르므로</b>
  * 파티션 키가 같아도 도착 순서가 보장되지 않는데, 상태 전이가 "기대한 직전 단계일 때만"이라
@@ -28,9 +27,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  * <p>Step 4b에서 이걸 "중간 상태 하나를 건너뛸 수 있다" 정도로 적어뒀는데 과소평가였다.
  * 건너뛰는 게 아니라 <b>영구 정지</b>다 — e2e에서 정상 송금이 DEBIT_COMPLETED에 멈춘 채 끝나지 않았다.
  */
-@Tag("reproduction")
 @SpringBootTest
-class SagaOrderingReproductionTest extends AbstractIntegrationTest {
+class SagaOrderingTest extends AbstractIntegrationTest {
 
 	@Autowired
 	private TransferService transferService;

@@ -4,7 +4,6 @@ import com.remittance.transfer.AbstractIntegrationTest;
 import com.remittance.transfer.messaging.TransferEvents;
 import org.apache.kafka.clients.admin.AdminClient;
 import org.apache.kafka.clients.admin.TopicDescription;
-import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -18,7 +17,7 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Phase 2 Step 4d — 문제 재현 테스트 (현재는 실패한다).
+ * Phase 2 Step 4d — e2e에서 드러난 결함에 대한 회귀 테스트.
  *
  * <p>세 서비스를 실제로 띄운 e2e에서 드러난 문제다. 이 서비스는 <b>발행하는</b> 토픽만
  * {@code NewTopic}으로 선언하고, <b>소비하는</b> 토픽은 남이 만들어주기를 기대한다.
@@ -37,9 +36,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  * <p>유실은 아니고 메타데이터가 갱신되면 회복되지만, 컨테이너·K8s로 매번 새 환경을 띄우는
  * Phase 6·7에서는 콜드 스타트마다 겪게 된다.
  */
-@Tag("reproduction")
 @SpringBootTest
-class KafkaTopicPartitionReproductionTest extends AbstractIntegrationTest {
+class KafkaTopicPartitionTest extends AbstractIntegrationTest {
 
 	/** 파티션 수는 순서 보장의 전제다. 한 번 잘못 만들어지면 나중에 줄일 수도 없다. */
 	private static final int EXPECTED_PARTITIONS = 3;
