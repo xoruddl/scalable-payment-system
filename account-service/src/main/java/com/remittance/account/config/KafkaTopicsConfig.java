@@ -26,11 +26,30 @@ public class KafkaTopicsConfig {
 
 	@Bean
 	NewTopic transferDebitedTopic() {
-		return TopicBuilder.name(TransferEvents.DEBITED).partitions(PARTITIONS).replicas(REPLICAS).build();
+		return topic(TransferEvents.DEBITED);
 	}
 
 	@Bean
 	NewTopic transferCreditedTopic() {
-		return TopicBuilder.name(TransferEvents.CREDITED).partitions(PARTITIONS).replicas(REPLICAS).build();
+		return topic(TransferEvents.CREDITED);
+	}
+
+	@Bean
+	NewTopic transferDebitFailedTopic() {
+		return topic(TransferEvents.DEBIT_FAILED);
+	}
+
+	@Bean
+	NewTopic transferCreditFailedTopic() {
+		return topic(TransferEvents.CREDIT_FAILED);
+	}
+
+	@Bean
+	NewTopic transferDebitReversedTopic() {
+		return topic(TransferEvents.DEBIT_REVERSED);
+	}
+
+	private NewTopic topic(String name) {
+		return TopicBuilder.name(name).partitions(PARTITIONS).replicas(REPLICAS).build();
 	}
 }

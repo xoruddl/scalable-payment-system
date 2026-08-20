@@ -89,7 +89,7 @@ DTO가 중복되더라도 서비스 경계를 유지하는 쪽을 택했습니�
 `gateway`와 `config-server`는 아직 Phase 0 스켈레톤입니다.
 특히 `config-server`는 지금 실행해도 즉시 종료됩니다 — 버그가 아니라 미구현 상태입니다.
 
-### 송금 흐름 (Phase 2 Step 4a 이후)
+### 송금 흐름 (Phase 2 Step 4 이후)
 
 서비스 간 동기 호출은 없습니다. **각 서비스가 이벤트를 보고 스스로 다음을 발행**합니다(Choreography Saga).
 
@@ -101,13 +101,35 @@ POST /transfers ─▶ Transfer  transfer.requested       (202 즉시 반환, �
                    Transfer  상태 갱신 ─▶ COMPLETED (+ transfer.completed)
 ```
 
+실패하면 흐름이 꺾입니다. **어디까지 갔느냐에 따라 되돌릴 게 있고 없고가 갈립니다.**
+
+```
+출금 실패 ─▶ Account  transfer.debit-failed
+                      Transfer  FAILED (+ transfer.failed)      돈이 안 움직였으므로 종결만
+
+입금 실패 ─▶ Account  transfer.credit-failed
+                      Transfer  COMPENSATING                     아직 종결 아님
+                      Account   환불 ─▶ transfer.debit-reversed  ← 보상
+                      Transfer  FAILED (+ transfer.failed)
+```
+
+`transfer.credit-failed`는 **Account가 발행하고 Account가 다시 받습니다.** 한 서비스 안에서
+끝낼 수 있는 일을 굳이 브로커에 한 바퀴 돌리는 이유는 재시도입니다 — 요청 스레드에서 곧바로
+환불하면 그 환불이 실패했을 때 아무도 다시 해주지 않습니다.
+
+그래서 **전진 단계와 보상 단계는 실패했을 때의 처신이 다릅니다.** 전진 단계는 실패 이벤트를 남기고
+물러나지만, 보상 단계는 물러날 곳이 없어 예외를 그대로 던집니다(재배달 → 끝내 안 되면 DLT).
+
 **흐름 전체를 한눈에 볼 수 있는 코드가 없다**는 게 이 방식의 대가입니다.
 이벤트 계약은 각 서비스의 `messaging/TransferEvents`에 같은 내용으로 중복 정의되어 있으니
 (공유 모듈을 두지 않기로 했으므로) **필드를 바꿀 때는 세 곳을 함께 확인**하세요.
 
 컨슈머는 이벤트를 두 번 받을 수 있습니다(at-least-once). 서비스마다 대응 방식이 다릅니다.
 - **Account**: 잔액 변경은 되돌릴 수 없으므로 `processed_events`에 처리 흔적을 남깁니다 (잔액 변경과 같은 트랜잭션).
-- **Transfer**: 상태 전이에 "기대한 이전 단계일 때만" 조건을 걸어 자연스럽게 멱등합니다.
+  실패도 "처리했다"로 기록합니다 — 그러지 않으면 재전송 때마다 실패 이벤트가 새로 나갑니다.
+- **Transfer**: 상태 전이에 조건을 걸어 자연스럽게 멱등합니다. 정상 흐름은 "직전 단계일 때만",
+  실패 흐름은 **여러 상태에서 받아줍니다** — 실패 이벤트는 정상 이벤트와 다른 토픽이라 도착 순서가
+  보장되지 않고, 한 점만 허용하면 그 이벤트를 버려 송금이 PENDING에 갇힙니다.
 - **Ledger**: 문서 _id를 거래의 자연키(송금+계좌+방향)로 만들어 재기록이 덮어쓰기가 되게 합니다.
 
 ## 실행 · 테스트

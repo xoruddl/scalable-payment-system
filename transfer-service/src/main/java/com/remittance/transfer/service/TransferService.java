@@ -19,6 +19,8 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.EnumSet;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.Consumer;
 
@@ -41,13 +43,38 @@ import java.util.function.Consumer;
  * 이벤트가 브로커에 남아 재개된다.
  * <br>잃은 것: 응답을 받은 시점에 송금이 <b>끝난 게 아니다</b>. 클라이언트는 조회로 확인해야 한다.
  *
- * <p>Step 4a는 정상 흐름만 다룬다. 실패·보상은 Step 4b에서 붙인다.
+ * <p><b>Step 4b에서 실패 흐름이 붙었다.</b> 이 서비스는 실패를 <b>판정</b>하지 않는다 —
+ * 계좌에 무슨 일이 있었는지는 Account가 알려주고, 그걸 받아 송금의 최종 상태를 찍을 뿐이다.
+ * <pre>
+ *   PENDING          ── transfer.debit-failed   ─▶ FAILED        (움직인 돈 없음)
+ *   DEBIT_COMPLETED  ── transfer.credit-failed  ─▶ COMPENSATING  (환불 진행 중)
+ *   COMPENSATING     ── transfer.debit-reversed ─▶ FAILED        (환불 완료)
+ * </pre>
  */
 @Service
 @RequiredArgsConstructor
 public class TransferService {
 
 	private static final Logger log = LoggerFactory.getLogger(TransferService.class);
+
+	/**
+	 * 실패 계열 이벤트는 <b>여러 상태에서 받아줄 수 있어야 한다.</b>
+	 *
+	 * <p>정상 흐름은 "직전 단계일 때만"이라는 한 점만 허용해도 됐다. 실패 흐름은 다르다.
+	 * {@code transfer.debited}와 {@code transfer.credit-failed}는 <b>서로 다른 토픽</b>이라
+	 * 파티션 키가 같아도 순서가 보장되지 않는다. credit-failed가 debited보다 먼저 도착하면
+	 * 송금은 아직 PENDING인데 보상 이벤트가 오는 셈인데, 이때 한 점만 허용하면
+	 * 그 이벤트를 조용히 버리고 <b>송금이 영원히 PENDING에 갇힌다</b>.
+	 *
+	 * <p>대신 종결 상태(COMPLETED/FAILED)는 어디에도 넣지 않았다. 한 번 닫힌 송금은
+	 * 뒤늦은 이벤트로 다시 열리지 않는다 — 그게 재전송에 대한 멱등성이 된다.
+	 */
+	private static final Set<TransferStatus> COMPENSATION_STARTABLE =
+			EnumSet.of(TransferStatus.PENDING, TransferStatus.DEBIT_COMPLETED);
+
+	/** 환불 완료 이벤트는 보상 시작을 못 봤더라도 받아준다 (위와 같은 이유). */
+	private static final Set<TransferStatus> COMPENSATION_CLOSABLE = EnumSet.of(
+			TransferStatus.PENDING, TransferStatus.DEBIT_COMPLETED, TransferStatus.COMPENSATING);
 
 	private final TransferRepository transferRepository;
 	private final IdempotencyService idempotencyService;
@@ -152,6 +179,50 @@ public class TransferService {
 	}
 
 	/**
+	 * 출금 자체가 실패 — 아직 움직인 돈이 없으므로 되돌릴 것 없이 바로 종결한다.
+	 */
+	@Transactional
+	public void applyDebitFailed(TransferEvents.StepFailed event) {
+		terminate(event, EnumSet.of(TransferStatus.PENDING));
+	}
+
+	/**
+	 * 입금이 실패 — Account가 환불하는 중이다. 아직 종결이 아니라는 걸 상태로 드러낸다.
+	 *
+	 * <p>이 중간 상태가 없으면 "출금은 됐는데 왜 멈춰 있지?"로 보인다. COMPENSATING은
+	 * <b>되돌리는 중</b>이라는 뜻이고, 되돌리기가 끝나면 {@link #applyDebitReversed}가 FAILED로 닫는다.
+	 */
+	@Transactional
+	public void applyCreditFailed(TransferEvents.StepFailed event) {
+		Transfer transfer = findOrThrow(event.transferId());
+		if (!COMPENSATION_STARTABLE.contains(transfer.getStatus())) {
+			logSkip(event.transferId(), transfer.getStatus(), COMPENSATION_STARTABLE);
+			return;
+		}
+		transfer.markCompensating();
+		transferRepository.save(transfer);
+	}
+
+	/** 출금이 되돌아왔다 — 이제 송금을 실패로 닫는다. */
+	@Transactional
+	public void applyDebitReversed(TransferEvents.StepFailed event) {
+		terminate(event, COMPENSATION_CLOSABLE);
+	}
+
+	/**
+	 * 실패로 종결하고 그 사실을 이벤트로 남긴다. 알림 같은 후속 처리가 이걸 구독한다(Phase 3).
+	 */
+	private void terminate(TransferEvents.StepFailed event, Set<TransferStatus> allowed) {
+		Transfer transfer = findOrThrow(event.transferId());
+		if (!allowed.contains(transfer.getStatus())) {
+			logSkip(event.transferId(), transfer.getStatus(), allowed);
+			return;
+		}
+		transfer.markFailed(event.failureReason());
+		outboxRecorder.record(transfer, TransferEventType.FAILED);
+	}
+
+	/**
 	 * 기대한 이전 단계일 때만 상태를 올린다.
 	 *
 	 * <p>이벤트는 at-least-once라 같은 이벤트가 다시 올 수 있다. 상태 전이에 조건을 걸어두면
@@ -168,7 +239,7 @@ public class TransferService {
 		transferRepository.save(transfer);
 	}
 
-	private void logSkip(UUID transferId, TransferStatus current, TransferStatus expected) {
+	private void logSkip(UUID transferId, TransferStatus current, Object expected) {
 		log.info("이미 지나간 단계라 건너뛴다 (transferId={}, 현재={}, 기대={})", transferId, current, expected);
 	}
 

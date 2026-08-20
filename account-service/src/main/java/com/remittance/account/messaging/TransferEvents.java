@@ -18,6 +18,15 @@ import java.util.UUID;
  * <p>모든 본문에 {@code @JsonIgnoreProperties(ignoreUnknown = true)}를 붙였다.
  * 발행하는 쪽이 필드를 추가해도 소비하는 쪽이 깨지지 않아야, 서비스를 따로 배포할 수 있다.
  * (실제로 {@code transfer.requested}에는 이 서비스가 쓰지 않는 필드가 여럿 들어 있다.)
+ *
+ * <p>정상 흐름과 보상 흐름은 이렇게 갈린다 (Step 4b).
+ * <pre>
+ *   requested ─▶ 출금 성공 ─▶ debited ─▶ 입금 성공 ─▶ credited          (정상)
+ *   requested ─▶ 출금 실패 ─▶ debit-failed                              (움직인 돈 없음, 종결)
+ *   debited   ─▶ 입금 실패 ─▶ credit-failed ─▶ 환불 ─▶ debit-reversed   (보상 후 종결)
+ * </pre>
+ * 송금을 최종적으로 FAILED로 찍고 {@code transfer.failed}를 발행하는 건 Transfer Service다.
+ * 이 서비스는 <b>계좌에 무슨 일이 있었는지</b>만 알린다 — 송금의 상태는 송금의 주인이 정한다.
  */
 public final class TransferEvents {
 
@@ -27,8 +36,19 @@ public final class TransferEvents {
 	public static final String DEBITED = "transfer.debited";
 	/** Account가 발행: 입금 완료 → Ledger가 원장에 기록한다 */
 	public static final String CREDITED = "transfer.credited";
-	/** 실패 종결 (보상 흐름은 Step 4b에서 추가) */
-	public static final String FAILED = "transfer.failed";
+
+	/** Account가 발행: 출금 자체가 실패 → 되돌릴 게 없으므로 송금만 실패로 종결하면 된다 */
+	public static final String DEBIT_FAILED = "transfer.debit-failed";
+	/**
+	 * Account가 발행하고 <b>Account가 다시 소비</b>: 입금이 실패 → 이미 나간 출금을 되돌려야 한다.
+	 *
+	 * <p>같은 서비스 안에서 처리할 수 있는데도 굳이 이벤트로 한 바퀴 도는 이유는 <b>재시도</b> 때문이다.
+	 * 요청 스레드에서 곧바로 환불하면 그 환불이 실패했을 때 아무도 다시 해주지 않는다
+	 * (Step 0 재현 테스트 #4가 바로 그 문제였다). 브로커에 남겨두면 실패해도 다시 배달된다.
+	 */
+	public static final String CREDIT_FAILED = "transfer.credit-failed";
+	/** Account가 발행: 출금을 되돌렸음 → Transfer가 송금을 FAILED로 종결한다 */
+	public static final String DEBIT_REVERSED = "transfer.debit-reversed";
 
 	private TransferEvents() {
 	}
@@ -71,11 +91,47 @@ public final class TransferEvents {
 	) {
 	}
 
-	/** {@link #FAILED} 본문. */
+	/** {@link #DEBIT_FAILED} 본문. */
 	@JsonIgnoreProperties(ignoreUnknown = true)
-	public record Failed(
+	public record DebitFailed(
 			UUID transferId,
-			String failureReason
+			UUID fromAccountId,
+			UUID toAccountId,
+			BigDecimal amount,
+			String currency,
+			String failureReason,
+			Instant occurredAt
+	) {
+	}
+
+	/**
+	 * {@link #CREDIT_FAILED} 본문.
+	 *
+	 * <p>되돌릴 금액과 계좌를 본문에 담는다. 보상하는 쪽이 "얼마를 누구에게 돌려줘야 하는지"를
+	 * DB에 되물으면, 그 사이 상태가 바뀌었을 때 엉뚱한 금액을 되돌릴 수 있다.
+	 */
+	@JsonIgnoreProperties(ignoreUnknown = true)
+	public record CreditFailed(
+			UUID transferId,
+			UUID fromAccountId,
+			UUID toAccountId,
+			BigDecimal amount,
+			String currency,
+			String failureReason,
+			Instant occurredAt
+	) {
+	}
+
+	/** {@link #DEBIT_REVERSED} 본문. */
+	@JsonIgnoreProperties(ignoreUnknown = true)
+	public record DebitReversed(
+			UUID transferId,
+			UUID fromAccountId,
+			BigDecimal amount,
+			String currency,
+			BigDecimal fromBalanceAfter,
+			String failureReason,
+			Instant occurredAt
 	) {
 	}
 }

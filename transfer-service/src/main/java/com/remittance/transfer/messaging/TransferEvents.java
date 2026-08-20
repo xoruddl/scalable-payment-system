@@ -25,6 +25,13 @@ public final class TransferEvents {
 	/** Ledger가 발행: 원장 기록 완료 → 이 시점에야 송금이 COMPLETED가 된다 */
 	public static final String LEDGER_RECORDED = "transfer.ledger-recorded";
 
+	/** Account가 발행: 출금 자체가 실패 → 움직인 돈이 없으므로 곧바로 FAILED */
+	public static final String DEBIT_FAILED = "transfer.debit-failed";
+	/** Account가 발행: 입금 실패 → 환불이 진행 중이라는 뜻. 아직 종결이 아니다(COMPENSATING) */
+	public static final String CREDIT_FAILED = "transfer.credit-failed";
+	/** Account가 발행: 출금을 되돌렸음 → 이제 FAILED로 종결한다 */
+	public static final String DEBIT_REVERSED = "transfer.debit-reversed";
+
 	private TransferEvents() {
 	}
 
@@ -48,6 +55,19 @@ public final class TransferEvents {
 	@JsonIgnoreProperties(ignoreUnknown = true)
 	public record LedgerRecorded(
 			UUID transferId,
+			Instant occurredAt
+	) {
+	}
+
+	/**
+	 * 실패 계열 이벤트는 이 서비스 입장에서 필요한 게 같다 — 어느 송금이, 왜 실패했는가.
+	 * Account가 함께 실어 보내는 계좌·금액은 Account가 보상할 때 쓰는 값이라 여기서는 읽지 않는다.
+	 * ({@code @JsonIgnoreProperties} 덕분에 안 읽어도 깨지지 않는다.)
+	 */
+	@JsonIgnoreProperties(ignoreUnknown = true)
+	public record StepFailed(
+			UUID transferId,
+			String failureReason,
 			Instant occurredAt
 	) {
 	}

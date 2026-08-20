@@ -59,12 +59,31 @@ public class SagaStepExecutor {
 		mutation.accept(account);
 		accountRepository.saveAndFlush(account);
 
+		record(transferId, nextEventType, nextEventBody.apply(account));
+	}
+
+	/**
+	 * 단계가 <b>업무적으로</b> 실패했을 때 그 사실을 이벤트로 남긴다.
+	 *
+	 * <p>{@link #execute}가 예외로 끝나면 처리 흔적까지 함께 롤백되므로, 실패 사실을 남기는 것도
+	 * 별도의 트랜잭션이어야 한다. 여기서 흔적을 남기지 않으면 재전송이 올 때마다
+	 * <b>실패 이벤트가 계속 새로 발행된다</b> — 잔액이 부족한 송금은 몇 번을 다시 해도 부족하므로,
+	 * 실패했다는 사실 자체를 "처리 완료"로 봐야 한다.
+	 */
+	@Transactional
+	public void recordFailure(String consumedEventType, UUID transferId,
+			String failureEventType, Object failureEventBody) {
+		processedEventRepository.saveAndFlush(new ProcessedEvent(consumedEventType, transferId));
+		record(transferId, failureEventType, failureEventBody);
+	}
+
+	private void record(UUID transferId, String eventType, Object body) {
 		outboxEventRepository.save(OutboxEvent.builder()
 				.aggregateType(AGGREGATE_TYPE)
 				// 파티션 키로 쓰이므로 계좌가 아니라 송금 ID다. 같은 송금의 이벤트 순서를 지켜야 한다.
 				.aggregateId(transferId)
-				.eventType(nextEventType)
-				.payload(objectMapper.writeValueAsString(nextEventBody.apply(account)))
+				.eventType(eventType)
+				.payload(objectMapper.writeValueAsString(body))
 				.build());
 	}
 }

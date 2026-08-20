@@ -28,8 +28,8 @@
 ## Phase 2. 분산 환경 데이터 정합성
 - [x] 멱등성 처리: 송금 요청에 idempotency key 적용 (중복 요청 방지)
 - [x] 분산 락: Redis로 계좌별 동시 이체 직렬화 (Redisson 대신 `SET NX PX` + Lua 직접 구현)
-- [ ] Saga 패턴(Choreography): 출금 → 입금 → 원장 기록 단계별 보상 트랜잭션 설계
-      — 정상 흐름은 Step 4a에서 완료, **보상 트랜잭션이 Step 4b로 남음**
+- [x] Saga 패턴(Choreography): 출금 → 입금 → 원장 기록 단계별 보상 트랜잭션 설계
+      — 정상 흐름 Step 4a, 보상 흐름 Step 4b. **컨슈머 재시도·DLT가 Step 4c로 남음**
 - [x] Outbox 패턴: DB 트랜잭션과 이벤트 발행의 원자성 보장 (Kafka 연계)
 - [ ] 정합성 검증 배치/스케줄러: 계좌 잔액 합 vs 원장 합 대사(reconciliation) 로직
 

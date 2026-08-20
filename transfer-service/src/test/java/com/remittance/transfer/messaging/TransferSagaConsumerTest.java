@@ -74,6 +74,47 @@ class TransferSagaConsumerTest extends AbstractIntegrationTest {
 						.isEqualTo(expected));
 	}
 
+	/**
+	 * 보상 흐름도 배선이 필요하다. 실패 계열 토픽 셋 중 하나라도 리스너가 빠지면
+	 * 송금은 조용히 중간 상태에 갇히고, 아무 로그도 남지 않는다.
+	 */
+	@Test
+	void 입금_실패부터_환불까지_받으면_COMPENSATING을_거쳐_FAILED가_된다() {
+		Transfer transfer = acceptedTransfer();
+		UUID transferId = transfer.getTransferId();
+		String reason = "통화가 일치하지 않습니다";
+
+		publish(TransferEvents.DEBITED,
+				new TransferEvents.Debited(transferId, BigDecimal.valueOf(4_000), Instant.now()), transferId);
+		awaitStatus(transferId, TransferStatus.DEBIT_COMPLETED);
+
+		publish(TransferEvents.CREDIT_FAILED,
+				new TransferEvents.StepFailed(transferId, reason, Instant.now()), transferId);
+		awaitStatus(transferId, TransferStatus.COMPENSATING);
+
+		publish(TransferEvents.DEBIT_REVERSED,
+				new TransferEvents.StepFailed(transferId, reason, Instant.now()), transferId);
+		awaitStatus(transferId, TransferStatus.FAILED);
+
+		Transfer failed = transferRepository.findByTransferId(transferId).orElseThrow();
+		assertThat(failed.getFailureReason()).isEqualTo(reason);
+		assertThat(outboxEventRepository.findByAggregateIdOrderByIdAsc(transferId))
+				.extracting(OutboxEvent::getEventType)
+				.as("종결됐으니 transfer.failed가 나가야 알림 같은 후속 처리가 걸린다")
+				.containsExactly(TransferEventType.REQUESTED.topic(), TransferEventType.FAILED.topic());
+	}
+
+	@Test
+	void 출금_자체가_실패하면_보상_없이_바로_FAILED가_된다() {
+		Transfer transfer = acceptedTransfer();
+		UUID transferId = transfer.getTransferId();
+
+		publish(TransferEvents.DEBIT_FAILED,
+				new TransferEvents.StepFailed(transferId, "잔액이 부족합니다", Instant.now()), transferId);
+
+		awaitStatus(transferId, TransferStatus.FAILED);
+	}
+
 	@Test
 	void 출금_입금_원장기록_순으로_받으면_마지막에야_COMPLETED가_된다() {
 		Transfer transfer = acceptedTransfer();
