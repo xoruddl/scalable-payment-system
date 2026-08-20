@@ -12,4 +12,6 @@ public interface TransactionRepository extends ReactiveMongoRepository<Transacti
 	Mono<Transaction> findByTransactionId(UUID transactionId);
 
 	Flux<Transaction> findByTransferId(UUID transferId);
+
+	Flux<Transaction> findByAccountIdIn(java.util.Collection<UUID> accountIds);
 }

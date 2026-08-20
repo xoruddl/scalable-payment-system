@@ -83,6 +83,7 @@ DTO가 중복되더라도 서비스 경계를 유지하는 쪽을 택했습니�
 | `account-service` | 8081 | Spring MVC + JPA | MySQL `account_db` |
 | `transfer-service` | 8082 | Spring MVC + JPA | MySQL `transfer_db` |
 | `ledger-service` | 8083 | Spring WebFlux | MongoDB `ledger_db` |
+| `reconciliation-service` | 8084 | Spring MVC + JPA | MySQL `reconciliation_db` |
 | `gateway` | 8080 | (Phase 4에서 구현) | — |
 | `config-server` | 8888 | (Phase 4에서 구현) | — |
 
@@ -162,6 +163,28 @@ Saga 전체가 5분 멈추는 걸 겪었습니다.
 재시도는 트랜잭션 밖에서 해야 하므로 전이 자체는 `TransferStateUpdater`에 따로 있습니다
 (Account의 `guarded` + `SagaStepExecutor`와 같은 구조).
 
+### 정합성 대사 (Phase 2 Step 5)
+
+각 서비스가 옳게 동작해도 **합쳐놓고 보면 어긋날 수 있습니다.** Saga가 끊기거나 이벤트가 DLT로 빠지면
+계좌 잔액과 원장이 벌어지고, 송금이 종결되지 못한 채 남습니다. `reconciliation-service`가 주기적으로
+세 서비스에 물어보고 그런 것들을 찾아냅니다.
+
+전제는 **모든 잔액 변경이 원장에 남는다**는 것입니다(Step 5a). 잔액을 바꾸는 경로는 반드시
+`BalanceJournal`을 지나야 합니다 — 한 경로라도 빠지면 "원장 합 = 잔액"이 깨지고 대사가 무의미해집니다.
+
+```
+계좌 잔액 합  vs  원장 합        → BALANCE_MISMATCH
+종결 안 된 오래된 송금            → UNSETTLED_TRANSFER
+IN_PROGRESS로 남은 멱등성 키      → STRANDED_IDEMPOTENCY_KEY
+```
+
+> ⚠️ **대사는 찾아서 알리기만 하고 고치지 않습니다.** 고치는 건 데이터 주인의 몫입니다 —
+> 남의 서비스 데이터를 대사가 바꾸기 시작하면 서비스 경계가 무너지고, 원인을 모르는 채 증상만 지우게 됩니다.
+> 그래서 각 서비스의 `/internal/reconciliation/*`는 **읽기 전용**입니다.
+
+발견 0건과 "대사가 못 돌았다"는 다릅니다. 회차(`reconciliation_runs`)에 `failureReason`이 있으면
+그 회차 결과를 믿으면 안 됩니다.
+
 ## 실행 · 테스트
 
 ```bash
@@ -169,7 +192,7 @@ Saga 전체가 5분 멈추는 걸 겪었습니다.
 docker compose -f docker-compose.dev.yml up -d
 
 # 2. 테스트
-./gradlew :account-service:test :transfer-service:test :ledger-service:test
+./gradlew test
 
 # 3. 서비스 실행 (각각 별도 터미널)
 ./gradlew :account-service:bootRun

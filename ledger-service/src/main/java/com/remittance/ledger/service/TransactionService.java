@@ -2,9 +2,11 @@ package com.remittance.ledger.service;
 
 import com.remittance.ledger.domain.BalanceChangeReason;
 import com.remittance.ledger.domain.Transaction;
+import com.remittance.ledger.domain.TransactionDirection;
 import com.remittance.ledger.messaging.AccountEvents;
 import com.remittance.ledger.exception.TransactionNotFoundException;
 import com.remittance.ledger.repository.TransactionRepository;
+import com.remittance.ledger.web.dto.LedgerBalanceView;
 import com.remittance.ledger.web.dto.TransactionPageResponse;
 import com.remittance.ledger.web.dto.TransactionResponse;
 import lombok.RequiredArgsConstructor;
@@ -15,6 +17,7 @@ import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Mono;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
@@ -68,6 +71,28 @@ public class TransactionService {
 				.distinct()
 				.count()
 				.map(legs -> legs == 2);
+	}
+
+	/**
+	 * 계좌별로 원장을 더해 잔액을 재구성한다 — 입금은 더하고 출금은 뺀다.
+	 *
+	 * <p>줄이 하나도 없는 계좌도 <b>0으로 반드시 포함</b>한다. 빠뜨리면 대사하는 쪽이
+	 * "원장이 아직 안 왔나 보다"와 "원장이 정말 비었다"를 구분하지 못한다.
+	 */
+	public Mono<List<LedgerBalanceView>> balancesOf(List<UUID> accountIds) {
+		return transactionRepository.findByAccountIdIn(accountIds)
+				.collectList()
+				.map(entries -> accountIds.stream()
+						.map(accountId -> new LedgerBalanceView(accountId, entries.stream()
+								.filter(entry -> entry.getAccountId().equals(accountId))
+								.map(this::signedAmount)
+								.reduce(BigDecimal.ZERO, BigDecimal::add)))
+						.toList());
+	}
+
+	private BigDecimal signedAmount(Transaction entry) {
+		return entry.getDirection() == TransactionDirection.CREDIT
+				? entry.getAmount() : entry.getAmount().negate();
 	}
 
 	public Mono<TransactionResponse> getTransaction(UUID transactionId) {

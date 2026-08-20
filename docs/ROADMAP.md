@@ -31,7 +31,8 @@
 - [x] Saga 패턴(Choreography): 출금 → 입금 → 원장 기록 단계별 보상 트랜잭션 설계
       — 정상 흐름 Step 4a, 보상 흐름 Step 4b, 컨슈머 재시도·DLT Step 4c
 - [x] Outbox 패턴: DB 트랜잭션과 이벤트 발행의 원자성 보장 (Kafka 연계)
-- [ ] 정합성 검증 배치/스케줄러: 계좌 잔액 합 vs 원장 합 대사(reconciliation) 로직
+- [x] 정합성 검증 배치/스케줄러: 계좌 잔액 합 vs 원장 합 대사(reconciliation) 로직
+      — 별도 `reconciliation-service`로 분리. 전제로 모든 잔액 변경을 원장에 남기도록 바꿈(Step 5a)
 
 ## Phase 3. 이벤트 기반 아키텍처
 

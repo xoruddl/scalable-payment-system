@@ -46,6 +46,9 @@ class BalanceChangedConsumerTest extends AbstractIntegrationTest {
 	@Autowired
 	private ObjectMapper objectMapper;
 
+	@Autowired
+	private com.remittance.ledger.service.TransactionService transactionService;
+
 	private final BigDecimal amount = new BigDecimal("1000.00");
 
 	private AccountEvents.BalanceChanged entry(UUID accountId, UUID transferId,
@@ -138,6 +141,37 @@ class BalanceChangedConsumerTest extends AbstractIntegrationTest {
 				TransactionDirection.DEBIT, "4000.00"));
 		await().atMost(Duration.ofSeconds(30)).untilAsserted(() ->
 				assertThat(recordedAnnouncements(transferId)).isPositive());
+	}
+
+	/**
+	 * 대사는 이 계산을 믿고 계좌 잔액과 비교한다. 부호를 잘못 더하면 <b>멀쩡한 계좌를
+	 * 어긋났다고 보고</b>하게 되고, 그게 반복되면 아무도 대사 결과를 안 믿게 된다.
+	 */
+	@Test
+	void 원장_합은_입금은_더하고_출금은_뺀_값이다() {
+		UUID accountId = UUID.randomUUID();
+		UUID other = UUID.randomUUID();
+
+		publish(entry(accountId, null, BalanceChangeReason.DEPOSIT,
+				TransactionDirection.CREDIT, "1000.00"));
+		publish(entry(accountId, UUID.randomUUID(), BalanceChangeReason.TRANSFER_DEBIT,
+				TransactionDirection.DEBIT, "0.00"));
+
+		await().atMost(Duration.ofSeconds(30)).untilAsserted(() ->
+				assertThat(entriesOf(accountId)).hasSize(2));
+
+		java.util.Map<UUID, java.math.BigDecimal> balances = transactionService
+				.balancesOf(List.of(accountId, other)).block().stream()
+				.collect(java.util.stream.Collectors.toMap(
+						com.remittance.ledger.web.dto.LedgerBalanceView::accountId,
+						com.remittance.ledger.web.dto.LedgerBalanceView::balance));
+
+		assertThat(balances.get(accountId))
+				.as("1000 입금 후 1000 출금이면 0이다")
+				.isEqualByComparingTo("0.00");
+		assertThat(balances.get(other))
+				.as("줄이 없는 계좌도 0으로 돌려줘야, 대사가 '아직 안 왔다'와 '정말 비었다'를 구분한다")
+				.isEqualByComparingTo("0");
 	}
 
 	/** {@code transfer.ledger-recorded}에 이 송금 건이 몇 번 실렸는지 센다. */
