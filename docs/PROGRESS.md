@@ -6,7 +6,7 @@
 |---|---|
 | `ARCHITECTURE.md` | **구조와 흐름** — 서비스 경계, 이벤트가 흐르는 길 |
 | `DECISIONS.md` | **기술 결정** — 자체 구현을 무엇으로 왜 갈아탔나 |
-| `ROADMAP.md` | **앞으로 할 일** — Phase 0~12 계획 |
+| `ROADMAP.md` | **앞으로 할 일** — Phase 0~13 계획 |
 | `PROGRESS.md` (이 문서) | **실제로 한 일과 그 이유** — 시간순 기록 |
 | `CONTRIBUTING.md` | **규칙** — 커밋 컨벤션, 브랜치 전략 |
 | `../AGENTS.md` | **저장소 진입점** — 프로젝트 목적, 작업 규칙, 실행 방법 |
@@ -22,8 +22,12 @@ Phase 0  ✅  프로젝트 기반 설정
 Phase 1  ✅  핵심 도메인 서비스 (Account / Transfer / Ledger)
 Phase 2  ✅  분산 환경 데이터 정합성   ← 모든 Step 완료
 Phase 3  ✅  이벤트 기반 아키텍처 (알림 컨슈머까지)
-Phase 4~11   미착수
+Phase 4~13   미착수
 ```
+
+**다음 Phase의 방향이 바뀌었습니다** — 측정(Phase 5)을 고동시성 대응(Phase 6)보다 **앞으로**
+당겼습니다. 부하를 걸 수단과 볼 수단을 먼저 만들고 지금 시스템의 천장을 숫자로 박아둔 뒤,
+그 병목을 하나씩 뚫습니다. 자세한 이유는 `ROADMAP.md`의 "순서의 원칙"에 있습니다.
 
 **작업 브랜치**: `develop` — Phase 2·3이 모두 머지되어 있습니다. 다음 작업은
 `feature/phase-4-*`를 새로 내서 시작합니다.
@@ -60,7 +64,7 @@ Phase 4~11   미착수
 | config-server | 8888 | (Phase 4에서 구현) | — |
 
 로컬 인프라(MySQL·MongoDB·Redis·Kafka)는 Docker로 띄웁니다: `docker compose -f docker-compose.dev.yml up -d`
-서비스 자체의 컨테이너화는 Phase 6 예정 — 지금은 `./gradlew :{서비스}:bootRun`으로 직접 실행합니다.
+서비스 자체의 컨테이너화는 Phase 7 예정 — 지금은 `./gradlew :{서비스}:bootRun`으로 직접 실행합니다.
 
 ---
 
