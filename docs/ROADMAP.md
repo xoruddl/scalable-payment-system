@@ -33,6 +33,7 @@
 - [x] Outbox 패턴: DB 트랜잭션과 이벤트 발행의 원자성 보장 (Kafka 연계)
 - [x] 정합성 검증 배치/스케줄러: 계좌 잔액 합 vs 원장 합 대사(reconciliation) 로직
       — 별도 `reconciliation-service`로 분리. 전제로 모든 잔액 변경을 원장에 남기도록 바꿈(Step 5a)
+- [x] 개시 잔액 이월: 원장 도입 이전 잔액을 분개 한 줄로 심어 묵은 불일치 정리 (Step 6a)
 
 ## Phase 3. 이벤트 기반 아키텍처
 
@@ -76,6 +77,8 @@
 
 ## Phase 9. 관측성 (Observability)
 - [ ] Prometheus + Grafana로 메트릭 수집/대시보드 (요청량, 지연시간, 에러율)
+- [ ] 정합성 대사 결과를 메트릭으로 노출 (발견 건수·유형별, 마지막 회차 실패 여부와 경과 시간)
+      — Phase 2에서 대사는 만들었지만 **알리는 경로가 없다.** 지금은 API를 열어봐야 안다.
 - [ ] ELK(Elasticsearch/Logstash/Kibana)로 로그 중앙화
 - [ ] 분산 트레이싱 고려 (Istio/Envoy 트레이싱 연계)
 

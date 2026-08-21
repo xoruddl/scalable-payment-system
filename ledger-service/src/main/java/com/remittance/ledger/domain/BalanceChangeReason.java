@@ -15,7 +15,12 @@ public enum BalanceChangeReason {
 	/** 송금과 무관한 입금 */
 	DEPOSIT,
 	/** 송금과 무관한 출금 */
-	WITHDRAWAL;
+	WITHDRAWAL,
+	/**
+	 * 원장 도입 이전에 쌓여 있던 잔액을 한 줄로 이월한 것. 계좌당 한 번만 들어온다.
+	 * 발행하는 쪽에서는 잔액을 움직이지 않지만, 원장 입장에서는 다른 줄과 똑같이 더하고 뺀다.
+	 */
+	OPENING_BALANCE;
 
 	/** 송금의 정상 흐름을 이루는 두 줄. 이 둘이 다 있어야 원장 기록이 끝난 것이다. */
 	public boolean isTransferLeg() {

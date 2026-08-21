@@ -174,6 +174,57 @@ class BalanceChangedConsumerTest extends AbstractIntegrationTest {
 				.isEqualByComparingTo("0");
 	}
 
+	/**
+	 * Phase 2 Step 6a — 개시 이월도 원장에서는 <b>다른 줄과 똑같이</b> 더해진다.
+	 *
+	 * <p>이월분이 합에서 빠지면 애초에 이월한 의미가 없다. 잔액과 맞추려고 심은 줄이
+	 * 계산에 안 들어가면 그 계좌는 여전히 어긋난 것으로 잡힌다.
+	 */
+	@Test
+	void 개시_이월도_원장_합에_들어간다() {
+		UUID accountId = UUID.randomUUID();
+
+		publish(entry(accountId, null, BalanceChangeReason.OPENING_BALANCE,
+				TransactionDirection.CREDIT, "1000.00"));
+
+		await().atMost(Duration.ofSeconds(30)).untilAsserted(() ->
+				assertThat(entriesOf(accountId))
+						.singleElement()
+						.satisfies(t -> {
+							assertThat(t.getReason()).isEqualTo(BalanceChangeReason.OPENING_BALANCE);
+							assertThat(t.getTransferId())
+									.as("어느 송금 때문도 아니다")
+									.isNull();
+						}));
+
+		assertThat(transactionService.balancesOf(List.of(accountId)).block())
+				.singleElement()
+				.satisfies(view -> assertThat(view.balance()).isEqualByComparingTo("1000.00"));
+	}
+
+	/**
+	 * 개시 이월은 <b>송금의 한 다리가 아니다.</b> 이월을 전송 단계로 세면, 출금 줄 하나와
+	 * 이월 줄 하나만으로 "두 줄 모였다"고 판단해 <b>입금이 원장에 없는데도 원장 기록 완료를
+	 * 알릴</b> 수 있다. 그러면 송금이 원장 없이 COMPLETED가 된다.
+	 */
+	@Test
+	void 개시_이월은_원장_기록_완료로_세지_않는다() {
+		UUID from = UUID.randomUUID();
+		UUID transferId = UUID.randomUUID();
+
+		publish(entry(from, transferId, BalanceChangeReason.TRANSFER_DEBIT,
+				TransactionDirection.DEBIT, "4000.00"));
+		publish(entry(from, transferId, BalanceChangeReason.OPENING_BALANCE,
+				TransactionDirection.CREDIT, "4000.00"));
+
+		await().atMost(Duration.ofSeconds(30)).untilAsserted(() ->
+				assertThat(entriesOf(from)).hasSize(2));
+		await().during(Duration.ofSeconds(3)).untilAsserted(() ->
+				assertThat(recordedAnnouncements(transferId))
+						.as("입금 줄이 없는데 완료를 알리면 송금이 원장 없이 COMPLETED가 된다")
+						.isZero());
+	}
+
 	/** {@code transfer.ledger-recorded}에 이 송금 건이 몇 번 실렸는지 센다. */
 	private long recordedAnnouncements(UUID transferId) {
 		return recordedProbe.received.stream().filter(p -> p.contains(transferId.toString())).count();

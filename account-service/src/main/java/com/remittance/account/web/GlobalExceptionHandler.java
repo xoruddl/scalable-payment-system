@@ -6,6 +6,8 @@ import com.remittance.account.exception.ConcurrentUpdateException;
 import com.remittance.account.exception.CurrencyMismatchException;
 import com.remittance.account.exception.InsufficientBalanceException;
 import com.remittance.account.exception.LockAcquisitionException;
+import com.remittance.account.exception.StaleBalanceSnapshotException;
+import com.remittance.account.exception.UnpublishedJournalException;
 import com.remittance.account.web.dto.ErrorResponse;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -46,6 +48,16 @@ public class GlobalExceptionHandler {
 	@ExceptionHandler(LockAcquisitionException.class)
 	public ResponseEntity<ErrorResponse> handleLockAcquisition(LockAcquisitionException e) {
 		return error(HttpStatus.CONFLICT, "LOCK_TIMEOUT", e.getMessage());
+	}
+
+	@ExceptionHandler(StaleBalanceSnapshotException.class)
+	public ResponseEntity<ErrorResponse> handleStaleSnapshot(StaleBalanceSnapshotException e) {
+		return error(HttpStatus.CONFLICT, "STALE_BALANCE_SNAPSHOT", e.getMessage());
+	}
+
+	@ExceptionHandler(UnpublishedJournalException.class)
+	public ResponseEntity<ErrorResponse> handleUnpublishedJournal(UnpublishedJournalException e) {
+		return error(HttpStatus.CONFLICT, "UNPUBLISHED_JOURNAL", e.getMessage());
 	}
 
 	@ExceptionHandler(MethodArgumentNotValidException.class)
