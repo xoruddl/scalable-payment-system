@@ -4,3 +4,14 @@ spring:
   mongodb:
     representation:
       uuid: standard
+
+  kafka:
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+    consumer:
+      # 테스트 컨텍스트마다 그룹을 나누면 오프셋이 섞이지 않는다.
+      group-id: ledger-service-test
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      auto-offset-reset: earliest

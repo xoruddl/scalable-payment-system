@@ -29,22 +29,24 @@ class TransferTest {
 	void 정상흐름_상태전이() {
 		Transfer transfer = newTransfer();
 
-		transfer.markDebitCompleted();
+		transfer.advanceTo(TransferStatus.DEBIT_COMPLETED);
 		assertThat(transfer.getStatus()).isEqualTo(TransferStatus.DEBIT_COMPLETED);
 
-		transfer.markCreditCompleted();
+		transfer.advanceTo(TransferStatus.CREDIT_COMPLETED);
 		assertThat(transfer.getStatus()).isEqualTo(TransferStatus.CREDIT_COMPLETED);
 
-		transfer.markCompleted();
+		transfer.advanceTo(TransferStatus.COMPLETED);
 		assertThat(transfer.getStatus()).isEqualTo(TransferStatus.COMPLETED);
-		assertThat(transfer.getCompletedAt()).isNotNull();
+		assertThat(transfer.getCompletedAt())
+				.as("완료 시각은 COMPLETED로 갈 때만 찍힌다")
+				.isNotNull();
 	}
 
 	@Test
 	void 보상_실패흐름() {
 		Transfer transfer = newTransfer();
 
-		transfer.markDebitCompleted();
+		transfer.advanceTo(TransferStatus.DEBIT_COMPLETED);
 		transfer.markCompensating();
 		assertThat(transfer.getStatus()).isEqualTo(TransferStatus.COMPENSATING);
 

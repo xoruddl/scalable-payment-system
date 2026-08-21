@@ -1,0 +1,42 @@
+spring:
+  application:
+    name: reconciliation-service
+  datasource:
+    url: jdbc:mysql://localhost:3306/reconciliation_db?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
+    username: root
+    password: root
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+
+server:
+  port: 8084
+
+reconciliation:
+  # 계좌를 몇 개씩 끊어 대조할지
+  page-size: 200
+  # 정상 송금은 몇 초면 끝난다. 컨슈머 재시도(최대 7초 백오프)와 DB 지연을 감안해 넉넉히 잡는다 —
+  # 짧으면 정상 건이 계속 잡혀 진짜 신호가 묻힌다.
+  unsettled-after: 2m
+  key-stranded-after: 10m
+  # 돈은 한 푼도 어긋나면 안 된다.
+  tolerance: 0
+  scheduler:
+    enabled: true
+    interval-ms: 60000
+  clients:
+    account-url: http://localhost:8081
+    transfer-url: http://localhost:8082
+    ledger-url: http://localhost:8083
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: always
+      probes:
+        enabled: true

@@ -19,11 +19,17 @@ subprojects {
 
 	java {
 		toolchain {
-			languageVersion = JavaLanguageVersion.of(17)
+			languageVersion = JavaLanguageVersion.of(21)
 		}
 	}
 
 	dependencies {
+		// 모든 서비스가 헬스체크·메트릭 엔드포인트를 노출한다.
+		// Phase 7 K8s의 liveness/readiness probe와 Phase 9 Prometheus 스크래핑의 전제조건.
+		implementation 'org.springframework.boot:spring-boot-starter-actuator'
+		// /actuator/prometheus 엔드포인트는 이 레지스트리가 있어야 생긴다.
+		runtimeOnly 'io.micrometer:micrometer-registry-prometheus'
+
 		compileOnly 'org.projectlombok:lombok'
 		annotationProcessor 'org.projectlombok:lombok'
 		testImplementation 'org.springframework.boot:spring-boot-starter-test'
@@ -32,7 +38,25 @@ subprojects {
 		testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 	}
 
+	// 기본 test에서는 'reproduction' 태그를 제외한다.
+	// 아직 못 고친 문제를 일부러 red로 두는 재현 테스트라, 포함하면 CI가 상시 실패해
+	// "빌드가 깨졌다"는 신호로서의 가치를 잃는다. 해당 Step에서 고쳐지면 태그를 떼면 된다.
 	tasks.named('test') {
-		useJUnitPlatform()
+		useJUnitPlatform {
+			excludeTags 'reproduction'
+		}
+	}
+
+	// 재현 테스트만 따로 돌려본다: ./gradlew reproductionTest
+	// 아직 red인 게 정상이므로 실패해도 빌드를 세우지 않는다.
+	tasks.register('reproductionTest', Test) {
+		group = 'verification'
+		description = '아직 해결되지 않은 문제를 재현하는 테스트 (현재는 실패하는 것이 정상)'
+		testClassesDirs = sourceSets.test.output.classesDirs
+		classpath = sourceSets.test.runtimeClasspath
+		useJUnitPlatform {
+			includeTags 'reproduction'
+		}
+		ignoreFailures = true
 	}
 }

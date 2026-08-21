@@ -1,0 +1,71 @@
+# 로컬 개발용 인프라(DB·Redis 등)만 띄우는 compose 파일.
+# 서비스 자체를 컨테이너로 올리는 정식 docker-compose.yml은 Phase 6에서 별도로 구성한다.
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: remittance-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+    ports:
+      - "3306:3306"
+    volumes:
+      - remittance-mysql-data:/var/lib/mysql
+      - ./docker/mysql-init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-proot"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  mongo:
+    image: mongo:7
+    container_name: remittance-mongo
+    environment:
+      MONGO_INITDB_DATABASE: ledger_db
+    ports:
+      - "27017:27017"
+    volumes:
+      - remittance-mongo-data:/data/db
+
+  # Phase 2 Step 2: 계좌별 동시 이체를 직렬화하는 분산 락 저장소
+  redis:
+    image: redis:7-alpine
+    container_name: remittance-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Phase 2 Step 3: Outbox가 발행하는 도메인 이벤트 브로커.
+  # Kafka 4.x는 KRaft 전용이라 Zookeeper가 필요 없다 (단일 노드가 broker+controller 겸임).
+  kafka:
+    image: apache/kafka:4.1.0
+    container_name: remittance-kafka
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      # 단일 노드이므로 복제본은 모두 1
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+
+volumes:
+  remittance-mysql-data:
+  remittance-mongo-data:

@@ -1,0 +1,17 @@
+spring:
+  application:
+    name: reconciliation-service
+  # datasource 접속 정보는 AbstractIntegrationTest가 컨테이너 값으로 주입한다.
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+
+reconciliation:
+  page-size: 2
+  unsettled-after: 2m
+  key-stranded-after: 10m
+  tolerance: 0
+  scheduler:
+    # 테스트가 상태를 만드는 동안 배치가 끼어들면 검증이 흔들린다. 필요한 테스트만 켠다.
+    enabled: false
