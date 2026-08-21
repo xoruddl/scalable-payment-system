@@ -1,5 +1,6 @@
 package com.remittance.ledger;
 
+import org.junit.jupiter.api.Tag;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.MongoDBContainer;
@@ -16,6 +17,12 @@ import org.testcontainers.utility.DockerImageName;
  * 테스트 클래스가 끝날 때마다 컨테이너를 멈추기 때문에, 이 베이스를 상속한 클래스가 둘 이상이 되면
  * 두 번째부터 이미 죽은 컨테이너에 붙어 실패한다. (account-service에서 실제로 겪은 문제)
  */
+/**
+ * <b>{@code integration}</b> 태그가 여기 붙어 있고 JUnit의 {@code @Tag}는 상속되므로,
+ * 이 클래스를 상속하는 테스트는 전부 자동으로 통합 테스트로 분류된다.
+ * {@code ./gradlew unitTest}에서 제외되어 Docker 없이 빠른 검증이 가능해진다.
+ */
+@Tag("integration")
 public abstract class AbstractIntegrationTest {
 
 	private static final MongoDBContainer MONGO_CONTAINER =

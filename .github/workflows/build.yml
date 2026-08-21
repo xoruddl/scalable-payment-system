@@ -24,8 +24,43 @@ jobs:
         with:
           args: -color
 
+  # Docker가 필요 없는 테스트만. 몇 초면 끝난다.
+  # 오타나 단순 회귀 때문에 Testcontainers로 MySQL·MongoDB·Redis·Kafka를 띄우고 있을 이유가 없다.
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # bootBuildInfo가 커밋 해시를 읽는다. depth 1이면 rev-parse는 되지만
+          # 브랜치 이름은 detached HEAD라 'HEAD'로 나온다 — 그래도 무방하다.
+          fetch-depth: 1
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Unit tests
+        run: ./gradlew unitTest --no-daemon --console=plain
+
+      - name: Upload test reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-reports
+          path: '**/build/reports/tests/unitTest'
+          retention-days: 7
+
+  # 통합 테스트까지 포함한 전체 빌드. Testcontainers가 Docker를 쓰는데
+  # ubuntu-latest 러너에는 이미 데몬이 떠 있다.
   build:
     runs-on: ubuntu-latest
+    # 빠른 쪽이 먼저 통과해야 느린 쪽을 시작한다.
+    needs: unit
     steps:
       - uses: actions/checkout@v4
 
@@ -40,9 +75,19 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      # Testcontainers가 Docker를 쓰는데, ubuntu-latest 러너에는 이미 데몬이 떠 있다.
       - name: Build and test
         run: ./gradlew build --no-daemon --console=plain
+
+      # 무엇이 빌드됐는지를 실행 로그에서 바로 확인할 수 있게 남긴다.
+      # Phase 7에서 이미지를 구울 때는 이 커밋 해시가 그대로 태그가 된다.
+      - name: Report build info
+        run: |
+          {
+            echo '### Build info'
+            echo '```properties'
+            cat account-service/build/resources/main/META-INF/build-info.properties
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       # 실패한 테스트의 리포트를 받아볼 수 있게 남긴다.
       - name: Upload test reports

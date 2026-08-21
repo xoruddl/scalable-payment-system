@@ -4,8 +4,33 @@ plugins {
 	id 'io.spring.dependency-management' version '1.1.7' apply false
 }
 
+/**
+ * git 정보를 빌드에 새겨 넣기 위해 한 번만 읽는다.
+ *
+ * git이 없거나 저장소 밖에서 빌드하는 경우(소스 tarball 등)에도 빌드가 깨지면 안 되므로
+ * 실패하면 조용히 'unknown'으로 떨어진다 — 버전 정보 때문에 빌드를 못 하는 건 본말전도다.
+ */
+def gitValue = { List<String> args ->
+	try {
+		def out = providers.exec { commandLine(args) }.standardOutput.asText.get().trim()
+		return out.isEmpty() ? 'unknown' : out
+	} catch (Exception ignored) {
+		return 'unknown'
+	}
+}
+
+ext {
+	gitCommit = gitValue(['git', 'rev-parse', '--short=12', 'HEAD'])
+	gitBranch = gitValue(['git', 'rev-parse', '--abbrev-ref', 'HEAD'])
+}
+
 allprojects {
 	group = 'com.remittance'
+
+	/*
+	 * 아티팩트 버전은 제품 버전이지 "무엇이 배포됐나"의 답이 아니다.
+	 * 그 답은 build-info가 한다 — 아래 bootBuildInfo 설정 참고.
+	 */
 	version = '0.0.1-SNAPSHOT'
 
 	repositories {
@@ -38,12 +63,55 @@ subprojects {
 		testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 	}
 
+	/*
+	 * Spring Boot 모듈에만 build-info를 심는다.
+	 *
+	 * 이게 없으면 "지금 떠 있는 이 서비스가 어느 커밋인가"에 답할 방법이 없다.
+	 * 아티팩트 버전은 0.0.1-SNAPSHOT으로 고정이라 커밋을 구분하지 못하고,
+	 * 이미지 태그는 배포한 사람만 안다. 실행 중인 프로세스에 직접 물어볼 수 있어야 한다.
+	 *
+	 *   GET /actuator/info  →  build.commit / build.branch / build.time
+	 *
+	 * Actuator의 info 엔드포인트는 각 서비스 application.yml에서 이미 열려 있다.
+	 */
+	plugins.withId('org.springframework.boot') {
+		springBoot {
+			buildInfo {
+				properties {
+					additional.put('commit', rootProject.ext.gitCommit)
+					additional.put('branch', rootProject.ext.gitBranch)
+				}
+			}
+		}
+	}
+
 	// 기본 test에서는 'reproduction' 태그를 제외한다.
 	// 아직 못 고친 문제를 일부러 red로 두는 재현 테스트라, 포함하면 CI가 상시 실패해
 	// "빌드가 깨졌다"는 신호로서의 가치를 잃는다. 해당 Step에서 고쳐지면 태그를 떼면 된다.
 	tasks.named('test') {
 		useJUnitPlatform {
 			excludeTags 'reproduction'
+		}
+	}
+
+	/*
+	 * Docker 없이 몇 초 만에 끝나는 것만 돌린다: ./gradlew unitTest
+	 *
+	 * 통합 테스트는 Testcontainers로 MySQL·MongoDB·Redis·Kafka를 띄우느라 느리다.
+	 * PR마다 그걸 다 기다리면 피드백이 늦어지고, Phase 5에서 부하 테스트까지 붙으면 더 나빠진다.
+	 * CI는 이걸 먼저 통과시킨 뒤에야 통합 테스트로 넘어간다 — 오타 하나 때문에
+	 * 컨테이너를 띄우고 있을 이유가 없다.
+	 *
+	 * 'integration' 태그는 각 서비스의 AbstractIntegrationTest에 달려 있고,
+	 * JUnit의 @Tag는 상속되므로 그걸 상속한 테스트는 자동으로 붙는다.
+	 */
+	tasks.register('unitTest', Test) {
+		group = 'verification'
+		description = 'Docker가 필요 없는 빠른 테스트만 실행한다'
+		testClassesDirs = sourceSets.test.output.classesDirs
+		classpath = sourceSets.test.runtimeClasspath
+		useJUnitPlatform {
+			excludeTags 'integration', 'reproduction'
 		}
 	}
 

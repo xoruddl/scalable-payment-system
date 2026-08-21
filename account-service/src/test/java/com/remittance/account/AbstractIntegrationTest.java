@@ -1,6 +1,7 @@
 package com.remittance.account;
 
 import com.redis.testcontainers.RedisContainer;
+import org.junit.jupiter.api.Tag;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.testcontainers.containers.MySQLContainer;
@@ -25,6 +26,12 @@ import org.testcontainers.utility.DockerImageName;
  * 테스트 클래스가 끝날 때마다 컨테이너를 멈춰서, 이 베이스를 상속한 두 번째 클래스부터
  * "Unable to connect"로 실패한다.
  */
+/**
+ * <b>{@code integration}</b> 태그가 여기 붙어 있고 JUnit의 {@code @Tag}는 상속되므로,
+ * 이 클래스를 상속하는 테스트는 전부 자동으로 통합 테스트로 분류된다.
+ * {@code ./gradlew unitTest}에서 제외되어 Docker 없이 빠른 검증이 가능해진다.
+ */
+@Tag("integration")
 public abstract class AbstractIntegrationTest {
 
 	private static final MySQLContainer<?> MYSQL_CONTAINER =
