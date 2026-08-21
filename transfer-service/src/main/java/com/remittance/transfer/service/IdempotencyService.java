@@ -30,6 +30,17 @@ public class IdempotencyService {
 	/** 키 보관 기간. 만료된 키 정리는 Step 5의 배치에서 다룬다. */
 	private static final Duration RETENTION = Duration.ofDays(1);
 
+	/**
+	 * 이만큼 {@code IN_PROGRESS}로 남아 있으면 접수하던 요청이 죽은 것으로 본다.
+	 *
+	 * <p>짧으면 <b>지금 진행 중인 접수</b>를 죽었다고 판단해 키를 뺏고, 그러면 같은 키로 두 건이
+	 * 접수될 수 있다. 접수는 몇 밀리초면 끝나므로 넉넉히 잡아도 잃는 게 없다.
+	 *
+	 * <p>대사의 {@code reconciliation.key-stranded-after}와 뜻이 같다 — 한쪽만 바꾸면
+	 * 대사가 "묶였다"고 보고하는 키를 정작 재요청은 안 풀어주거나 그 반대가 된다.
+	 */
+	private static final Duration ABANDON_AFTER = Duration.ofMinutes(10);
+
 	private final IdempotencyKeyRepository idempotencyKeyRepository;
 
 	/**
@@ -87,5 +98,24 @@ public class IdempotencyService {
 	@Transactional
 	public void fail(String key, UUID transferId) {
 		idempotencyKeyRepository.findById(key).ifPresent(idempotencyKey -> idempotencyKey.fail(transferId));
+	}
+
+	/**
+	 * 접수하다 죽은 것이 확실한 키를 놓아준다 — 행을 지워 같은 키를 다시 쓸 수 있게 한다.
+	 *
+	 * <p><b>부르기 전에 "이 키로 접수된 송금이 없다"를 반드시 확인해야 한다.</b> 송금이 이미
+	 * 커밋된 키를 풀면 재요청이 두 번째 송금을 만든다. 그 확인은 {@code TransferService}가 한다.
+	 *
+	 * <p>상태를 바꾸는 대신 지우는 이유는, 재요청이 {@code reserve}의 INSERT로 다시 선점해야
+	 * 하기 때문이다. 남겨두면 그 키는 영영 새 접수를 받을 수 없다.
+	 */
+	@Transactional
+	public void release(String key) {
+		idempotencyKeyRepository.deleteById(key);
+	}
+
+	/** 접수하던 요청이 죽었다고 볼 만큼 오래 {@code IN_PROGRESS}로 남아 있는가. */
+	public boolean isAbandoned(IdempotencyKey key) {
+		return key.getCreatedAt().isBefore(Timestamps.now().minus(ABANDON_AFTER));
 	}
 }

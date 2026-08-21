@@ -20,6 +20,7 @@ import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -58,6 +59,9 @@ public class TransferService {
 	/** Account 쪽 재시도 횟수와 맞춘다. 이보다 오래 경합하면 재시도로 풀 문제가 아니다. */
 	private static final int MAX_OPTIMISTIC_LOCK_RETRIES = 5;
 
+	/** 죽은 키를 놓아준 뒤 다시 선점해보는 것까지 두 번이면 끝난다. */
+	private static final int MAX_KEY_RETAKE_ATTEMPTS = 2;
+
 	private final TransferRepository transferRepository;
 	private final IdempotencyService idempotencyService;
 	private final TransferOutboxRecorder outboxRecorder;
@@ -72,16 +76,29 @@ public class TransferService {
 		validate(request);
 
 		String requestHash = idempotencyService.hash(request);
-		try {
-			idempotencyService.reserve(idempotencyKey, requestHash);
-		} catch (DataIntegrityViolationException alreadyReserved) {
-			// 같은 키가 이미 존재한다 = 재요청이거나 동시에 들어온 중복 요청
-			return replay(idempotencyKey, requestHash);
+		// 두 번이면 충분하다. 첫 시도가 죽은 키에 막히면 그 키를 놓아주고 딱 한 번 다시 선점한다.
+		// 그 사이 다른 요청이 선점했다면 두 번째 시도가 재요청 경로로 가서 그쪽 결과를 돌려준다.
+		for (int attempt = 1; attempt <= MAX_KEY_RETAKE_ATTEMPTS; attempt++) {
+			try {
+				idempotencyService.reserve(idempotencyKey, requestHash);
+			} catch (DataIntegrityViolationException alreadyReserved) {
+				// 같은 키가 이미 존재한다 = 재요청이거나, 동시 요청이거나, 접수하다 죽은 흔적이다.
+				Optional<Transfer> settled = settleExisting(idempotencyKey, requestHash);
+				if (settled.isPresent()) {
+					return settled.get();
+				}
+				continue; // 죽은 키를 놓아줬다 — 다시 선점해본다
+			}
+			return accept(idempotencyKey, request);
 		}
+		throw new IdempotencyInProgressException(idempotencyKey);
+	}
 
+	/** 선점에 성공한 뒤 실제로 접수한다. */
+	private Transfer accept(String idempotencyKey, CreateTransferRequest request) {
 		// 송금 저장과 transfer.requested 기록이 한 트랜잭션이다.
 		// 둘 중 하나만 성공하는 경우가 없으므로 "접수됐는데 아무도 모르는 송금"이 생기지 않는다.
-		Transfer transfer = createTransfer(request);
+		Transfer transfer = createTransfer(idempotencyKey, request);
 
 		// 여기서 COMPLETED는 "송금이 끝났다"가 아니라 "접수가 끝났다"는 뜻이다.
 		// 재요청은 이 시점 이후로 항상 같은 transferId를 돌려받는다.
@@ -96,31 +113,75 @@ public class TransferService {
 	}
 
 	/**
-	 * 이미 사용된 키로 들어온 요청을 처리한다.
-	 * payload가 다르면 충돌, 아직 접수 중이면 409, 접수가 끝났으면 그 송금을 돌려준다.
+	 * 이미 쓰인 키로 들어온 요청을 어떻게든 결론짓는다.
 	 *
-	 * <p>접수 도중 서버가 죽으면 키가 IN_PROGRESS로 남아 재요청이 계속 409를 받는다.
-	 * 일부러 그렇게 둔다 — 접수가 실제로 커밋됐는지 우리도 모르는 상태에서 키를 놓아주면,
-	 * 재요청이 <b>두 번째 송금</b>을 만들 수 있기 때문이다. 남은 키 정리는 Step 5의 배치에서 다룬다.
+	 * @return 돌려줄 송금. <b>비어 있으면 "죽은 키를 놓아줬으니 다시 선점해보라"</b>는 뜻이다.
+	 *         결론이 안 나는 경우(충돌·아직 접수 중)는 예외로 나간다.
+	 *
+	 * <h4>Step 6b에서 달라진 것</h4>
+	 * 전에는 키가 {@code IN_PROGRESS}이면 무조건 409였다. 접수가 실제로 커밋됐는지 알 방법이
+	 * 없어서다 — 키에는 송금 ID가 완료 시점에야 채워지고 송금 쪽에는 키가 남지 않았다.
+	 * 그래서 <b>접수가 멀쩡히 끝난 송금도 영영 돌려받지 못했고</b>, 죽은 키도 영영 풀리지 않았다.
+	 *
+	 * <p>이제 송금에 키가 남으므로 <b>송금 쪽에 직접 물어봐</b> 두 경우를 가른다.
+	 * <pre>
+	 *   키 IN_PROGRESS + 그 키로 접수된 송금이 있다  ─▶ 키에 적기 직전에 죽은 것. 전진 복구한다.
+	 *   키 IN_PROGRESS + 송금이 없다 + 오래됐다      ─▶ 커밋 전에 죽은 것. 키를 놓아준다.
+	 *   키 IN_PROGRESS + 송금이 없다 + 방금 것       ─▶ 지금 접수 중일 수 있다. 409.
+	 * </pre>
+	 * 세 번째를 두 번째와 섞으면 <b>진행 중인 접수의 키를 뺏어</b> 같은 키로 두 건이 접수된다.
 	 */
-	private Transfer replay(String idempotencyKey, String requestHash) {
-		IdempotencyKey existing = idempotencyService.find(idempotencyKey)
-				.orElseThrow(() -> new IdempotencyInProgressException(idempotencyKey));
+	private Optional<Transfer> settleExisting(String idempotencyKey, String requestHash) {
+		IdempotencyKey existing = idempotencyService.find(idempotencyKey).orElse(null);
+		if (existing == null) {
+			// 방금까지 있던 키가 사라졌다 = 다른 요청이 놓아줬다. 다시 선점해보면 된다.
+			return Optional.empty();
+		}
 
 		if (!existing.matches(requestHash)) {
 			throw new IdempotencyConflictException(idempotencyKey);
 		}
+
 		if (!existing.isTerminal() || existing.getTransferId() == null) {
-			throw new IdempotencyInProgressException(idempotencyKey);
+			return recoverInProgress(idempotencyKey, existing);
 		}
 
 		log.info("멱등 재요청 - 저장된 결과를 반환한다 (key={}, transferId={})",
 				idempotencyKey, existing.getTransferId());
-		return transferRepository.findByTransferId(existing.getTransferId())
-				.orElseThrow(() -> new TransferNotFoundException(existing.getTransferId()));
+		return Optional.of(transferRepository.findByTransferId(existing.getTransferId())
+				.orElseThrow(() -> new TransferNotFoundException(existing.getTransferId())));
 	}
 
-	private Transfer createTransfer(CreateTransferRequest request) {
+	/**
+	 * {@code IN_PROGRESS}로 남은 키를 송금 쪽 사실에 비춰 결론짓는다.
+	 *
+	 * @return 전진 복구한 송금. <b>비어 있으면 죽은 키를 놓아줬다</b>는 뜻이다.
+	 * @throws IdempotencyInProgressException 아직 진행 중일 수 있어 판단을 미뤄야 할 때
+	 */
+	private Optional<Transfer> recoverInProgress(String idempotencyKey, IdempotencyKey existing) {
+		Optional<Transfer> committed = transferRepository.findByIdempotencyKey(idempotencyKey);
+		if (committed.isPresent()) {
+			// 접수는 이미 커밋됐고 키에 적기 직전에 죽었을 뿐이다. 지금 마저 적고 그 송금을 돌려준다.
+			Transfer transfer = committed.get();
+			log.warn("접수는 됐는데 키에 기록되지 않은 송금을 찾았다 - 전진 복구한다 (key={}, transferId={})",
+					idempotencyKey, transfer.getTransferId());
+			idempotencyService.complete(idempotencyKey, transfer.getTransferId());
+			return Optional.of(transfer);
+		}
+
+		if (!idempotencyService.isAbandoned(existing)) {
+			// 지금 다른 스레드가 선점하고 접수 중일 수 있다. 여기서 뺏으면 두 건이 접수된다.
+			throw new IdempotencyInProgressException(idempotencyKey);
+		}
+
+		log.warn("접수가 커밋되지 않은 채 묶여 있던 키를 놓아준다 (key={}, createdAt={})",
+				idempotencyKey, existing.getCreatedAt());
+		idempotencyService.release(idempotencyKey);
+		// 놓아줬을 뿐 아직 접수하지 않았다. 호출부가 다시 선점해야 한다.
+		return Optional.empty();
+	}
+
+	private Transfer createTransfer(String idempotencyKey, CreateTransferRequest request) {
 		return outboxRecorder.record(
 				Transfer.builder()
 						.fromAccountId(request.fromAccountId())
@@ -128,6 +189,8 @@ public class TransferService {
 						.amount(request.amount())
 						.currency(request.currency())
 						.memo(request.memo())
+						// 송금 저장과 같은 트랜잭션에 들어간다 — 송금이 있으면 키도 반드시 적혀 있다.
+						.idempotencyKey(idempotencyKey)
 						.build(),
 				TransferEventType.REQUESTED);
 	}

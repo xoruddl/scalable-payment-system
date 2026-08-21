@@ -50,6 +50,25 @@ public class Transfer {
 	@Column(length = 100, updatable = false)
 	private String memo;
 
+	/**
+	 * 이 송금을 만들어낸 Idempotency-Key.
+	 *
+	 * <p>Step 6b 전에는 <b>키에서 송금으로 가는 길만</b> 있었고, 그마저 접수가 다 끝난 뒤에야
+	 * 채워졌다. 그래서 접수 도중 죽어 {@code IN_PROGRESS}로 남은 키를 보면
+	 * <b>"접수가 커밋되기 전에 죽은 것"과 "커밋됐는데 키에 적기 직전에 죽은 것"을 구분할 수 없었다.</b>
+	 * 앞의 것은 풀어줘도 되고 뒤의 것은 풀면 두 번째 송금이 생긴다 — 구분이 안 되니 아무것도 못 했다.
+	 *
+	 * <p>반대 방향을 여기에 남겨 그 구분이 가능해진다. 송금 저장과 같은 트랜잭션에 들어가므로,
+	 * <b>송금이 있으면 키도 반드시 여기 적혀 있다.</b>
+	 *
+	 * <p>unique 제약은 그 위의 안전망이다. 키 판정이 어떤 이유로든 뚫려도
+	 * <b>같은 키로 두 번째 송금이 저장되는 것 자체가 DB에서 막힌다.</b>
+	 *
+	 * <p>Step 6b 이전에 만들어진 송금에는 비어 있다. MySQL의 unique 인덱스는 NULL을 여럿 허용한다.
+	 */
+	@Column(length = 36, unique = true, updatable = false)
+	private String idempotencyKey;
+
 	@Enumerated(EnumType.STRING)
 	@Column(nullable = false, length = 20)
 	private TransferStatus status;
@@ -79,13 +98,15 @@ public class Transfer {
 	private static final int AMOUNT_SCALE = 2;
 
 	@Builder
-	public Transfer(UUID fromAccountId, UUID toAccountId, BigDecimal amount, String currency, String memo) {
+	public Transfer(UUID fromAccountId, UUID toAccountId, BigDecimal amount, String currency, String memo,
+			String idempotencyKey) {
 		this.transferId = UUID.randomUUID();
 		this.fromAccountId = fromAccountId;
 		this.toAccountId = toAccountId;
 		this.amount = normalizeAmount(amount);
 		this.currency = currency;
 		this.memo = memo;
+		this.idempotencyKey = idempotencyKey;
 		this.status = TransferStatus.PENDING;
 		this.requestedAt = Timestamps.now();
 	}

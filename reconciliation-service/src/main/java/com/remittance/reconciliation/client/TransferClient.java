@@ -38,6 +38,11 @@ public class TransferClient {
 	public record UnsettledTransfer(UUID transferId, String status, Instant requestedAt) {
 	}
 
-	public record StrandedKey(String idempotencyKey, Instant createdAt) {
+	/**
+	 * @param committedTransferId 이 키로 실제로 커밋된 송금이 있으면 그 ID, 없으면 {@code null}.
+	 *                            <b>대응이 정반대로 갈리는 값</b>이라 반드시 함께 본다 —
+	 *                            있으면 재요청이 그 송금을 돌려받고, 없으면 키가 풀리고 새로 접수된다.
+	 */
+	public record StrandedKey(String idempotencyKey, Instant createdAt, UUID committedTransferId) {
 	}
 }

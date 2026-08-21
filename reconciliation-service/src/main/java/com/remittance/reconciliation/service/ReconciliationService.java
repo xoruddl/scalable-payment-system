@@ -135,9 +135,22 @@ public class ReconciliationService {
 				.runId(runId)
 				.type(FindingType.STRANDED_IDEMPOTENCY_KEY)
 				.subject(key.idempotencyKey())
-				.detail("%s부터 IN_PROGRESS로 남아 재요청이 막힌다".formatted(key.createdAt()))
+				.detail(strandedKeyDetail(key))
 				.detectedAt(Instant.now())
 				.build()));
+	}
+
+	/**
+	 * 묶인 키는 두 종류이고 <b>대응이 정반대다.</b> 뭉뚱그려 적으면 보는 사람이 매번 직접
+	 * 캐봐야 하고, 그러다 접수된 송금을 못 봤다고 착각해 같은 송금을 두 번 보내게 된다.
+	 */
+	private String strandedKeyDetail(TransferClient.StrandedKey key) {
+		if (key.committedTransferId() != null) {
+			return "%s부터 IN_PROGRESS로 남아 있지만 접수는 커밋됐다 (transferId=%s). 재요청하면 그 송금을 돌려받는다"
+					.formatted(key.createdAt(), key.committedTransferId());
+		}
+		return "%s부터 IN_PROGRESS로 남아 있고 접수가 커밋되지 않았다. 재요청하면 키가 풀리고 새로 접수된다"
+				.formatted(key.createdAt());
 	}
 
 	private String shortReason(RuntimeException e) {

@@ -165,12 +165,45 @@ class ReconciliationServiceTest extends AbstractIntegrationTest {
 		given(ledgerClient.balancesOf(any())).willReturn(Map.of());
 		given(transferClient.unsettledTransfers(any())).willReturn(List.of());
 		given(transferClient.strandedKeys(any())).willReturn(List.of(
-				new TransferClient.StrandedKey("key-1", Instant.now())));
+				new TransferClient.StrandedKey("key-1", Instant.now(), null)));
 
 		assertThat(findingsOf(reconciliationService.runOnce()))
 				.singleElement()
 				.extracting(ReconciliationFinding::getType)
 				.isEqualTo(FindingType.STRANDED_IDEMPOTENCY_KEY);
+	}
+
+	/**
+	 * Phase 2 Step 6b — 묶인 키는 두 종류이고 <b>대응이 정반대다.</b>
+	 *
+	 * <p>접수가 커밋된 키는 재요청하면 그 송금을 돌려받으므로 사실상 해결된 것이고,
+	 * 커밋되지 않은 키는 재요청해야 비로소 풀린다. 뭉뚱그려 적으면 보는 사람이 매번 직접
+	 * 캐봐야 하고, 접수된 송금을 못 봤다고 착각해 <b>같은 송금을 두 번 보낼 수 있다.</b>
+	 */
+	@Test
+	void 묶인_키가_접수까지_갔는지를_구분해_보고한다() {
+		accountsReturn();
+		given(ledgerClient.balancesOf(any())).willReturn(Map.of());
+		given(transferClient.unsettledTransfers(any())).willReturn(List.of());
+		UUID committed = UUID.randomUUID();
+		given(transferClient.strandedKeys(any())).willReturn(List.of(
+				new TransferClient.StrandedKey("key-committed", Instant.now(), committed),
+				new TransferClient.StrandedKey("key-uncommitted", Instant.now(), null)));
+
+		assertThat(findingsOf(reconciliationService.runOnce()))
+				.hasSize(2)
+				.satisfiesExactlyInAnyOrder(
+						finding -> {
+							assertThat(finding.getSubject()).isEqualTo("key-committed");
+							assertThat(finding.getDetail())
+									.as("어느 송금으로 접수됐는지 보여야 재요청해도 되는지 판단할 수 있다")
+									.contains(committed.toString())
+									.contains("접수는 커밋됐다");
+						},
+						finding -> {
+							assertThat(finding.getSubject()).isEqualTo("key-uncommitted");
+							assertThat(finding.getDetail()).contains("커밋되지 않았다");
+						});
 	}
 
 	/**
