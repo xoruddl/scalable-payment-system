@@ -4,6 +4,8 @@
 - **도메인**: 송금/결제 시스템 (계좌, 이체, 잔액 정합성, 거래 내역)
 - **언어**: Java (Spring Boot)
 - **인프라**: 로컬 K8s(minikube/kind) + Istio 실제 구축, 서비스 메시 트래픽 정책 적용
+- **최종 형태**: **현업에서 실제로 쓰는 구조.** 패턴을 먼저 손으로 만들어 이해한 뒤,
+  검증된 기술로 갈아탑니다. 교체 대상과 시점은 `DECISIONS.md`에 있습니다.
 
 ## 커버해야 할 요구사항
 - 대규모 트래픽 환경에서 발생할 수 있는 문제점
@@ -50,11 +52,13 @@
       (성공만 알리면 정작 사용자가 알아야 할 실패를 못 알린다)
 
 ## Phase 4. API Gateway & 설정 관리
+- [ ] **🔁 손으로 쓴 `openapi.yaml` → springdoc-openapi** (Gateway가 쓸 계약이므로 먼저 정리)
 - [ ] Spring Cloud Gateway로 단일 진입점 구성 (라우팅, 인증 필터)
 - [ ] Spring Cloud Config Server로 중앙 설정 관리 (Git 기반 config repo)
 - [ ] Netty 기반 리액티브 게이트웨이 특성 활용 (비동기 논블로킹)
 
 ## Phase 5. 과부하 대응 & 캐싱
+- [ ] **🔁 자체 분산 락(`SET NX PX` + Lua) → Redisson** (watchdog·재진입·pub/sub 대기)
 - [ ] Redis 캐싱: 계좌 조회 등 읽기 트래픽 캐시
 - [ ] Rate Limiting: Gateway 레벨 (Redis 기반 토큰 버킷)
 - [ ] Circuit Breaker / Bulkhead: Resilience4j 적용 (서비스 간 장애 전파 차단)
@@ -62,11 +66,15 @@
 - [ ] 커넥션 풀 튜닝 (HikariCP), DB 커넥션 고갈 대응
 
 ## Phase 6. 컨테이너화
+- [ ] **🔁 `ddl-auto: update` → Flyway** — 컨테이너 여럿이 동시에 뜨면 DDL이 경합합니다.
+      컨테이너화보다 **먼저** 들어가야 합니다
 - [ ] 각 서비스 Dockerfile 작성
 - [ ] `docker-compose.yml`로 로컬 통합 환경 구성 (MySQL, MongoDB, Redis, Kafka+Zookeeper)
 - [ ] 로컬 통합 테스트 (docker-compose 기동 후 전체 플로우 확인)
 
 ## Phase 7. Kubernetes 배포
+- [ ] **🔁 맨 `@Scheduled` → ShedLock** — replica가 늘면 Outbox 릴레이와 대사가 중복 실행됩니다.
+      **HPA를 켜기 전에** 들어가야 합니다
 - [ ] minikube 또는 kind로 로컬 클러스터 구성
 - [ ] 서비스별 Deployment/Service/ConfigMap/Secret manifest 작성
 - [ ] HPA(HorizontalPodAutoscaler)로 확장성 검증 (부하 시 자동 스케일 아웃)
@@ -87,11 +95,23 @@
 
 ## Phase 10. 부하 테스트 & 검증
 - [ ] k6 또는 JMeter로 대규모 트래픽 시뮬레이션
+- [ ] **🔁 폴링 Outbox 릴레이 → Debezium(CDC)** — 부하 테스트에서 폴링이 병목으로 잡히는 걸
+      **먼저 보여준 뒤** 갈아탑니다
 - [ ] 과부하 상황에서 Rate Limiter/Circuit Breaker 동작 확인
 - [ ] HPA 오토스케일링 동작 확인
 - [ ] 정합성 대사 로직으로 장애 주입 후 데이터 정합성 검증
 
-## Phase 11. 선택 항목 (범위 초과 시 문서화로 대체 가능)
+## Phase 11. Saga 오케스트레이션 (Choreography와 비교)
+
+지금은 Choreography라 **흐름 전체를 볼 수 있는 코드가 없고, 타임아웃이 없습니다.**
+같은 도메인을 오케스트레이션으로도 구현해 나란히 두고 비교하는 것이 목표입니다.
+
+- [ ] 이벤트("일어난 일") → 명령("해야 할 일")으로 계약 전환
+- [ ] **🔁 자체 Choreography Saga → Temporal 또는 Camunda 8**
+- [ ] 타임아웃·재개 검증 (지금은 응답이 안 오면 대사가 나중에 발견할 뿐)
+- [ ] 두 방식의 장단 비교를 `DECISIONS.md`에 기록
+
+## Phase 12. 선택 항목 (범위 초과 시 문서화로 대체 가능)
 - [ ] Vault: 시크릿 관리 연동
 - [ ] Consul: 서비스 디스커버리 (또는 K8s 자체 디스커버리로 대체)
 - [ ] ArgoCD: GitOps 매니페스트 작성 (실제 설치는 선택)
@@ -100,5 +120,13 @@
 
 ---
 
+## 표기
+
+- `🔁` — **자체 구현을 현업 기술로 갈아타는 항목.** 왜 그때인지, 무엇을 얻고 잃는지는
+  `DECISIONS.md`에 있습니다.
+
 ## 진행 방식
 Phase 단위로 하나씩 진행하며, 각 Phase 완료 시 동작 확인 후 다음 Phase로 이동합니다.
+
+동작 확인은 **테스트 + 크로스 서비스 e2e** 둘 다입니다. 테스트만 통과한 상태로 `main`에
+올리지 않습니다 — 이 저장소는 e2e가 테스트를 통과한 코드에서 결함을 잡아낸 전례가 여럿입니다.
