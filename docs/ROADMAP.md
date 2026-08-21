@@ -3,7 +3,10 @@
 ## 확정된 방향
 - **도메인**: 송금/결제 시스템 (계좌, 이체, 잔액 정합성, 거래 내역)
 - **언어**: Java (Spring Boot)
-- **인프라**: 로컬 K8s(minikube/kind) + Istio 실제 구축, 서비스 메시 트래픽 정책 적용
+- **인프라**: 로컬 K8s(minikube/kind) 실제 구축
+- **서비스 메시(Istio)는 범위에서 뺐습니다** — 이 시스템은 서비스 간 통신이 거의 Kafka라
+  메시가 줄 수 있는 게 mTLS 정도입니다. 비용은 다 치르고 배우는 건 적어, **별도로 공부**합니다.
+  판단 근거는 `DECISIONS.md`에 있습니다
 - **최종 형태**: **현업에서 실제로 쓰는 구조.** 패턴을 먼저 손으로 만들어 이해한 뒤,
   검증된 기술로 갈아탑니다. 교체 대상과 시점은 `DECISIONS.md`에 있습니다.
 
@@ -191,21 +194,32 @@ CI는 `.github/workflows/build.yml` 하나가 이미 돌고 있습니다(actionl
         **무엇이 스케일 아웃으로 풀리고 무엇이 안 풀리는지** 대비가 됩니다
 - [ ] Ingress 구성
 
-## Phase 9. 서비스 메시 (Istio)
-- [ ] Istio 설치 및 사이드카 주입
-- [ ] mTLS로 서비스 간 통신 암호화
-- [ ] VirtualService/DestinationRule로 카나리 배포·트래픽 분할 시연
-- [ ] Istio 레벨 Circuit Breaking / Retry / Timeout 정책 적용
-      — Phase 6에서 **애플리케이션 레벨(Resilience4j)**로 했던 것과 비교
-- [ ] **🆕 Argo Rollouts로 카나리 자동화** — Istio가 트래픽을 나누고, Rollouts가
-      메트릭(Phase 5의 Prometheus)을 보며 단계적으로 올리거나 자동 롤백합니다
+## Phase 9. 배포 전략 — 무중단·카나리
+
+> 원래 이 자리는 Istio였습니다. **서비스 메시를 뺐다고 카나리까지 포기할 이유는 없습니다** —
+> 트래픽 분할은 Ingress로도 됩니다. 메시가 주는 건 *더 정밀한 분할*이지 *카나리 그 자체*가 아닙니다.
+
+- [ ] 롤링 업데이트 기본기 — readiness/liveness probe, `maxSurge`/`maxUnavailable`,
+      **graceful shutdown**(Kafka 컨슈머가 처리 중인 메시지를 흘리지 않게)
+- [ ] **🆕 Argo Rollouts로 카나리** — NGINX Ingress로 트래픽을 나누고, Rollouts가
+      메트릭(Phase 5의 Prometheus)을 보며 단계적으로 올리거나 **자동 롤백**합니다
       (토스는 Spinnaker. 대체 이유는 `DECISIONS.md`)
+- [ ] **비동기 시스템의 카나리는 무엇인가** ★ — 이 프로젝트 고유의 숙제입니다.
+      HTTP 트래픽을 10%만 새 버전으로 보내도, **Kafka 컨슈머는 파티션 단위로 붙어서
+      트래픽 비율대로 나뉘지 않습니다.** 새 버전 컨슈머가 어떤 파티션을 잡을지 모릅니다
+      - 컨슈머 그룹을 나눠 일부만 새 버전으로 돌릴지
+      - 아니면 컨슈머는 카나리 대상에서 빼고 API 계층만 할지
+- [ ] 배포 중 **이벤트 계약 호환성** 확인 — `DECISIONS.md`의 "배포 순서 문제"를 실제로 겪어보기
 
 ## Phase 10. 관측 심화
 > 메트릭·대시보드는 Phase 5에서 이미 섰습니다. 여기서는 **로그와 추적**입니다.
 - [ ] ELK(Elasticsearch/Logstash/Kibana)로 로그 중앙화
-- [ ] 분산 트레이싱 (OpenTelemetry, Istio/Envoy 연계)
-      — Choreography라 **흐름이 코드에 안 보이는** 구조라서, 추적이 특히 값어치가 큽니다
+- [ ] **분산 트레이싱 (OpenTelemetry)** — Choreography라 **흐름이 코드에 안 보이는** 구조라
+      추적이 특히 값어치가 큽니다. 사실상 `ARCHITECTURE.md`를 대신 그려주는 도구입니다
+      - ⚠️ **메시가 없으니 애플리케이션에서 직접 붙여야 합니다.** 그리고 사이드카가 있어도
+        **Kafka를 건너면 추적이 끊깁니다** — trace context를 이벤트 본문에 실어 보내는
+        (W3C traceparent) 작업은 어차피 애플리케이션 몫입니다
+      - 즉 **Istio를 뺐다고 잃는 게 없는 항목**입니다
 - [ ] DLT 적체 알림 — 지금은 메시지가 DLT로 빠져도 아무도 모릅니다
 
 ## Phase 11. 대규모 부하 테스트 & 장애 주입
@@ -236,10 +250,34 @@ CI는 `.github/workflows/build.yml` 하나가 이미 돌고 있습니다(actionl
 | Vault | **Sealed / External Secrets** | Phase 8 |
 | Spinnaker | **Argo Rollouts** | Phase 9 |
 | GoCD / Jenkins | **GitHub Actions** | 이미 있음 |
-| Consul | **K8s 자체 디스커버리 + Istio** | Phase 8~9 |
+| Consul | **K8s 자체 디스커버리** | Phase 8 |
+| **Istio** | **빼고 별도 학습** | 아래 참고 |
 
 - [ ] 각 대체 선택의 이유를 `DECISIONS.md`에 정리 (원래 것이 주는 가치 → 무엇으로 대신했나 → 못 얻은 것)
 - [ ] (여유가 되면) Vault 하나만 실제로 붙여보기 — 시크릿은 지금 평문이라 실익이 큽니다
+
+### Istio는 왜 뺐나
+
+**적용할 자리가 거의 없어서**입니다. 이 시스템은 서비스 간 동기 호출이 사실상 없습니다
+(대사의 읽기 전용 조회 하나뿐). 그래서:
+
+| Istio가 주는 것 | 여기서는 |
+|---|---|
+| 트래픽 분할·카나리 | 나눌 **서비스 간** 트래픽이 없음 |
+| 재시도·타임아웃·회로 차단 | **Kafka 컨슈머에는 안 걸림.** 이미 `DefaultErrorHandler`로 처리 중 |
+| 분산 트레이싱 | **Kafka를 건너면 끊김.** 애플리케이션에서 trace context를 이벤트에 실어야 함 |
+| mTLS | 이건 됨 — 얻는 게 사실상 이것뿐 |
+
+**설계가 잘못된 게 아니라 도구가 안 맞는 것**입니다. 비동기 이벤트 중심으로 간 건 Phase 2의
+의도된 선택이고, Istio는 서비스들이 서로 HTTP/gRPC로 부르는 구조에서 빛납니다.
+
+> ⚠️ **Istio를 쓰려고 동기 호출을 일부러 만들면 안 됩니다.** 아키텍처를 도구에 맞추는 건
+> 거꾸로이고, 면접에서 "왜 이벤트 기반인데 동기 호출이 있죠?"로 되돌아옵니다.
+
+리소스도 현실적인 벽입니다. Phase 8~9쯤이면 서비스 5개 + 인프라 + Prometheus/Grafana + ArgoCD가
+동시에 떠 있어야 하는데, 여기에 사이드카와 istiod까지 붙으면 **16GB로도 빠듯**합니다.
+
+- [ ] Istio는 **별도 프로젝트로 학습** — 동기 호출이 많은 작은 샘플에서 하는 편이 훨씬 잘 보입니다
 
 ---
 
