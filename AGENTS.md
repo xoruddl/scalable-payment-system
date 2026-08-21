@@ -84,6 +84,7 @@ DTO가 중복되더라도 서비스 경계를 유지하는 쪽을 택했습니�
 | `transfer-service` | 8082 | Spring MVC + JPA | MySQL `transfer_db` |
 | `ledger-service` | 8083 | Spring WebFlux | MongoDB `ledger_db` |
 | `reconciliation-service` | 8084 | Spring MVC + JPA | MySQL `reconciliation_db` |
+| `notification-service` | 8085 | Spring MVC + JPA | MySQL `notification_db` |
 | `gateway` | 8080 | (Phase 4에서 구현) | — |
 | `config-server` | 8888 | (Phase 4에서 구현) | — |
 
@@ -138,8 +139,8 @@ POST /transfers ─▶ Transfer  transfer.requested       (202 즉시 반환, �
 
 ### 컨슈머가 실패하면 (Step 4c)
 
-세 서비스 모두 `config/KafkaErrorHandlingConfig`에 같은 정책을 각자 정의합니다
-(이벤트 계약과 마찬가지로 **바꿀 때는 세 곳을 함께**).
+컨슈머를 가진 네 서비스가 `config/KafkaErrorHandlingConfig`에 같은 정책을 각자 정의합니다
+(이벤트 계약과 마찬가지로 **바꿀 때는 네 곳을 함께**).
 
 - **1초 → 2초 → 4초** 백오프로 최대 3회 재시도한 뒤, `<원래 토픽>.DLT`로 보냅니다.
 - 결과가 달라질 리 없는 실패(JSON 파싱 실패, 보상 단계의 업무 예외 등)는 **재시도 없이 바로 DLT**입니다.
@@ -242,6 +243,39 @@ POST /internal/accounts/{id}/opening-balance   { observedBalance, ledgerBalance 
 대사는 여전히 **고치지 않습니다.** 다만 이제 두 경우를 구분해서 보고합니다
 (`StrandedKeyView.committedTransferId`) — 대응이 정반대라 뭉뚱그리면 보는 사람이 접수된 송금을
 못 봤다고 착각해 같은 송금을 두 번 보낼 수 있습니다.
+
+## Phase 3 — 알림 (notification-service)
+
+송금이 종결되면(`transfer.completed` / `transfer.failed`) 알림을 보냅니다. 중간 단계는 듣지 않습니다 —
+사용자에게 필요한 건 결과 하나지 "출금됐습니다 → 입금됐습니다"가 아닙니다.
+
+**이 서비스는 Saga에 끼어들지 않습니다.** 아무 이벤트도 발행하지 않으므로 통째로 죽어도 송금은
+정상 완료됩니다. 알림이 송금을 막을 수 있다면 그건 잘못 붙인 것입니다.
+
+### 여기서 연습하는 것 — 되돌릴 수 없는 부수효과
+
+원장은 같은 줄을 덮어쓰면 되고 잔액은 처리 흔적으로 막을 수 있지만, **이미 나간 알림은 회수할 수
+없습니다.** at-least-once 위에서 "10만원을 보냈습니다"가 두 번 가면 사용자는 두 번 나간 줄 압니다.
+
+```
+① 자리 잡기(PENDING 저장)  ─▶  ② 발송  ─▶  ③ SENT로 표시
+```
+
+- ①~② 사이에 죽으면 → 재배달 때 PENDING을 보고 **다시 보냅니다.**
+- ②~③ 사이에 죽으면 → 한 번 더 나갑니다. 발송과 기록을 원자적으로 묶을 수 없는 이상 남는 창이고,
+  **드물게 두 번 가는 것이 영영 안 가는 것보다 낫다**고 보고 이쪽을 택했습니다.
+
+> ⚠️ ①에서 곧바로 SENT로 적으면 ①~② 사이에 죽었을 때 재배달이 "이미 보냈다"로 읽고 건너뜁니다.
+> **알림이 조용히 사라지고 아무도 모릅니다.** 그래서 상태가 두 개 필요합니다.
+
+`notifications`의 unique 제약은 (송금, 종류, 받는 사람)입니다. 받는 사람까지 넣는 이유는
+**완료된 송금 한 건이 두 사람에게** 가기 때문입니다. 실패는 보낸 쪽에만 갑니다 — 받는 쪽에 알리면
+있지도 않았던 거래를 알려주는 꼴입니다.
+
+> ⚠️ 기록(`NotificationRecorder`)과 발송(`NotificationService`)이 다른 빈인 건 의도된 것입니다.
+> 같은 빈에서 부르면 `@Transactional` 프록시를 타지 않아 `markSent()`가 반영되지 않고,
+> **상태가 영원히 PENDING으로 남아 재배달마다 알림이 다시 나갑니다.** 실제로 그렇게 만들었다가
+> 테스트가 잡아냈습니다. (account-service의 `BalanceMutationExecutor`와 같은 이유의 구조입니다.)
 
 ## 실행 · 테스트
 

@@ -1,0 +1,19 @@
+spring:
+  application:
+    name: notification-service
+  # datasource / kafka 접속 정보는 AbstractIntegrationTest가 컨테이너 값으로 주입한다.
+  jpa:
+    hibernate:
+      # 여러 테스트 컨텍스트가 같은 컨테이너 DB를 공유하므로 create-drop은 쓰지 않는다.
+      ddl-auto: update
+    open-in-view: false
+
+  kafka:
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+    consumer:
+      group-id: notification-service-test
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      auto-offset-reset: earliest

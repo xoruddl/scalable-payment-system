@@ -36,16 +36,18 @@
 - [x] 개시 잔액 이월: 원장 도입 이전 잔액을 분개 한 줄로 심어 묵은 불일치 정리 (Step 6a)
 - [x] 멱등성 키↔송금 연결: 접수 도중 죽은 흔적을 구분해 안전하게 걷어내기 (Step 6b)
 
-## Phase 3. 이벤트 기반 아키텍처
+## Phase 3. 이벤트 기반 아키텍처 ✅
 
 > Kafka를 Phase 2로 당겨왔기 때문에 아래 세 항목은 Phase 2에서 이미 끝났습니다.
-> Phase 3는 **토픽 확장과 새 컨슈머**가 중심이 됩니다.
+> Phase 3는 **토픽 확장과 새 컨슈머**가 중심이 됐습니다.
 
 - [x] Kafka 토픽 설계 — 실제로는 Saga 단계별로 더 늘어남
       (`transfer.requested` / `debited` / `credited` / `ledger-recorded` / `completed` / `failed`)
 - [x] Transfer Service → Kafka Producer (Outbox 기반)
 - [x] Ledger Service → Kafka Consumer (거래 내역 적재)
-- [ ] Notification 관련 이벤트 컨슈머 (알림 발송 시뮬레이션) — `transfer.completed`를 구독
+- [x] Notification 관련 이벤트 컨슈머 (알림 발송 시뮬레이션)
+      — 별도 `notification-service`로 분리. `transfer.completed`와 `transfer.failed`를 구독한다
+      (성공만 알리면 정작 사용자가 알아야 할 실패를 못 알린다)
 
 ## Phase 4. API Gateway & 설정 관리
 - [ ] Spring Cloud Gateway로 단일 진입점 구성 (라우팅, 인증 필터)
