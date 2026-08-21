@@ -28,6 +28,22 @@ Phase 5(측정 기반)가 Phase 6(고동시성)보다 **앞에 있는 건 의도
 
 ---
 
+## 상시 — CI 위생 (Phase가 아님)
+
+CI는 `.github/workflows/build.yml` 하나가 이미 돌고 있습니다(actionlint + JDK 21 + `./gradlew build`).
+아래 셋은 **뒤 Phase의 전제**라 늦어지면 곧바로 발목을 잡습니다.
+
+- [ ] **버전을 커밋 SHA 기반으로** — 지금 `version = '0.0.1-SNAPSHOT'` 고정이라
+      **무엇이 배포됐는지 구분할 수 없습니다.** Phase 7에서 이미지 태그로 반드시 필요
+- [ ] **브랜치 보호** — `main`·`develop`에 PR 필수 + CI 통과 필수.
+      Phase 2·3을 e2e 없이 `main`에 올렸다가 되돌린 적이 있는데, **규칙으로 막을 수 있는 일**입니다
+- [ ] **테스트 분리** — 지금 통합 테스트(Testcontainers)가 PR마다 전부 돕니다.
+      Phase 5에서 부하 테스트까지 붙으면 더 느려집니다. 단위/통합을 태그로 갈라
+      PR에선 빠른 것만 (`reproductionTest` 태스크를 만든 것과 같은 방식)
+- [ ] (선택) **변경된 모듈만 빌드** — 모노레포인데 `notification-service`만 고쳐도 5개를 다 돌립니다
+
+---
+
 ## Phase 0. 프로젝트 기반 설정
 - [x] git 저장소 초기화, `.gitignore` 정리
 - [x] Gradle 멀티모듈 구조로 전환 (`account-service`, `transfer-service`, `ledger-service`, `gateway`, `config-server` 등)
@@ -149,15 +165,27 @@ Phase 5(측정 기반)가 Phase 6(고동시성)보다 **앞에 있는 건 의도
 ## Phase 7. 컨테이너화
 - [ ] **🔁 `ddl-auto: update` → Flyway** — 컨테이너 여럿이 동시에 뜨면 DDL이 경합합니다.
       컨테이너화보다 **먼저** 들어가야 합니다 (지금도 테스트 신뢰도를 갉아먹는 중)
-- [ ] 각 서비스 Dockerfile 작성
+- [ ] 각 서비스 Dockerfile 작성 (멀티스테이지, Spring Boot **layered jar**로 레이어 캐싱)
 - [ ] `docker-compose.yml`로 로컬 통합 환경 구성 (MySQL, MongoDB, Redis, Kafka)
 - [ ] 로컬 통합 테스트 (docker-compose 기동 후 전체 플로우 확인)
+- [ ] **CI에 이미지 빌드·푸시 추가** — 레지스트리는 **GHCR**
+      (토스는 사내 레지스트리 Harbor. 대체 이유는 `DECISIONS.md`)
+- [ ] **태그는 커밋 SHA.** `latest`를 쓰지 않습니다 — 무엇이 떠 있는지 알 수 없게 됩니다
+- [ ] **Trivy로 이미지 취약점 스캔** — Harbor가 해주는 일 중 하나를 CI에서 대신합니다
 
 ## Phase 8. Kubernetes 배포
 - [ ] **🔁 맨 `@Scheduled` → ShedLock** — replica가 늘면 Outbox 릴레이와 대사가 중복 실행됩니다.
       **HPA를 켜기 전에** 들어가야 합니다. 없으면 **스케일 아웃이 곧바로 버그**입니다
 - [ ] minikube 또는 kind로 로컬 클러스터 구성
 - [ ] 서비스별 Deployment/Service/ConfigMap/Secret manifest 작성
+- [ ] **Kustomize로 환경별 차이 관리** (Helm보다 배우기 쉽고 K8s 네이티브)
+- [ ] **🆕 ArgoCD 설치 — 여기서 처음으로 CD가 생깁니다**
+      - 매니페스트 저장소를 앱 코드와 분리할지 결정 (GitOps의 첫 결정)
+      - **Pull 기반**의 의미를 직접 확인: Git을 고치면 클러스터가 스스로 맞추고,
+        수동으로 바꾸면 **drift로 잡힙니다**. 되돌리기가 `git revert`가 됩니다
+- [ ] **시크릿을 평문에서 걷어내기** — 지금 `application.yml`에 `root/root`가 그대로 있습니다.
+      K8s Secret은 base64일 뿐 암호화가 아니므로 **Sealed Secrets** 또는 **External Secrets**
+      (토스는 Vault. 대체 이유는 `DECISIONS.md`)
 - [ ] HPA(HorizontalPodAutoscaler)로 확장성 검증 (부하 시 자동 스케일 아웃)
       — Phase 6에서 **"서버를 늘려도 안 풀리는 병목"**을 겪었으므로, 여기서
         **무엇이 스케일 아웃으로 풀리고 무엇이 안 풀리는지** 대비가 됩니다
@@ -169,6 +197,9 @@ Phase 5(측정 기반)가 Phase 6(고동시성)보다 **앞에 있는 건 의도
 - [ ] VirtualService/DestinationRule로 카나리 배포·트래픽 분할 시연
 - [ ] Istio 레벨 Circuit Breaking / Retry / Timeout 정책 적용
       — Phase 6에서 **애플리케이션 레벨(Resilience4j)**로 했던 것과 비교
+- [ ] **🆕 Argo Rollouts로 카나리 자동화** — Istio가 트래픽을 나누고, Rollouts가
+      메트릭(Phase 5의 Prometheus)을 보며 단계적으로 올리거나 자동 롤백합니다
+      (토스는 Spinnaker. 대체 이유는 `DECISIONS.md`)
 
 ## Phase 10. 관측 심화
 > 메트릭·대시보드는 Phase 5에서 이미 섰습니다. 여기서는 **로그와 추적**입니다.
@@ -194,12 +225,21 @@ Phase 5(측정 기반)가 Phase 6(고동시성)보다 **앞에 있는 건 의도
 - [ ] 타임아웃·재개 검증 (지금은 응답이 안 오면 대사가 나중에 발견할 뿐)
 - [ ] 두 방식의 장단 비교를 `DECISIONS.md`에 기록
 
-## Phase 13. 선택 항목 (범위 초과 시 문서화로 대체 가능)
-- [ ] Vault: 시크릿 관리 연동
-- [ ] Consul: 서비스 디스커버리 (또는 K8s 자체 디스커버리로 대체)
-- [ ] ArgoCD: GitOps 매니페스트 작성 (실제 설치는 선택)
-- [ ] GoCD: CI 파이프라인 설계 문서화 (실제 설치는 무거우므로 선택)
-- [ ] Harbor/Ceph: 사내 레지스트리/스토리지 성격 — 로컬 재현 실익 낮음, 문서화로 대체 권장
+## Phase 13. 문서로 대체한 것들
+
+**전부 세우면 학습이 아니라 삽질이 됩니다.** 아래는 더 가벼운 것으로 대체하고,
+**무엇을 왜 대체했는지**를 `DECISIONS.md`에 남깁니다 — 면접에서 필요한 건 그 이유입니다.
+
+| 원래 스택 | 이 프로젝트 | 어디서 |
+|---|---|---|
+| Harbor / Ceph | **GHCR** + Trivy | Phase 7 |
+| Vault | **Sealed / External Secrets** | Phase 8 |
+| Spinnaker | **Argo Rollouts** | Phase 9 |
+| GoCD / Jenkins | **GitHub Actions** | 이미 있음 |
+| Consul | **K8s 자체 디스커버리 + Istio** | Phase 8~9 |
+
+- [ ] 각 대체 선택의 이유를 `DECISIONS.md`에 정리 (원래 것이 주는 가치 → 무엇으로 대신했나 → 못 얻은 것)
+- [ ] (여유가 되면) Vault 하나만 실제로 붙여보기 — 시크릿은 지금 평문이라 실익이 큽니다
 
 ---
 
@@ -207,6 +247,7 @@ Phase 5(측정 기반)가 Phase 6(고동시성)보다 **앞에 있는 건 의도
 
 - `🔁` — **자체 구현을 현업 기술로 갈아타는 항목.** 왜 그때인지, 무엇을 얻고 잃는지는
   `DECISIONS.md`에 있습니다.
+- `🆕` — **없던 것을 새로 도입하는 항목.** 주로 CD 쪽입니다 (지금 CD가 전무합니다).
 
 ## 진행 방식
 Phase 단위로 하나씩 진행하며, 각 Phase 완료 시 동작 확인 후 다음 Phase로 이동합니다.
