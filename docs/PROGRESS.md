@@ -23,9 +23,16 @@ Phase 3  ✅  이벤트 기반 아키텍처 (알림 컨슈머까지)
 Phase 4~11   미착수
 ```
 
-**작업 브랜치**: `feature/phase-2-data-consistency`
-**빌드 상태**: 🟢 `./gradlew test` 통과 (테스트 429건), CI 통과 확인
-**크로스 서비스 e2e**: 🟢 5개 시나리오 확인 (정상·보상·출금실패·보상실패DLT·DB장애DLT)
+**작업 브랜치**: `develop` — Phase 2·3이 모두 머지되어 있습니다. 다음 작업은
+`feature/phase-4-*`를 새로 내서 시작합니다.
+**빌드 상태**: 🟢 `./gradlew test` 통과 (테스트 429건)
+**크로스 서비스 e2e**: 🟡 Phase 2까지 5개 시나리오 확인
+(정상·보상·출금실패·보상실패DLT·DB장애DLT). **Step 6a·6b와 Phase 3 알림은 아직 안 돌렸습니다.**
+
+> **`main` 머지와 `phase-2-complete`·`phase-3-complete` 태그는 보류 중입니다.**
+> 테스트는 전부 통과하지만 e2e로 실제 동작을 확인하지 않았습니다. Phase 2에서 e2e가 잡아낸
+> 결함이 여럿이라(토픽 파티션, 상태 경합, 이중 출금, TINYTEXT) 테스트 통과만으로 출시하지 않습니다.
+> 확인 후 `develop` → `release/phase-N` → `main` + 태그 순으로 나갑니다.
 **Step 0의 재현 테스트 4건이 모두 green이 되어 `reproduction` 태그가 하나도 남지 않았습니다.**
 
 | 재현 테스트 | 상태 |
@@ -1389,16 +1396,20 @@ account-service의 `BalanceMutationExecutor`와 같은 이유의 구조입니다
 ## 브랜치 히스토리
 
 ```
-main ──●──────────────────●──────────────────────●──   phase-1-complete
-        \                 ↑                      ↑     phase-2-complete
-develop ─●──●─────────────●──●───────────────────●──   phase-3-complete
-             \           ↗     \               ↗
-   feature/phase-2-data-consistency              │      Step 0 ~ Step 6b
-                                  feature/phase-3-event-driven
+main ──●───────────────────────────────────  phase-1-complete
+        \
+develop ─●──●────────●──────────────────────  ← 지금 여기 (Phase 2·3 머지 완료)
+             \      ↗ \                 ↗
+   feature/phase-2-data-consistency      │     Step 0 ~ Step 6b
+                      feature/phase-3-event-driven
 ```
 
 각 Phase는 `feature/*` → `develop` → `release/phase-N` → `main` + 태그 순으로 나갑니다
 (규칙은 `CONTRIBUTING.md`).
+
+**아직 `main`으로 넘기지 않았습니다.** `main`은 여전히 `phase-1-complete` 시점입니다.
+테스트는 통과하지만 e2e로 동작을 확인하지 않았고, 이 프로젝트에서 **테스트가 놓친 것을 e2e가
+잡아낸 전례가 여럿**입니다. 확인이 끝나면 두 번의 릴리스로 나눠 나갑니다.
 
 > Phase 3 작업을 처음에 `feature/phase-2-data-consistency` 위에 그대로 얹었습니다.
 > 규칙대로면 `develop`에서 새 `feature/*`를 냈어야 합니다. Phase 2 끝점에서 브랜치를 갈라
