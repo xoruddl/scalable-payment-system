@@ -1389,11 +1389,19 @@ account-service의 `BalanceMutationExecutor`와 같은 이유의 구조입니다
 ## 브랜치 히스토리
 
 ```
-main ──●───────────────────────────────────────────  phase-1-complete 태그
-        \
-develop ─●─────────────────────────────────────────  e97ef20 브랜치 전략 문서화
-          \
-feature/phase-2-data-consistency ─●──●──●──●────  Step 0 → 문서 → Step 1
+main ──●──────────────────●──────────────────────●──   phase-1-complete
+        \                 ↑                      ↑     phase-2-complete
+develop ─●──●─────────────●──●───────────────────●──   phase-3-complete
+             \           ↗     \               ↗
+   feature/phase-2-data-consistency              │      Step 0 ~ Step 6b
+                                  feature/phase-3-event-driven
 ```
 
-Phase 2 완료 시: `feature/phase-2-*` → `develop` → `release/phase-2` → `main` + `phase-2-complete` 태그
+각 Phase는 `feature/*` → `develop` → `release/phase-N` → `main` + 태그 순으로 나갑니다
+(규칙은 `CONTRIBUTING.md`).
+
+> Phase 3 작업을 처음에 `feature/phase-2-data-consistency` 위에 그대로 얹었습니다.
+> 규칙대로면 `develop`에서 새 `feature/*`를 냈어야 합니다. Phase 2 끝점에서 브랜치를 갈라
+> 되돌렸지만, **Phase가 넘어갈 때 브랜치도 함께 넘겨야 한다**는 걸 기록해둡니다 —
+> 한 브랜치에 두 Phase가 섞이면 Phase별 태그 기준점을 만들 수 없습니다
+> (Phase 7~8의 롤백 실습이 그 기준점을 씁니다).
