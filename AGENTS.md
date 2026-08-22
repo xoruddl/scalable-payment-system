@@ -47,6 +47,7 @@
 | `docs/PROGRESS.md` | **실제로 한 일과 그 이유** — 시간순 기록 | 현재 상태를 파악할 때 (문서 상단에 현재 위치·브랜치·빌드 상태) |
 | `docs/CONTRIBUTING.md` | **규칙** — 커밋 컨벤션, git flow 브랜치 전략 | 커밋/브랜치를 만들기 전 |
 | `docs/openapi.yaml` | API 계약 (Gateway가 외부에 노출하는 스펙) | 엔드포인트를 추가·변경할 때 |
+| `docs/HOMELAB.md` | **측정 전용 홈서버** — 성능 숫자는 여기서 잰다 | 부하 테스트·baseline을 잴 때 |
 | `docs/HELP.md` | Spring Initializr 자동 생성물 (`.gitignore` 대상) | 볼 일 없음 |
 
 문서는 루트의 이 파일 하나만 남기고 나머지는 `docs/`에 모아두었습니다.
@@ -155,6 +156,10 @@ docker compose -f docker-compose.dev.yml up -d
 
 - `account-service` / `transfer-service`는 **MySQL이 떠 있지 않으면 부팅 자체가 실패**합니다
   (JPA가 시작 시점에 DB에 붙어 dialect를 판별하기 때문).
+
+> **성능을 재는 것은 노트북에서 하지 마세요.** 부하 생성기와 측정 대상이 같은 CPU를 두고
+> 싸워서, "앱이 느린 것"과 "부하 생성기가 앱의 CPU를 뺏은 것"이 구분되지 않습니다.
+> 측정 전용 홈서버 절차는 `docs/HOMELAB.md`에 있습니다 (`ssh home1`).
 - Testcontainers를 쓰는 통합 테스트는 Docker 데몬이 필요합니다.
 
 ### 통합 테스트용 컨테이너

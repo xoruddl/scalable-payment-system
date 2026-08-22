@@ -10,18 +10,33 @@ plugins {
  * git이 없거나 저장소 밖에서 빌드하는 경우(소스 tarball 등)에도 빌드가 깨지면 안 되므로
  * 실패하면 조용히 'unknown'으로 떨어진다 — 버전 정보 때문에 빌드를 못 하는 건 본말전도다.
  */
-def gitValue = { List<String> args ->
+def gitValue = { String property, List<String> args ->
+	/*
+	 * 밖에서 넘겨준 값이 있으면 그걸 먼저 쓴다.
+	 *
+	 * 빌드가 항상 git이 있는 곳에서 도는 게 아니다. 컨테이너 안에서 빌드하면
+	 * (홈서버처럼 호스트에 JDK를 안 깔았을 때, 그리고 Phase 7의 이미지 빌드에서)
+	 * git 바이너리가 없어 커밋이 조용히 'unknown'으로 떨어진다.
+	 * 그러면 /actuator/info가 "지금 떠 있는 게 어느 커밋이냐"에 답을 못 하고,
+	 * build-info를 심어둔 이유 자체가 사라진다.
+	 *
+	 *   ./gradlew -PgitCommit=$(git rev-parse --short=12 HEAD) ...
+	 */
+	if (project.hasProperty(property)) {
+		return project.property(property)
+	}
 	try {
 		def out = providers.exec { commandLine(args) }.standardOutput.asText.get().trim()
 		return out.isEmpty() ? 'unknown' : out
 	} catch (Exception ignored) {
+		// git이 없어도 빌드는 되어야 한다. 버전 정보 때문에 빌드를 못 하는 건 본말전도다.
 		return 'unknown'
 	}
 }
 
 ext {
-	gitCommit = gitValue(['git', 'rev-parse', '--short=12', 'HEAD'])
-	gitBranch = gitValue(['git', 'rev-parse', '--abbrev-ref', 'HEAD'])
+	gitCommit = gitValue('gitCommit', ['git', 'rev-parse', '--short=12', 'HEAD'])
+	gitBranch = gitValue('gitBranch', ['git', 'rev-parse', '--abbrev-ref', 'HEAD'])
 }
 
 allprojects {
