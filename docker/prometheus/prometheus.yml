@@ -1,0 +1,34 @@
+# 로컬 관측 스택의 수집 설정 (Phase 5 Step 2).
+#
+# 서비스는 아직 컨테이너가 아니라 호스트에서 bootRun/bootJar로 뜬다(컨테이너화는 Phase 7).
+# 그래서 Prometheus 컨테이너가 호스트를 거꾸로 긁어야 하고, 그 주소가 host.docker.internal이다.
+# Docker Desktop(mac/win)에는 기본으로 있고 Linux에는 없어서 compose에서 extra_hosts로 만들어 준다.
+# Phase 7에서 서비스가 컨테이너로 들어오면 이 파일의 타깃은 서비스 이름으로 바뀐다.
+
+global:
+  # 부하 시나리오가 2~4분짜리라 기본값 15초로는 계단이 뭉개진다.
+  # 5초면 4분 구간에 48점이 찍혀 램프업 모양이 보인다.
+  scrape_interval: 5s
+  scrape_timeout: 4s
+
+scrape_configs:
+  - job_name: remittance
+    metrics_path: /actuator/prometheus
+    static_configs:
+      # service 라벨을 여기서 붙인다. 애플리케이션이 스스로 붙이지 않기 때문이다
+      # (Micrometer는 spring.application.name을 태그로 달아주지 않는다 — 확인함).
+      # 이게 없으면 대시보드에서 어느 서비스의 숫자인지 구분할 수 없다.
+      - targets: ['host.docker.internal:8081']
+        labels: { service: account }
+      - targets: ['host.docker.internal:8082']
+        labels: { service: transfer }
+      - targets: ['host.docker.internal:8083']
+        labels: { service: ledger }
+      - targets: ['host.docker.internal:8084']
+        labels: { service: reconciliation }
+      - targets: ['host.docker.internal:8085']
+        labels: { service: notification }
+
+  - job_name: prometheus
+    static_configs:
+      - targets: ['localhost:9090']

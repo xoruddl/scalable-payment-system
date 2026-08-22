@@ -22,7 +22,9 @@ Phase 0  ✅  프로젝트 기반 설정
 Phase 1  ✅  핵심 도메인 서비스 (Account / Transfer / Ledger)
 Phase 2  ✅  분산 환경 데이터 정합성   ← 모든 Step 완료
 Phase 3  ✅  이벤트 기반 아키텍처 (알림 컨슈머까지)
-Phase 4~13   미착수
+Phase 4       미착수 (Gateway·Config — 측정을 먼저 하기로 해서 뒤로 밀림)
+Phase 5  🔵  측정 기반    Step 1 ✅ 부하 · Step 2 ✅ 관측 · Step 3 ⬜ baseline  ← 지금 여기
+Phase 6~13   미착수
 ```
 
 **다음 Phase의 방향이 바뀌었습니다** — 측정(Phase 5)을 고동시성 대응(Phase 6)보다 **앞으로**
@@ -31,7 +33,9 @@ Phase 4~13   미착수
 
 **작업 브랜치**: `develop` — `main`과 같은 지점입니다(역머지 완료). 다음 작업은
 `feature/phase-5-*`를 새로 내서 시작합니다.
-**빌드 상태**: 🟢 `./gradlew test` 통과 (테스트 431건) · `./gradlew unitTest` 331건 9초
+**빌드 상태**: 🟢 `./gradlew test` 통과 (테스트 445건)
+**관측**: 🟢 `docker compose up -d prometheus grafana` → http://localhost:3000
+(대시보드 `송금 시스템 — 개요`. 23개 쿼리 전부 값이 나오는 것을 확인)
 **크로스 서비스 e2e**: 🟢 **밀려 있던 확인을 모두 마쳤습니다** (2026-08-22, 커밋 `54a0da2` 기준).
 기존 5개 시나리오 회귀 + Step 6a·6b + Phase 3 알림까지 9건 전부 통과 —
 아래 "밀린 e2e를 몰아서 확인했다" 참고.
@@ -1679,6 +1683,258 @@ DLT 적재를 알리는 게 아닙니다. 네 서비스의 `KafkaErrorHandlingCo
   대신 이월된 계좌에서 송금을 보내 잔액과 원장 합이 계속 일치하는 것까지는 봤습니다.
 - 이번 e2e는 **여전히 손으로 돌렸습니다.** 스크립트로 굳히는 건 Phase 7·8에서 컨테이너·K8s로
   매번 새 환경을 띄우게 될 때 필요해집니다.
+
+---
+
+## Phase 5 Step 2 — 결과를 볼 수단 (전반부) ✅
+
+**목표**: k6가 못 보는 것을 보는 눈 만들기
+
+Step 1에서 부하를 걸 수단은 생겼지만, k6는 **클라이언트에서 본 숫자**만 줍니다.
+접수가 느려졌을 때 그게 Outbox 적체인지, 락 대기인지, 커넥션 고갈인지는 서버 쪽만 압니다.
+
+`docker compose up`만으로 Prometheus(9090) + Grafana(3000)가 서고, 대시보드가 이미 그려져 있게 했습니다.
+
+### 결정 — Prometheus가 호스트를 거꾸로 긁는다
+
+서비스는 아직 컨테이너가 아닙니다(컨테이너화는 Phase 7). 그래서 수집 방향이 반대입니다 —
+컨테이너 안의 Prometheus가 **호스트의 8081~8085**를 긁습니다.
+
+```
+[Prometheus 컨테이너] ──> host.docker.internal:8081~8085/actuator/prometheus
+```
+
+`host.docker.internal`은 Docker Desktop에만 기본으로 있어서, compose에 `extra_hosts`로
+`host-gateway`를 걸어 Linux에서도 같게 만들었습니다. Phase 7에서 서비스가 컨테이너로 들어오면
+이 타깃은 서비스 이름으로 바뀝니다.
+
+`service` 라벨도 수집 설정에서 붙입니다 — **Micrometer가 `spring.application.name`을 태그로
+달아주지 않는다**는 걸 실제 출력에서 확인했습니다. 이게 없으면 대시보드에서 어느 서비스의
+숫자인지 구분할 수 없습니다.
+
+### 겪은 문제 — 히스토그램을 켜지 않으면 p95는 영원히 안 나온다
+
+대시보드를 만들고 쿼리를 하나씩 돌려보니 **13개 중 6개가 빈 결과**였습니다.
+`histogram_quantile()`을 쓰는 패널이 전부였습니다.
+
+```
+http_server_requests_seconds_count{...} 170     ← 이것과
+http_server_requests_seconds_sum{...}   2.92    ← 이것만 나온다
+http_server_requests_seconds_bucket             ← 없다
+```
+
+기본값으로는 `_count`와 `_sum`만 나옵니다. **그 둘로 구할 수 있는 건 평균뿐인데, 평균은 꼬리를
+감춥니다** — 이 프로젝트가 보려는 게 정확히 그 꼬리입니다. 더 나쁜 건 조용하다는 점입니다.
+`histogram_quantile()`은 버킷이 없어도 오류를 내지 않고 **빈 패널**을 냅니다.
+
+> **대시보드를 만들었다는 것과 값이 나온다는 것은 다릅니다.** 열어보기 전엔 모릅니다.
+
+### 겪은 문제 — 버킷 상한을 잘못 걸었더니 요청마다 500이 났다
+
+버킷 수(=시계열 수)를 줄이려고 `maximum-expected-value: 10s`를 걸었습니다. 그랬더니
+**모든 HTTP 요청이 500**이 됐습니다.
+
+```
+InvalidConfigurationException: maximumExpectedValue (1.0E10)
+  must be equal to or greater than minimumExpectedValue (1.2E11)
+```
+
+이 설정은 **이름 접두사**로 걸리는데, `http.server.requests.active`(진행 중인 요청을 재는
+LongTaskTimer)까지 함께 잡힙니다. 그 타이머의 기본 최솟값이 120초라 10초 상한과 충돌합니다.
+
+고약한 점이 둘입니다.
+
+| | |
+|---|---|
+| **기동은 멀쩡했다** | 예외는 요청이 올 때 서블릿 필터에서 터진다 |
+| **기존 테스트가 하나도 안 빨개졌다** | 진짜 포트로 요청을 보내는 테스트가 없었다 |
+
+`ServerHttpObservationFilter`에서 터지므로 MockMvc로는 재현되지 않습니다.
+상한을 거는 대신 **버킷 경계를 직접 고르는(slo)** 방식으로 바꿨습니다 — 접두사 매칭이 아니라
+**이름을 정확히 일치**시키므로 `.active`가 걸리지 않습니다.
+
+### 겪은 문제 — 테스트의 application.yml이 운영 설정을 통째로 가린다
+
+설정을 `application.yml`에 적고 테스트를 썼더니 계속 빨갰습니다. 원인은 제 설정이 아니었습니다.
+
+**`src/test/resources/application.yml`과 `src/main/resources/application.yml`은 이름이 같아,
+클래스패스에서 테스트 쪽 하나만 읽힙니다.** 운영 설정은 테스트에서 존재하지 않습니다.
+
+이건 이 항목 하나의 문제가 아닙니다 — **`application.yml`에만 적은 설정은 무엇이든 테스트가
+확인하지 못합니다.** 그래서 분포 설정을 `MetricsDistributionConfig`(코드)로 옮겼습니다.
+컴포넌트 스캔을 타므로 테스트와 운영이 **같은 설정**을 씁니다.
+
+> 엔드포인트 노출(`exposure.include`)은 여전히 YAML이라 이 방법으로 확인할 수 없습니다.
+> 그건 Prometheus의 **수집 대상 상태(up) 패널**이 답합니다 — 노출이 꺼지면 타깃이 down으로 떨어집니다.
+
+### 겪은 문제 — 죽은 줄 알았던 프로세스가 컨슈머 그룹을 붙들고 있었다
+
+부하를 걸었는데 송금이 전부 `CREDIT_COMPLETED`에서 멈췄습니다. ledger의 파티션 1에만
+lag 342가 얼어붙어 있었습니다.
+
+원인은 제품이 아니라 환경이었습니다. `pkill`이 ledger 프로세스 하나를 못 잡았고,
+**그 낡은 프로세스가 포트 8083과 컨슈머 그룹 자리를 붙들고** 있었습니다.
+새로 띄운 프로세스는 그룹에 못 들어가 `(Re-)joining group`에서 멈춰 있었습니다.
+
+**`/actuator/health`는 UP이라고 답했습니다** — 낡은 프로세스가 답한 것이었습니다.
+`SIGKILL`로 정리하고 다시 띄우니 밀려 있던 339건이 전부 COMPLETED로 풀렸습니다.
+
+> 확인해야 할 것은 "포트가 응답하는가"가 아니라 **"내가 띄운 그 프로세스가 응답하는가"**입니다.
+> 파티션 할당 로그(`partitions assigned`)를 함께 보는 편이 낫습니다.
+
+### 결정 — 빈 패널과 0을 구분한다
+
+에러율·컨슈머 실패 패널은 **실패가 없으면 계열 자체가 사라집니다.** 그러면
+"실패 0건"인지 "수집이 끊겼는지" 화면만 보고는 알 수 없습니다.
+
+```promql
+sum by (service) (rate(...{result="failure"}[1m]))
+  or sum by (service) (rate(...[1m])) * 0      ← 0을 명시적으로 그린다
+```
+
+Step 1에서 k6 요약에 "0건인 카운터를 `—`로 찍지 않는다"고 고친 것과 같은 원칙입니다.
+Kafka lag의 `NaN`(끊긴 선)은 반대로 **살려뒀습니다** — 그건 그 컨슈머가 한가하다는 뜻이라
+0으로 덮으면 거짓말이 됩니다. 대신 패널 설명에 적어뒀습니다.
+
+### 검증 — 대시보드의 모든 쿼리를 실제로 돌렸다
+
+패널을 눈으로 보는 것으로는 부족해서, 대시보드 JSON에서 쿼리를 뽑아 Prometheus API에
+직접 던지는 스크립트로 확인했습니다. 부하(k6 smoke)를 흘린 뒤 **13개 쿼리 전부 값을 냈습니다.**
+
+| | |
+|---|---|
+| 수집 대상 | 6개 전부 up (5개 서비스 + Prometheus 자기 자신) |
+| 빈 결과 쿼리 | **0개** (처음엔 6개였다) |
+| 버킷 | `http.server.requests` 24개 계열, `spring.kafka.listener`·`hikaricp.connections.acquire`도 확인 |
+
+테스트는 `MetricsExposureTest`(transfer, 5건)로 고정했습니다.
+
+| 테스트 | 확인하는 것 |
+|---|---|
+| `분포_설정이_잘못되면_요청이_죽으므로_진짜_포트로_때려본다` | 실제 포트로 GET → 200 (500이면 분포 설정 오류) |
+| `대시보드가_쓰는_타이머에는_히스토그램_버킷이_붙는다` (3건) | 세 타이머 이름에 버킷이 실제로 붙는가 |
+| `prometheus_엔드포인트가_버킷을_실제로_내보낸다` | 레지스트리가 아니라 **스크랩되는 본문**에 버킷이 있는가 |
+
+`MeterFilter` 빈을 떼고 되돌려 **4건이 빨개지는 것**을 확인했습니다.
+`./gradlew test` — **436건 전부 통과** (431 → 436).
+
+### 이번에 안 심은 것 — 공짜로 나오는 게 꽤 있었다
+
+ROADMAP에 "직접 심어야 한다"고 적어둔 것 중 둘은 이미 나오고 있었습니다.
+
+| 항목 | 결론 |
+|---|---|
+| HikariCP 커넥션 사용률·대기 | ✅ `hikaricp_connections_*` 그대로 있음 (버킷만 켜면 됨) |
+| Kafka consumer lag | ✅ `kafka_consumer_fetch_manager_records_lag_max` |
+| Outbox 적체 · 락 대기·실패 · 낙관적 락 충돌 · DLT 적재 | 🔴 없음 — 직접 심어야 한다 |
+
+**먼저 무엇이 있는지 보고 나서 심는 편이 낫습니다.** 있는 걸 다시 만들 뻔했습니다.
+
+### 남은 것 (Step 2 후반부)
+
+- **직접 심을 메트릭 4종** — Outbox 미발행 적체, 분산 락 대기·획득 실패, 낙관적 락 충돌,
+  **DLT 적재 건수**(e2e에서 로그조차 없다는 걸 확인한 그것)
+- **정합성 대사 결과를 메트릭으로** — 지금은 API를 열어봐야 안다
+- `spring_kafka_listener_seconds`의 `name` 라벨이 `KafkaListenerEndpointContainer#0-0`이라
+  **어느 토픽인지 읽히지 않습니다.** `@KafkaListener(id = ...)`를 주면 라벨이 읽을 수 있게 바뀝니다
+
+---
+
+## Phase 5 Step 2 — 직접 심은 메트릭 (후반부) ✅
+
+**목표**: 공짜로 나오지 않는 것들을 심어, **병목이 어디인지** 말할 수 있게 하기
+
+전반부에서 세운 화면은 접수·컨슈머·자원까지만 보여줍니다. 정작 이 시스템 고유의 병목
+(Outbox 릴레이, 계좌 락, 상태 전이 경합)은 아무 데도 안 나옵니다. 다섯 가지를 심었습니다.
+
+| 메트릭 | 무엇을 말해주나 |
+|---|---|
+| `remittance.outbox.backlog` | 릴레이가 부하를 못 따라가는가 |
+| `remittance.lock.wait{outcome}` | 계좌 락을 얼마나 기다리는가 / 못 잡고 포기했는가 |
+| `remittance.optimistic.lock.conflict{entity,outcome}` | 락이 막지 못한 경합이 있는가 |
+| `remittance.kafka.dlt.published{topic}` | 죽어서 사람을 기다리는 메시지가 있는가 |
+| `remittance.reconciliation.*` | 대사가 무엇을 찾았나 — 그리고 **돌긴 했나** |
+
+### 결정 — 실패 횟수를 별도 카운터로 두지 않는다
+
+락 획득 실패는 `remittance.lock.wait{outcome="timeout"}` 타이머의 count가 그대로 답합니다.
+카운터를 따로 두면 **둘이 어긋났을 때 어느 쪽이 맞는지 알 수 없습니다.**
+같은 사건을 두 곳에서 세는 건 지표를 늘리는 게 아니라 신뢰를 나누는 일입니다.
+
+### 결정 — 대사에서 가장 중요한 값은 발견 건수가 아니라 경과 시간
+
+`remittance.reconciliation.last.run.age.seconds`가 이 묶음의 핵심입니다.
+발견 건수만 보면 **"어긋난 게 없었다"와 "대사가 아예 안 돌았다"가 똑같이 0**입니다.
+배치가 죽은 걸 깨끗하다고 오해하는 게 어긋남 자체보다 위험합니다 —
+`ReconciliationRun`을 회차로 남긴 이유와 같은 이야기입니다.
+
+한 번도 안 돌았으면 0이 아니라 **NaN**을 냅니다. 0을 내면 "방금 돌았다"는 거짓말이 되고,
+그게 이 지표가 막으려던 오해 그 자체입니다.
+
+### 결정 — 게이지 안에서 예외를 삼킨다
+
+Outbox 적체는 스크랩할 때마다 `COUNT` 한 번을 던집니다. 그 쿼리가 실패하면 예외를 밖으로
+내보내지 않고 NaN을 냅니다. **스크랩 하나가 통째로 실패하면 JVM·커넥션 풀·컨슈머 지표까지
+전부 사라지기 때문**입니다. DB가 죽은 순간이 바로 그 지표들이 가장 필요한 때인데,
+Outbox 하나 때문에 다 잃는 건 손해가 큽니다.
+
+반대로 대사 지표는 스크랩할 때 DB를 **안 읽습니다.** 회차가 끝날 때 갱신해 메모리에 둡니다.
+대신 재기동하면 값이 비므로 기동 시 마지막 회차를 한 번 읽어 채웁니다 —
+그러지 않으면 재기동 직후가 "대사가 한 번도 안 돌았다"처럼 보입니다.
+
+### 겪은 문제 — 평소에 0인 지표는 사전에 만들어 둬야 한다
+
+대시보드 쿼리를 전부 돌려보니 **낙관적 락 충돌만 빈 결과**였습니다. 버그가 아니라
+카운터의 성질입니다 — **카운터는 처음 증가할 때 생깁니다.** 충돌이 한 번도 없으면
+시계열 자체가 없고, 화면에서는 "충돌 0건"과 "수집이 안 됨"이 똑같이 빈 칸입니다.
+
+처음엔 쿼리에서 `or ... * 0`으로 메우려 했는데, 없는 메트릭은 fallback도 못 만듭니다.
+**소스에서 고쳤습니다** — 기동 시 `retried`·`exhausted` 카운터를 미리 만들어 둡니다.
+이 지표는 평소에 0인 게 정상이라, **0을 그릴 수 있어야 값어치가 있습니다.**
+
+### 검증 — DLT 로그가 이제 실제로 남는다
+
+e2e에서 "DLT로 가는데 WARN·ERROR가 0건"이라고 적었던 그 자리를 다시 밟았습니다.
+본문이 깨진 메시지를 넣으니 이번에는 남습니다.
+
+```
+WARN c.r.n.config.KafkaErrorHandlingConfig : 메시지를 DLT로 보낸다 - 사람이 봐야 한다
+  (topic=transfer.completed, partition=1, offset=409, key=poison-metrics, reason=...)
+```
+
+카운터도 함께 올라갔습니다 (`remittance_kafka_dlt_published_total{topic="transfer.completed"} 1`).
+**로그는 사람이 볼 때만 보이지만 카운터는 그래프에서 튑니다.** 둘 다 필요합니다.
+
+### 검증 — 화면의 모든 쿼리와, 되돌리기
+
+부하(k6 `hot-account` smoke)를 흘린 뒤 대시보드 JSON에서 쿼리를 뽑아 전부 던졌습니다.
+**23개 쿼리 전부 값을 냅니다.**
+
+| 확인한 값 (실측) | |
+|---|---|
+| `remittance_lock_wait_seconds_count` | acquired 346건 / timeout 0건 |
+| `remittance_reconciliation_findings` | BALANCE_MISMATCH 17 · UNSETTLED_TRANSFER 4 · STRANDED_KEY 3 |
+| `remittance_reconciliation_last_run_age_seconds` | 44.5초 (주기 60초이므로 정상 톱니) |
+| `remittance_outbox_backlog` | account 0 · transfer 0 (릴레이가 따라가고 있다) |
+
+테스트는 9건 늘었습니다 — **445건 전부 통과** (436 → 445).
+
+| 테스트 | 확인하는 것 |
+|---|---|
+| `OutboxBacklogMetricsTest` (2건) | 미발행이 쌓이면 오르고, 발행되면 내려간다 |
+| `DistributedLockTest` (+2건) | 기다린 시간을 재고, 못 잡고 포기한 것도 센다 |
+| `AccountServiceTest`·`TransferServiceTest` (+4건 상당) | 충돌을 `retried`/`exhausted`로 갈라 센다 |
+| `ReconciliationMetricsTest` (5건) | 유형별 분리 · 지난 회차가 안 샌다 · 실패 표시 · 경과 시간 NaN/재개 |
+| `KafkaErrorHandlingTest` (+1 검증) | DLT로 갈 때 카운터가 오른다 |
+
+### 남은 것
+
+- **Step 3 baseline 측정** — 이제 잴 수단과 볼 수단이 다 있습니다. ROADMAP의 네 가지 가설
+  (송금 TPS 50 근처, 같은 계좌 상한, 락 대기 3초 초과 시 대량 실패, 커넥션 10개 고갈)을
+  숫자로 확인할 차례입니다
+- `spring_kafka_listener_seconds`의 `name` 라벨이 아직 `KafkaListenerEndpointContainer#0-0`이라
+  어느 토픽인지 안 읽힙니다 (`@KafkaListener(id = ...)`로 고칠 수 있음)
+- 알림(Alertmanager)은 아직 없습니다. 지금은 **화면을 열어야** 보입니다
 
 ---
 

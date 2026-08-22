@@ -73,6 +73,28 @@ brew install k6
 docker run --rm -i -v "$PWD:/work" -w /work --network host grafana/k6:latest run load-test/scenarios/spread.js
 ```
 
+> `--network host`가 안 먹는 환경(Docker Desktop 설정에 따라 다름)에서는 주소를 넘겨주세요:
+> ```bash
+> docker run --rm -i -v "$PWD:/work" -w /work \
+>   -e ACCOUNT_URL=http://host.docker.internal:8081 \
+>   -e TRANSFER_URL=http://host.docker.internal:8082 \
+>   -e LEDGER_URL=http://host.docker.internal:8083 \
+>   --add-host host.docker.internal:host-gateway \
+>   grafana/k6:latest run load-test/scenarios/spread.js
+> ```
+
+### 3. 서버 쪽을 보는 눈 (Phase 5 Step 2)
+
+k6가 주는 건 **클라이언트에서 본 숫자**입니다. 어디가 막혔는지는 서버 메트릭이 답합니다.
+
+```bash
+docker compose -f docker-compose.dev.yml up -d prometheus grafana
+open http://localhost:3000        # 대시보드 "송금 시스템 — 개요" (로그인 없음)
+```
+
+부하를 걸기 전에 **수집 대상 상태(up) 패널이 전부 1인지** 먼저 보세요.
+패널이 비었을 때 시스템 탓인지 수집 탓인지 거기서 갈립니다.
+
 ---
 
 ## 실행

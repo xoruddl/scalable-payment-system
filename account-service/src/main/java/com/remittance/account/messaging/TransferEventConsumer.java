@@ -20,12 +20,12 @@ public class TransferEventConsumer {
 	private final TransferSagaService transferSagaService;
 	private final ObjectMapper objectMapper;
 
-	@KafkaListener(topics = TransferEvents.REQUESTED, groupId = "${spring.kafka.consumer.group-id}")
+	@KafkaListener(id = TransferEvents.REQUESTED, topics = TransferEvents.REQUESTED, groupId = "${spring.kafka.consumer.group-id}")
 	public void onRequested(String payload) {
 		transferSagaService.onRequested(objectMapper.readValue(payload, TransferEvents.Requested.class));
 	}
 
-	@KafkaListener(topics = TransferEvents.DEBITED, groupId = "${spring.kafka.consumer.group-id}")
+	@KafkaListener(id = TransferEvents.DEBITED, topics = TransferEvents.DEBITED, groupId = "${spring.kafka.consumer.group-id}")
 	public void onDebited(String payload) {
 		transferSagaService.onDebited(objectMapper.readValue(payload, TransferEvents.Debited.class));
 	}
@@ -34,7 +34,7 @@ public class TransferEventConsumer {
 	 * 이 서비스가 발행한 이벤트를 이 서비스가 다시 받는다. 한 바퀴 도는 게 낭비처럼 보이지만,
 	 * 그래야 환불이 실패했을 때 브로커가 다시 배달해준다 ({@link TransferEvents#CREDIT_FAILED} 참고).
 	 */
-	@KafkaListener(topics = TransferEvents.CREDIT_FAILED, groupId = "${spring.kafka.consumer.group-id}")
+	@KafkaListener(id = TransferEvents.CREDIT_FAILED, topics = TransferEvents.CREDIT_FAILED, groupId = "${spring.kafka.consumer.group-id}")
 	public void onCreditFailed(String payload) {
 		transferSagaService.onCreditFailed(objectMapper.readValue(payload, TransferEvents.CreditFailed.class));
 	}

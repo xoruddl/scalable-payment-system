@@ -7,6 +7,9 @@ import com.remittance.account.exception.ConcurrentUpdateException;
 import com.remittance.account.lock.DistributedLock;
 import com.remittance.account.messaging.AccountEvents;
 import com.remittance.account.repository.AccountRepository;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
+import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.stereotype.Service;
@@ -31,6 +34,7 @@ public class AccountService {
 	private final AccountRepository accountRepository;
 	private final DistributedLock distributedLock;
 	private final BalanceMutationExecutor mutationExecutor;
+	private final MeterRegistry meterRegistry;
 
 	@Transactional
 	public Account createAccount(UUID ownerId, String currency, AccountType accountType) {
@@ -88,17 +92,48 @@ public class AccountService {
 		return distributedLock.executeWithLock("lock:account:" + accountId, LOCK_TTL, LOCK_WAIT_TIMEOUT, action);
 	}
 
+	/**
+	 * 충돌을 <b>센다</b> (Phase 5 Step 2). 이 값이 0에서 뜨기 시작하면 분산 락이
+	 * 막지 못한 경합이 실제로 있다는 뜻이다 — 락은 이 서비스 안에서만 유효하고,
+	 * 낙관적 락은 그 바깥까지 막는 최후 안전망이라 <b>둘의 차이가 여기 드러난다.</b>
+	 *
+	 * <p>{@code outcome=retried}는 다시 읽어 넘긴 것이고, {@code exhausted}는 끝내 포기한 것이다.
+	 * retried가 늘어나는 건 견딜 만하지만 exhausted는 요청이 실패했다는 뜻이라 성격이 다르다.
+	 */
 	private <T> T withOptimisticRetry(UUID accountId, Supplier<T> action) {
 		for (int attempt = 1; attempt <= MAX_OPTIMISTIC_LOCK_RETRIES; attempt++) {
 			try {
 				return action.get();
 			} catch (ObjectOptimisticLockingFailureException e) {
 				if (attempt == MAX_OPTIMISTIC_LOCK_RETRIES) {
+					conflicts("exhausted").increment();
 					throw new ConcurrentUpdateException(accountId);
 				}
+				conflicts("retried").increment();
 			}
 		}
 		throw new ConcurrentUpdateException(accountId);
+	}
+
+
+	/**
+	 * 충돌이 한 번도 없어도 <b>0으로 보이게</b> 미리 만들어 둔다 (Phase 5 Step 2).
+	 *
+	 * <p>카운터는 처음 증가할 때 생긴다. 그대로 두면 충돌이 없는 동안 시계열 자체가 없어서
+	 * 화면에서 <b>"충돌 0건"과 "수집이 안 되고 있다"가 똑같이 빈 칸</b>으로 보인다.
+	 * 정작 이 지표는 평소에 0인 게 정상이라, 0을 그릴 수 있어야 값어치가 있다.
+	 */
+	@PostConstruct
+	void 충돌_카운터를_미리_만든다() {
+		conflicts("retried");
+		conflicts("exhausted");
+	}
+	private Counter conflicts(String outcome) {
+		return Counter.builder("remittance.optimistic.lock.conflict")
+				.description("낙관적 락 충돌 횟수")
+				.tag("entity", "account")
+				.tag("outcome", outcome)
+				.register(meterRegistry);
 	}
 
 	private Account findByAccountId(UUID accountId) {
