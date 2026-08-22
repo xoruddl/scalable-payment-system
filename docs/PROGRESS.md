@@ -37,8 +37,9 @@ Phase 4~13   미착수
 아래 "밀린 e2e를 몰아서 확인했다" 참고.
 
 > **`main` 머지가 이제 막히지 않습니다.** 보류 사유였던 "e2e 미확인"이 해소됐습니다.
-> `develop` → `release/phase-2` → `main` + `phase-2-complete`, 이어서 `phase-3-complete`
-> 순으로 나가면 됩니다. Phase 2에서 e2e가 잡아낸 결함이 여럿이라
+> `release/phase-2-3` → `main`(PR) 한 번으로 내고, 태그는 `phase-2-complete`(`edb9673`)와
+> `phase-3-complete`(`e924c9b`) 둘로 나눠 답니다 — 두 번의 릴리스로 못 내는 이유는
+> 아래 "브랜치 히스토리"에 적었습니다. Phase 2에서 e2e가 잡아낸 결함이 여럿이라
 > (토픽 파티션, 상태 경합, 이중 출금, TINYTEXT) 테스트 통과만으로 출시하지 않는 규칙은 그대로입니다.
 **Step 0의 재현 테스트 4건이 모두 green이 되어 `reproduction` 태그가 하나도 남지 않았습니다.**
 
@@ -1677,20 +1678,51 @@ DLT 적재를 알리는 게 아닙니다. 네 서비스의 `KafkaErrorHandlingCo
 ## 브랜치 히스토리
 
 ```
-main ──●───────────────────────────────────  phase-1-complete
-        \
-develop ─●──●────────●──────────────────────  ← 지금 여기 (Phase 2·3 머지 완료)
-             \      ↗ \                 ↗
-   feature/phase-2-data-consistency      │     Step 0 ~ Step 6b
+main ──●───────────────────────────────────────────────●  ← release/phase-2-3 머지
+        \                                             ↗
+develop ─●──●────────●──────────●────●────●──────────●─┘  ← 지금 여기
+             \      ↗ \         ↑     ↑    ↑
+   feature/phase-2-data-consistency  CI위생  Phase5 Step1
                       feature/phase-3-event-driven
+                      ↑              ↑
+              phase-2-complete  phase-3-complete   ← 태그는 각 Phase 끝점에
 ```
 
 각 Phase는 `feature/*` → `develop` → `release/phase-N` → `main` + 태그 순으로 나갑니다
 (규칙은 `CONTRIBUTING.md`).
 
-**아직 `main`으로 넘기지 않았습니다.** `main`은 여전히 `phase-1-complete` 시점입니다.
-테스트는 통과하지만 e2e로 동작을 확인하지 않았고, 이 프로젝트에서 **테스트가 놓친 것을 e2e가
-잡아낸 전례가 여럿**입니다. 확인이 끝나면 두 번의 릴리스로 나눠 나갑니다.
+### 두 번의 릴리스를 한 번으로 합쳤다 — 브랜치 보호가 그렇게 만들었다
+
+원래 계획은 `release/phase-2` → `main`, 이어서 `release/phase-3` → `main`이었습니다.
+**그런데 그렇게 낼 수가 없습니다.**
+
+`main` 보호 규칙이 요구하는 상태 검사는 `unit` · `build` · `lint-workflows` 세 개인데,
+**`unit` 잡은 CI 위생 커밋(`812a06f`)에서 생겼습니다.** 그 커밋은 Phase 2·3 머지 지점보다
+**뒤에** 있습니다. 그래서 `edb9673`(Phase 2 머지)에서 낸 릴리스 브랜치에는 `unit` 잡이 없고,
+GitHub은 보고되지 않는 검사를 영원히 기다립니다 — PR이 열린 채 머지되지 않습니다.
+
+| 방법 | 대가 |
+|---|---|
+| 릴리스 브랜치에 CI 잡을 손으로 얹는다 | `develop`에 없는 커밋을 릴리스 브랜치에서 만들어야 한다 |
+| 보호 규칙을 잠시 푼다 | 보호를 켠 이유를 스스로 무너뜨린다 |
+| **한 번의 릴리스로 내고 태그는 둘로 나눈다** | 릴리스 하나에 Phase 둘이 들어간다 |
+
+**세 번째를 택했습니다.** 태그는 브랜치가 아니라 **커밋**을 가리키고, `edb9673`과 `e924c9b`는
+둘 다 `develop`의 조상입니다. `develop`을 `main`에 머지하면 그 두 커밋이 `main`에서
+도달 가능해지므로, **각 Phase 끝점에 태그를 그대로 달 수 있습니다.**
+
+```
+release/phase-2-3 → main
+  phase-2-complete → edb9673 (Phase 2 머지 지점)
+  phase-3-complete → e924c9b (Phase 3 머지 지점)
+```
+
+롤백 실습(Phase 7~8)이 필요로 하는 건 **서로 다른 두 코드 지점**이지 릴리스 횟수가 아닙니다.
+그건 이 방법으로도 그대로 남습니다.
+
+> **왜 이런 일이 생겼나** — 보호 규칙은 *지금*의 CI를 요구하는데 릴리스 대상은 *그때*의 코드입니다.
+> 출시를 미루면 이 어긋남이 쌓입니다. **e2e를 미룬 대가가 태그 계획으로 돌아온 셈**이라,
+> 다음부터는 Phase가 끝나면 미루지 않는 편이 낫습니다.
 
 > Phase 3 작업을 처음에 `feature/phase-2-data-consistency` 위에 그대로 얹었습니다.
 > 규칙대로면 `develop`에서 새 `feature/*`를 냈어야 합니다. Phase 2 끝점에서 브랜치를 갈라
