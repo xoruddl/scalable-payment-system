@@ -1,9 +1,12 @@
 package com.remittance.ledger.service;
 
+import com.remittance.ledger.domain.BalanceChangeReason;
 import com.remittance.ledger.domain.Transaction;
+import com.remittance.ledger.domain.TransactionDirection;
+import com.remittance.ledger.messaging.AccountEvents;
 import com.remittance.ledger.exception.TransactionNotFoundException;
 import com.remittance.ledger.repository.TransactionRepository;
-import com.remittance.ledger.web.dto.RecordTransactionRequest;
+import com.remittance.ledger.web.dto.LedgerBalanceView;
 import com.remittance.ledger.web.dto.TransactionPageResponse;
 import com.remittance.ledger.web.dto.TransactionResponse;
 import lombok.RequiredArgsConstructor;
@@ -12,9 +15,9 @@ import org.springframework.data.mongodb.core.ReactiveMongoTemplate;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.stereotype.Service;
-import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
@@ -26,20 +29,70 @@ public class TransactionService {
 	private final TransactionRepository transactionRepository;
 	private final ReactiveMongoTemplate mongoTemplate;
 
-	public Mono<Void> recordTransactions(List<RecordTransactionRequest> requests) {
-		Instant recordedAt = Instant.now();
-		List<Transaction> transactions = requests.stream()
-				.map(req -> Transaction.builder()
-						.transactionId(UUID.randomUUID())
-						.transferId(req.transferId())
-						.accountId(req.accountId())
-						.direction(req.direction())
-						.amount(req.amount())
-						.balanceAfter(req.balanceAfter())
-						.recordedAt(recordedAt)
-						.build())
-				.toList();
-		return transactionRepository.saveAll(transactions).then();
+	/**
+	 * 잔액 변경 하나를 원장에 남긴다. <b>같은 변경을 여러 번 받아도 결과가 같다.</b>
+	 *
+	 * <p>이벤트는 at-least-once라 같은 변경이 두 번 올 수 있는데, 원장에 같은 줄이 두 번 생기면
+	 * 그 즉시 계좌 잔액과 어긋난다. 그래서 문서 ID를 랜덤이 아니라 <b>발행하는 쪽이 고정해 보낸
+	 * 분개 항목 ID</b>로 삼는다. 재수신은 같은 _id에 같은 내용을 덮어쓰는 것으로 끝난다 —
+	 * 중복 판별 테이블이 필요 없다.
+	 *
+	 * <p>Step 5a 전에는 "송금 + 계좌 + 방향"이라는 자연키를 썼다. 원장이 송금만 기록하던 시절엔
+	 * 그걸로 충분했지만, 이제 <b>송금과 무관한 변경도 들어오고</b> 같은 송금에서 같은 계좌가
+	 * 두 번 움직일 수도 있어(출금 → 환불) 자연키가 더는 성립하지 않는다.
+	 *
+	 * <p>기록 시각도 발행 시각을 그대로 쓴다. 수신할 때마다 새로 찍으면 재수신 때 값이 달라져
+	 * 멱등하지 않다.
+	 */
+	public Mono<Transaction> record(AccountEvents.BalanceChanged event) {
+		return transactionRepository.save(Transaction.builder()
+				.id(event.entryId().toString())
+				.transactionId(event.entryId())
+				.transferId(event.transferId())
+				.accountId(event.accountId())
+				.reason(event.reason())
+				.direction(event.direction())
+				.amount(event.amount())
+				.balanceAfter(event.balanceAfter())
+				.recordedAt(event.occurredAt())
+				.build());
+	}
+
+	/**
+	 * 이 송금의 원장 기록이 <b>끝났는지</b>. 출금 줄과 입금 줄이 모두 있어야 끝난 것이다.
+	 *
+	 * <p>두 줄은 계좌가 달라 서로 다른 파티션으로 오므로 <b>도착 순서가 보장되지 않는다.</b>
+	 * "입금 줄을 적었으니 끝"이라고 볼 수 없어, 매번 둘 다 있는지 확인한다.
+	 */
+	public Mono<Boolean> isTransferFullyRecorded(UUID transferId) {
+		return transactionRepository.findByTransferId(transferId)
+				.map(Transaction::getReason)
+				.filter(BalanceChangeReason::isTransferLeg)
+				.distinct()
+				.count()
+				.map(legs -> legs == 2);
+	}
+
+	/**
+	 * 계좌별로 원장을 더해 잔액을 재구성한다 — 입금은 더하고 출금은 뺀다.
+	 *
+	 * <p>줄이 하나도 없는 계좌도 <b>0으로 반드시 포함</b>한다. 빠뜨리면 대사하는 쪽이
+	 * "원장이 아직 안 왔나 보다"와 "원장이 정말 비었다"를 구분하지 못한다.
+	 */
+	public Mono<List<LedgerBalanceView>> balancesOf(List<UUID> accountIds) {
+		return transactionRepository.findByAccountIdIn(accountIds)
+				.collectList()
+				.map(entries -> accountIds.stream()
+						.map(accountId -> new LedgerBalanceView(accountId, entries.stream()
+								.filter(entry -> entry.getAccountId().equals(accountId))
+								.map(this::signedAmount)
+								.reduce(BigDecimal.ZERO, BigDecimal::add)))
+						.toList());
+	}
+
+	private BigDecimal signedAmount(Transaction entry) {
+		return entry.getDirection() == TransactionDirection.CREDIT
+				? entry.getAmount() : entry.getAmount().negate();
 	}
 
 	public Mono<TransactionResponse> getTransaction(UUID transactionId) {

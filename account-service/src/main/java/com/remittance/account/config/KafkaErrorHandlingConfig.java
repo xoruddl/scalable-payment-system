@@ -1,0 +1,78 @@
+package com.remittance.account.config;
+
+import com.remittance.account.exception.AccountNotActiveException;
+import com.remittance.account.exception.AccountNotFoundException;
+import com.remittance.account.exception.CurrencyMismatchException;
+import com.remittance.account.exception.InsufficientBalanceException;
+import org.apache.kafka.common.TopicPartition;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.kafka.core.KafkaTemplate;
+import org.springframework.kafka.listener.DeadLetterPublishingRecoverer;
+import org.springframework.kafka.listener.DefaultErrorHandler;
+import org.springframework.util.backoff.ExponentialBackOff;
+import tools.jackson.core.JacksonException;
+
+/**
+ * 컨슈머가 실패했을 때 무엇을 할지 정한다 — <b>몇 번 다시 해보고, 그래도 안 되면 어디에 둘지.</b>
+ *
+ * <p>이걸 두지 않으면 spring-kafka 기본값이 적용되는데, 그 기본값은
+ * <b>지연 없이 10번 재시도하고 로그만 남긴 뒤 오프셋을 커밋</b>한다. 즉 메시지가 조용히 사라진다.
+ * 잠깐 DB가 끊긴 것뿐이었어도 1초 안에 10번을 몰아 시도하고 포기하므로, 회복될 틈도 없다.
+ *
+ * <p>바꾼 것은 두 가지다.
+ * <ul>
+ *   <li><b>지수 백오프</b>: 1초 → 2초 → 4초. 일시적인 장애가 회복될 시간을 준다.</li>
+ *   <li><b>DLT</b>: 끝내 실패하면 {@code <원래 토픽>.DLT}로 보낸다. 사라지지 않고 남아야
+ *       사람이 보고 처리할 수 있다 — 돈이 걸린 이벤트라 유실이 곧 사고다.</li>
+ * </ul>
+ *
+ * <p>재시도가 의미 있으려면 <b>컨슈머가 멱등해야 한다.</b> 이 서비스는 처리 흔적(processed_events)으로
+ * 그걸 보장하므로, 같은 이벤트를 몇 번 다시 처리해도 잔액은 한 번만 움직인다.
+ */
+@Configuration
+public class KafkaErrorHandlingConfig {
+
+	/** 첫 재시도까지 기다리는 시간. */
+	private static final long INITIAL_INTERVAL_MS = 1_000;
+	private static final double MULTIPLIER = 2.0;
+	/** 아무리 늘어나도 이보다 오래 기다리지는 않는다. */
+	private static final long MAX_INTERVAL_MS = 10_000;
+	/** 재시도 횟수(최초 시도 제외). 1초 + 2초 + 4초를 쓰고 포기한다. */
+	private static final int MAX_RETRIES = 3;
+
+	@Bean
+	DefaultErrorHandler kafkaErrorHandler(KafkaTemplate<String, String> kafkaTemplate) {
+		DefaultErrorHandler errorHandler = new DefaultErrorHandler(deadLetterRecoverer(kafkaTemplate), backOff());
+
+		// 아래 실패들은 다시 시도해도 결과가 같다. 백오프를 낭비하지 말고 바로 DLT로 보낸다.
+		// 이 예외들이 여기까지 올라왔다는 건 보상 단계가 실패했다는 뜻이므로 사람이 봐야 한다
+		// (전진 단계의 업무적 실패는 TransferSagaService가 실패 이벤트로 바꿔 처리한다).
+		errorHandler.addNotRetryableExceptions(
+				AccountNotFoundException.class,
+				InsufficientBalanceException.class,
+				AccountNotActiveException.class,
+				CurrencyMismatchException.class,
+				// 본문을 못 읽는 메시지는 몇 번을 다시 읽어도 못 읽는다.
+				JacksonException.class);
+		return errorHandler;
+	}
+
+	private static ExponentialBackOff backOff() {
+		ExponentialBackOff backOff = new ExponentialBackOff(INITIAL_INTERVAL_MS, MULTIPLIER);
+		backOff.setMaxInterval(MAX_INTERVAL_MS);
+		backOff.setMaxAttempts(MAX_RETRIES);
+		return backOff;
+	}
+
+	/**
+	 * 파티션을 {@code -1}로 넘기는 게 핵심이다. 기본 동작은 <b>원래 메시지와 같은 번호의 파티션</b>으로
+	 * 보내는데, 우리 토픽은 파티션이 3개인 반면 DLT는 자동 생성되며 1개짜리로 만들어진다.
+	 * 그러면 2번 파티션으로 가야 할 메시지가 갈 곳이 없어 DLT 발행 자체가 실패한다 —
+	 * 마지막 안전망이 조용히 무너지는 셈이다.
+	 */
+	private static DeadLetterPublishingRecoverer deadLetterRecoverer(KafkaTemplate<String, String> kafkaTemplate) {
+		return new DeadLetterPublishingRecoverer(kafkaTemplate,
+				(record, exception) -> new TopicPartition(record.topic() + ".DLT", -1));
+	}
+}

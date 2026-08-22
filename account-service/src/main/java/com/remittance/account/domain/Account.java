@@ -3,6 +3,7 @@ package com.remittance.account.domain;
 import com.remittance.account.exception.AccountNotActiveException;
 import com.remittance.account.exception.CurrencyMismatchException;
 import com.remittance.account.exception.InsufficientBalanceException;
+import com.remittance.account.support.Timestamps;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -60,6 +61,15 @@ public class Account {
 	@Column(nullable = false)
 	private Instant updatedAt;
 
+	/**
+	 * 개시 잔액을 원장에 이월한 시각. {@code null}이면 아직 이월하지 않았다는 뜻이다.
+	 *
+	 * <p>이월은 <b>계좌당 한 번뿐</b>이어야 한다 — 두 번 심으면 그만큼 원장이 잔액보다 커져,
+	 * 맞추려던 대사를 오히려 어긋나게 만든다. 그 한 번을 표시하는 자리다.
+	 */
+	@Column
+	private Instant openingBalanceCarriedAt;
+
 	@Builder
 	public Account(UUID ownerId, String currency, AccountType accountType) {
 		this.accountId = UUID.randomUUID();
@@ -68,8 +78,8 @@ public class Account {
 		this.accountType = accountType;
 		this.balance = BigDecimal.ZERO;
 		this.status = AccountStatus.ACTIVE;
-		this.createdAt = Instant.now();
-		this.updatedAt = Instant.now();
+		this.createdAt = Timestamps.now();
+		this.updatedAt = Timestamps.now();
 	}
 
 	public void debit(BigDecimal amount, String currency) {
@@ -78,23 +88,36 @@ public class Account {
 			throw new InsufficientBalanceException(this.accountId);
 		}
 		this.balance = this.balance.subtract(amount);
-		this.updatedAt = Instant.now();
+		this.updatedAt = Timestamps.now();
 	}
 
 	public void credit(BigDecimal amount, String currency) {
 		validateActiveAndCurrency(currency);
 		this.balance = this.balance.add(amount);
-		this.updatedAt = Instant.now();
+		this.updatedAt = Timestamps.now();
+	}
+
+	/**
+	 * 개시 잔액을 이월했다고 표시한다. <b>잔액은 건드리지 않는다</b> —
+	 * 이월은 없던 돈을 만드는 게 아니라, 이미 있던 잔액을 원장에도 적어두는 일이다.
+	 */
+	public void markOpeningBalanceCarried() {
+		this.openingBalanceCarriedAt = Timestamps.now();
+		this.updatedAt = Timestamps.now();
+	}
+
+	public boolean isOpeningBalanceCarried() {
+		return this.openingBalanceCarriedAt != null;
 	}
 
 	public void freeze() {
 		this.status = AccountStatus.FROZEN;
-		this.updatedAt = Instant.now();
+		this.updatedAt = Timestamps.now();
 	}
 
 	public void close() {
 		this.status = AccountStatus.CLOSED;
-		this.updatedAt = Instant.now();
+		this.updatedAt = Timestamps.now();
 	}
 
 	private void validateActiveAndCurrency(String currency) {

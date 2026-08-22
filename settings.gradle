@@ -1,7 +1,15 @@
+// JDK 21 툴체인이 로컬에 없으면 Gradle이 알아서 받아온다.
+// 개발자마다 설치된 JDK가 달라도, CI에서도 같은 버전으로 빌드된다.
+plugins {
+	id 'org.gradle.toolchains.foojay-resolver-convention' version '1.0.0'
+}
+
 rootProject.name = 'remittance-system'
 
 include 'account-service'
 include 'transfer-service'
 include 'ledger-service'
+include 'reconciliation-service'
+include 'notification-service'
 include 'gateway'
 include 'config-server'

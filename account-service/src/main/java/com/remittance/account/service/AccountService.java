@@ -4,6 +4,8 @@ import com.remittance.account.domain.Account;
 import com.remittance.account.domain.AccountType;
 import com.remittance.account.exception.AccountNotFoundException;
 import com.remittance.account.exception.ConcurrentUpdateException;
+import com.remittance.account.lock.DistributedLock;
+import com.remittance.account.messaging.AccountEvents;
 import com.remittance.account.repository.AccountRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
@@ -11,8 +13,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.time.Duration;
 import java.util.UUID;
-import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 @Service
 @RequiredArgsConstructor
@@ -20,7 +23,14 @@ public class AccountService {
 
 	private static final int MAX_OPTIMISTIC_LOCK_RETRIES = 5;
 
+	/** 잔액 변경 한 건이 걸리는 시간보다 넉넉해야 한다 (자동 갱신이 없으므로). */
+	private static final Duration LOCK_TTL = Duration.ofSeconds(3);
+	/** 같은 계좌에 요청이 몰렸을 때 기다려보는 시간. */
+	private static final Duration LOCK_WAIT_TIMEOUT = Duration.ofSeconds(3);
+
 	private final AccountRepository accountRepository;
+	private final DistributedLock distributedLock;
+	private final BalanceMutationExecutor mutationExecutor;
 
 	@Transactional
 	public Account createAccount(UUID ownerId, String currency, AccountType accountType) {
@@ -43,21 +53,45 @@ public class AccountService {
 	}
 
 	/**
-	 * 동시 잔액 갱신 충돌(@Version) 발생 시 재조회 후 재시도한다.
-	 * 계좌별 동시성 직렬화(분산 락)는 Phase 2에서 도입한다.
+	 * 잔액 변경은 두 겹으로 보호한다.
+	 * <ol>
+	 *   <li><b>분산 락</b>(Redis): 계좌 단위로 정상 경로를 직렬화해 애초에 충돌이 생기지 않게 한다.</li>
+	 *   <li><b>낙관적 락</b>(@Version): 락이 TTL로 풀렸거나 Redis 장애로 우회되는 등
+	 *       분산 락이 뚫린 경우를 잡는 최후 안전망. 그래서 재시도 로직을 그대로 남겨둔다.</li>
+	 * </ol>
+	 * 락은 변경하는 계좌 하나에만 건다. 범위를 넓히면 데드락과 처리량 저하로 이어진다.
 	 */
 	public Account debit(UUID accountId, BigDecimal amount, String currency) {
-		return withOptimisticRetry(accountId, account -> account.debit(amount, currency));
+		return guarded(accountId, () -> mutationExecutor.execute(accountId,
+				account -> account.debit(amount, currency),
+				AccountEvents.BalanceChangeReason.WITHDRAWAL,
+				AccountEvents.TransactionDirection.DEBIT, amount));
 	}
 
 	public Account credit(UUID accountId, BigDecimal amount, String currency) {
-		return withOptimisticRetry(accountId, account -> account.credit(amount, currency));
+		return guarded(accountId, () -> mutationExecutor.execute(accountId,
+				account -> account.credit(amount, currency),
+				AccountEvents.BalanceChangeReason.DEPOSIT,
+				AccountEvents.TransactionDirection.CREDIT, amount));
 	}
 
-	private Account withOptimisticRetry(UUID accountId, Consumer<Account> mutation) {
+	/**
+	 * 잔액을 바꾸는 <b>모든</b> 경로가 거쳐야 하는 동시성 방어. REST 진입점(debit/credit)뿐 아니라
+	 * Kafka 컨슈머로 들어오는 Saga 단계도 이 메서드를 통해 실행한다 — 두 경로가 같은 계좌를
+	 * 동시에 건드릴 수 있으므로, 방어가 한쪽에만 있으면 없는 것과 같다.
+	 */
+	public <T> T guarded(UUID accountId, Supplier<T> action) {
+		return withAccountLock(accountId, () -> withOptimisticRetry(accountId, action));
+	}
+
+	private <T> T withAccountLock(UUID accountId, Supplier<T> action) {
+		return distributedLock.executeWithLock("lock:account:" + accountId, LOCK_TTL, LOCK_WAIT_TIMEOUT, action);
+	}
+
+	private <T> T withOptimisticRetry(UUID accountId, Supplier<T> action) {
 		for (int attempt = 1; attempt <= MAX_OPTIMISTIC_LOCK_RETRIES; attempt++) {
 			try {
-				return applyMutation(accountId, mutation);
+				return action.get();
 			} catch (ObjectOptimisticLockingFailureException e) {
 				if (attempt == MAX_OPTIMISTIC_LOCK_RETRIES) {
 					throw new ConcurrentUpdateException(accountId);
@@ -65,12 +99,6 @@ public class AccountService {
 			}
 		}
 		throw new ConcurrentUpdateException(accountId);
-	}
-
-	private Account applyMutation(UUID accountId, Consumer<Account> mutation) {
-		Account account = findByAccountId(accountId);
-		mutation.accept(account);
-		return accountRepository.saveAndFlush(account);
 	}
 
 	private Account findByAccountId(UUID accountId) {

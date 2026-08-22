@@ -1,17 +1,28 @@
 spring:
   application:
     name: transfer-service
-  datasource:
-    url: jdbc:h2:mem:transfer_db;MODE=MySQL
-    username: sa
-    password: ""
+  # datasource / kafka 접속 정보는 AbstractIntegrationTest가 컨테이너 값으로 주입한다.
   jpa:
     hibernate:
-      ddl-auto: create-drop
+      # 여러 테스트 컨텍스트가 같은 컨테이너 DB를 공유하므로 create-drop은 쓰지 않는다.
+      # 한 컨텍스트가 내려가며 테이블을 지우면 살아있는 다른 컨텍스트가 깨진다.
+      ddl-auto: update
     open-in-view: false
 
-services:
-  account:
-    base-url: http://localhost:18081
-  ledger:
-    base-url: http://localhost:18083
+  kafka:
+    producer:
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+    consumer:
+      # 테스트 컨텍스트마다 그룹을 나누면 오프셋이 섞이지 않는다.
+      group-id: transfer-service-test
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      auto-offset-reset: earliest
+
+outbox:
+  relay:
+    # 릴레이가 도는 동안 Outbox 행이 사라져(=발행되어) 검증이 흔들리지 않도록 기본은 끔.
+    # 발행 자체를 검증하는 테스트만 켠다.
+    enabled: false
+    interval-ms: 200

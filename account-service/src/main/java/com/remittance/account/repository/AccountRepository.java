@@ -1,12 +1,17 @@
 package com.remittance.account.repository;
 
 import com.remittance.account.domain.Account;
+import org.springframework.data.domain.Limit;
 import org.springframework.data.jpa.repository.JpaRepository;
 
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
 public interface AccountRepository extends JpaRepository<Account, Long> {
 
 	Optional<Account> findByAccountId(UUID accountId);
+
+	/** 대사가 계좌를 순번대로 훑을 때 쓴다. 커서는 마지막으로 본 순번이다. */
+	List<Account> findByIdGreaterThanOrderByIdAsc(Long id, Limit limit);
 }
