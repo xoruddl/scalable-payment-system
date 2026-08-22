@@ -22,7 +22,7 @@ Phase 0  ✅  프로젝트 기반 설정
 Phase 1  ✅  핵심 도메인 서비스 (Account / Transfer / Ledger)
 Phase 2  ✅  분산 환경 데이터 정합성   ← 모든 Step 완료
 Phase 3  ✅  이벤트 기반 아키텍처 (알림 컨슈머까지)
-Phase 4       미착수 (Gateway·Config — 측정을 먼저 하기로 해서 뒤로 밀림)
+Phase 4       미착수 — Gateway·Config는 Phase 6 다음에 합니다 (ROADMAP '실제 진행 순서')
 Phase 5  ✅  측정 기반    Step 1 부하 · Step 2 관측 · Step 3 baseline 전부 완료
 Phase 6~13   미착수   ← 다음은 Phase 6 Step 2(파이프라인). baseline이 순서를 바꿨다
 ```
