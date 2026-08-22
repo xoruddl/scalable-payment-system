@@ -70,6 +70,21 @@ CI는 `.github/workflows/build.yml` 하나가 이미 돌고 있습니다(actionl
 - [x] **테스트 분리** — `./gradlew unitTest`(Docker 불필요, **9초 / 331건**)와
       `./gradlew test`(전체, 1분 43초 / 431건)로 갈랐습니다.
       CI는 `unit` → `build` 순으로 돌아, 오타 하나 때문에 컨테이너를 띄우지 않습니다
+- [x] **Gradle 캐시가 실제로 채워지게** — `setup-gradle`는 기본 브랜치가 아니면 캐시를
+      **읽기만** 합니다(`cache-read-only: true`). 그런데 이 저장소는 작업이 거의 `develop`에서
+      일어나므로, **캐시를 켜뒀는데 작동하지 않는 상태**였습니다. `develop`에서도 쓰게 열었습니다
+- [ ] **CI 시간 단축 — Phase 7에서 한다** ⏭️
+      지금은 5분이고 **아무것도 막지 않습니다.** Phase 6의 반복 루프는 CI를 거치지 않고
+      (`HOMELAB.md`의 rsync → 빌드 → 재기동, 약 1분), CI는 푸시 뒤에서 돌 뿐입니다.
+      **Phase 7에서 이미지 빌드·푸시·Trivy가 붙으면 그때 실제로 아픕니다.**
+      숫자가 아플 때 고치는 게 이 저장소의 원칙이라 그때로 미룹니다.
+
+      2026-08-22 실측 (총 5분, 오버헤드는 10초뿐이라 전부 Gradle에 있음):
+      | 대상 | 시간 | 손댈 방법 | 예상 |
+      |---|---|---|---|
+      | `build` 잡의 모듈별 테스트 (순차) | account 61s · transfer 45s · ledger 39s · notification 30s · reconciliation 20s = **196s** | `org.gradle.parallel=true` | 80~100초. **컨테이너를 동시에 여러 벌 띄우므로 안정성 검증 필요** |
+      | `build`가 단위 테스트를 **다시** 돌림 | 30~40s | `integrationTest` 태스크 신설 (태그 분리는 이미 해뒀는데 절반만 쓰고 있음) | 30~40초 |
+      | `build`가 `needs: unit`이라 직렬 | 52s | `needs` 제거 | 52초. 대가는 오타에도 컨테이너가 뜨는 것 (공개 저장소라 러너 시간은 무료) |
 - [ ] (선택) **변경된 모듈만 빌드** — 모노레포인데 `notification-service`만 고쳐도 5개를 다 돌립니다
 
 ---
@@ -131,7 +146,7 @@ CI는 `.github/workflows/build.yml` 하나가 이미 돌고 있습니다(actionl
 
 ### Step 2 — 결과를 볼 수단 ✅
 - [x] Prometheus + Grafana 기동, 각 서비스 `/actuator/prometheus` 수집
-      (`docker-compose.dev.yml` + `docker/prometheus`, `docker/grafana`. 대시보드도 코드로 둔다)
+      (`docker-compose.devㅐ.yml` + `docker/prometheus`, `docker/grafana`. 대시보드도 코드로 둔다)
 - [x] 대시보드: TPS, p95/p99 지연, 에러율 (`송금 시스템 — 개요`)
 - [x] **히스토그램 버킷을 켠다** — 안 켜면 `_count`/`_sum`만 나와 p95·p99가
       **조용히 빈 패널**이 된다. `MetricsDistributionConfig`(코드로 둔 이유는 PROGRESS 참고)
