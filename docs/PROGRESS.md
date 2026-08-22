@@ -29,18 +29,25 @@ Phase 4~13   미착수
 당겼습니다. 부하를 걸 수단과 볼 수단을 먼저 만들고 지금 시스템의 천장을 숫자로 박아둔 뒤,
 그 병목을 하나씩 뚫습니다. 자세한 이유는 `ROADMAP.md`의 "순서의 원칙"에 있습니다.
 
-**작업 브랜치**: `develop` — Phase 2·3이 모두 머지되어 있습니다. 다음 작업은
-`feature/phase-4-*`를 새로 내서 시작합니다.
+**작업 브랜치**: `develop` — `main`과 같은 지점입니다(역머지 완료). 다음 작업은
+`feature/phase-5-*`를 새로 내서 시작합니다.
 **빌드 상태**: 🟢 `./gradlew test` 통과 (테스트 431건) · `./gradlew unitTest` 331건 9초
 **크로스 서비스 e2e**: 🟢 **밀려 있던 확인을 모두 마쳤습니다** (2026-08-22, 커밋 `54a0da2` 기준).
 기존 5개 시나리오 회귀 + Step 6a·6b + Phase 3 알림까지 9건 전부 통과 —
 아래 "밀린 e2e를 몰아서 확인했다" 참고.
 
-> **`main` 머지가 이제 막히지 않습니다.** 보류 사유였던 "e2e 미확인"이 해소됐습니다.
-> `release/phase-2-3` → `main`(PR) 한 번으로 내고, 태그는 `phase-2-complete`(`edb9673`)와
-> `phase-3-complete`(`e924c9b`) 둘로 나눠 답니다 — 두 번의 릴리스로 못 내는 이유는
-> 아래 "브랜치 히스토리"에 적었습니다. Phase 2에서 e2e가 잡아낸 결함이 여럿이라
-> (토픽 파티션, 상태 경합, 이중 출금, TINYTEXT) 테스트 통과만으로 출시하지 않는 규칙은 그대로입니다.
+> **출시했습니다** (2026-08-22). `release/phase-2-3` → `main` PR #1이 CI 3종
+> (`unit`·`build`·`lint-workflows`)을 통과하고 머지됐습니다 (`2636dff`).
+> `main`은 이제 `phase-1-complete`가 아니라 **Phase 3 + CI 위생 + Phase 5 Step 1**까지 담고 있습니다.
+>
+> | 태그 | 커밋 | 그 시점의 코드 |
+> |---|---|---|
+> | `phase-2-complete` | `edb9673` | notification-service **없음** |
+> | `phase-3-complete` | `e924c9b` | notification-service **있음** |
+>
+> 릴리스가 왜 두 번이 아니라 한 번인지는 아래 "브랜치 히스토리"에 있습니다.
+> Phase 2에서 e2e가 잡아낸 결함이 여럿이라(토픽 파티션, 상태 경합, 이중 출금, TINYTEXT)
+> **테스트 통과만으로 출시하지 않는 규칙은 그대로입니다.**
 **Step 0의 재현 테스트 4건이 모두 green이 되어 `reproduction` 태그가 하나도 남지 않았습니다.**
 
 | 재현 테스트 | 상태 |
@@ -1678,14 +1685,13 @@ DLT 적재를 알리는 게 아닙니다. 네 서비스의 `KafkaErrorHandlingCo
 ## 브랜치 히스토리
 
 ```
-main ──●───────────────────────────────────────────────●  ← release/phase-2-3 머지
-        \                                             ↗
-develop ─●──●────────●──────────●────●────●──────────●─┘  ← 지금 여기
+main ──●───────────────────────────────────────────────●  2636dff (PR #1 머지)
+        \                                             ↗ \
+develop ─●──●────────●──────────●────●────●──────────●─┘   ●  ← 지금 여기 (역머지)
              \      ↗ \         ↑     ↑    ↑
    feature/phase-2-data-consistency  CI위생  Phase5 Step1
                       feature/phase-3-event-driven
-                      ↑              ↑
-              phase-2-complete  phase-3-complete   ← 태그는 각 Phase 끝점에
+             phase-2-complete ┘      └ phase-3-complete   ← 태그는 각 Phase 끝점에
 ```
 
 각 Phase는 `feature/*` → `develop` → `release/phase-N` → `main` + 태그 순으로 나갑니다
@@ -1710,6 +1716,9 @@ GitHub은 보고되지 않는 검사를 영원히 기다립니다 — PR이 열�
 **세 번째를 택했습니다.** 태그는 브랜치가 아니라 **커밋**을 가리키고, `edb9673`과 `e924c9b`는
 둘 다 `develop`의 조상입니다. `develop`을 `main`에 머지하면 그 두 커밋이 `main`에서
 도달 가능해지므로, **각 Phase 끝점에 태그를 그대로 달 수 있습니다.**
+
+머지한 뒤 실제로 확인했습니다 — `phase-2-complete`에는 `notification-service` 디렉터리가
+없고 `phase-3-complete`에는 있습니다. **두 태그가 서로 다른 코드 지점을 가리킵니다.**
 
 ```
 release/phase-2-3 → main
