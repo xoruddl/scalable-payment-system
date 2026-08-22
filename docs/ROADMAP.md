@@ -111,18 +111,20 @@ CI는 `.github/workflows/build.yml` 하나가 이미 돌고 있습니다(actionl
       `load`(접수만) + `prober`(초당 1건, 끝까지 추적) 두 시나리오를 동시에 돌린다
 - [x] **smoke 모드** — `SMOKE=1`로 20초 만에 스크립트가 맞는지 먼저 확인
 
-### Step 2 — 결과를 볼 수단
-- [ ] Prometheus + Grafana 기동, 각 서비스 `/actuator/prometheus` 수집
-      (Actuator·Micrometer는 Phase 0부터 이미 붙어 있음)
-- [ ] 대시보드: TPS, p95/p99 지연, 에러율
+### Step 2 — 결과를 볼 수단 (전반부 ✅ / 후반부 진행 중)
+- [x] Prometheus + Grafana 기동, 각 서비스 `/actuator/prometheus` 수집
+      (`docker-compose.dev.yml` + `docker/prometheus`, `docker/grafana`. 대시보드도 코드로 둔다)
+- [x] 대시보드: TPS, p95/p99 지연, 에러율 (`송금 시스템 — 개요`)
+- [x] **히스토그램 버킷을 켠다** — 안 켜면 `_count`/`_sum`만 나와 p95·p99가
+      **조용히 빈 패널**이 된다. `MetricsDistributionConfig`(코드로 둔 이유는 PROGRESS 참고)
 - [ ] **직접 심어야 하는 메트릭** — 이게 없으면 병목이 어디인지 못 봅니다
-      - Outbox **미발행 적체 건수** (릴레이가 못 따라가는지)
-      - 분산 락 **대기 시간**과 **획득 실패 횟수**
-      - **낙관적 락 충돌 횟수**
-      - Kafka **consumer lag**
-      - **DLT 적재 건수** (토픽별) — 2026-08-22 e2e에서 확인: 메시지가 DLT로 가도
-        **로그가 한 줄도 안 남는다.** 메트릭 이전에 복구 시점 WARN 한 줄부터 필요하다
-      - HikariCP **커넥션 사용률·대기 시간**
+      - [ ] Outbox **미발행 적체 건수** (릴레이가 못 따라가는지)
+      - [ ] 분산 락 **대기 시간**과 **획득 실패 횟수**
+      - [ ] **낙관적 락 충돌 횟수**
+      - [x] Kafka **consumer lag** — `kafka_consumer_fetch_manager_records_lag_max`로 이미 나온다
+      - [ ] **DLT 적재 건수** (토픽별) — 2026-08-22 e2e에서 확인: 메시지가 DLT로 가도
+            **로그가 한 줄도 안 남는다.** 메트릭 이전에 복구 시점 WARN 한 줄부터 필요하다
+      - [x] HikariCP **커넥션 사용률·대기 시간** — `hikaricp_connections_*`로 이미 나온다
 - [ ] 정합성 대사 결과를 메트릭으로 노출 (발견 건수·유형별, 마지막 회차 실패 여부와 경과 시간)
       — Phase 2에서 대사는 만들었지만 **알리는 경로가 없다.** 지금은 API를 열어봐야 안다
 

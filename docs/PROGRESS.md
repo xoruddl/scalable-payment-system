@@ -1682,6 +1682,160 @@ DLT 적재를 알리는 게 아닙니다. 네 서비스의 `KafkaErrorHandlingCo
 
 ---
 
+## Phase 5 Step 2 — 결과를 볼 수단 (전반부) ✅
+
+**목표**: k6가 못 보는 것을 보는 눈 만들기
+
+Step 1에서 부하를 걸 수단은 생겼지만, k6는 **클라이언트에서 본 숫자**만 줍니다.
+접수가 느려졌을 때 그게 Outbox 적체인지, 락 대기인지, 커넥션 고갈인지는 서버 쪽만 압니다.
+
+`docker compose up`만으로 Prometheus(9090) + Grafana(3000)가 서고, 대시보드가 이미 그려져 있게 했습니다.
+
+### 결정 — Prometheus가 호스트를 거꾸로 긁는다
+
+서비스는 아직 컨테이너가 아닙니다(컨테이너화는 Phase 7). 그래서 수집 방향이 반대입니다 —
+컨테이너 안의 Prometheus가 **호스트의 8081~8085**를 긁습니다.
+
+```
+[Prometheus 컨테이너] ──> host.docker.internal:8081~8085/actuator/prometheus
+```
+
+`host.docker.internal`은 Docker Desktop에만 기본으로 있어서, compose에 `extra_hosts`로
+`host-gateway`를 걸어 Linux에서도 같게 만들었습니다. Phase 7에서 서비스가 컨테이너로 들어오면
+이 타깃은 서비스 이름으로 바뀝니다.
+
+`service` 라벨도 수집 설정에서 붙입니다 — **Micrometer가 `spring.application.name`을 태그로
+달아주지 않는다**는 걸 실제 출력에서 확인했습니다. 이게 없으면 대시보드에서 어느 서비스의
+숫자인지 구분할 수 없습니다.
+
+### 겪은 문제 — 히스토그램을 켜지 않으면 p95는 영원히 안 나온다
+
+대시보드를 만들고 쿼리를 하나씩 돌려보니 **13개 중 6개가 빈 결과**였습니다.
+`histogram_quantile()`을 쓰는 패널이 전부였습니다.
+
+```
+http_server_requests_seconds_count{...} 170     ← 이것과
+http_server_requests_seconds_sum{...}   2.92    ← 이것만 나온다
+http_server_requests_seconds_bucket             ← 없다
+```
+
+기본값으로는 `_count`와 `_sum`만 나옵니다. **그 둘로 구할 수 있는 건 평균뿐인데, 평균은 꼬리를
+감춥니다** — 이 프로젝트가 보려는 게 정확히 그 꼬리입니다. 더 나쁜 건 조용하다는 점입니다.
+`histogram_quantile()`은 버킷이 없어도 오류를 내지 않고 **빈 패널**을 냅니다.
+
+> **대시보드를 만들었다는 것과 값이 나온다는 것은 다릅니다.** 열어보기 전엔 모릅니다.
+
+### 겪은 문제 — 버킷 상한을 잘못 걸었더니 요청마다 500이 났다
+
+버킷 수(=시계열 수)를 줄이려고 `maximum-expected-value: 10s`를 걸었습니다. 그랬더니
+**모든 HTTP 요청이 500**이 됐습니다.
+
+```
+InvalidConfigurationException: maximumExpectedValue (1.0E10)
+  must be equal to or greater than minimumExpectedValue (1.2E11)
+```
+
+이 설정은 **이름 접두사**로 걸리는데, `http.server.requests.active`(진행 중인 요청을 재는
+LongTaskTimer)까지 함께 잡힙니다. 그 타이머의 기본 최솟값이 120초라 10초 상한과 충돌합니다.
+
+고약한 점이 둘입니다.
+
+| | |
+|---|---|
+| **기동은 멀쩡했다** | 예외는 요청이 올 때 서블릿 필터에서 터진다 |
+| **기존 테스트가 하나도 안 빨개졌다** | 진짜 포트로 요청을 보내는 테스트가 없었다 |
+
+`ServerHttpObservationFilter`에서 터지므로 MockMvc로는 재현되지 않습니다.
+상한을 거는 대신 **버킷 경계를 직접 고르는(slo)** 방식으로 바꿨습니다 — 접두사 매칭이 아니라
+**이름을 정확히 일치**시키므로 `.active`가 걸리지 않습니다.
+
+### 겪은 문제 — 테스트의 application.yml이 운영 설정을 통째로 가린다
+
+설정을 `application.yml`에 적고 테스트를 썼더니 계속 빨갰습니다. 원인은 제 설정이 아니었습니다.
+
+**`src/test/resources/application.yml`과 `src/main/resources/application.yml`은 이름이 같아,
+클래스패스에서 테스트 쪽 하나만 읽힙니다.** 운영 설정은 테스트에서 존재하지 않습니다.
+
+이건 이 항목 하나의 문제가 아닙니다 — **`application.yml`에만 적은 설정은 무엇이든 테스트가
+확인하지 못합니다.** 그래서 분포 설정을 `MetricsDistributionConfig`(코드)로 옮겼습니다.
+컴포넌트 스캔을 타므로 테스트와 운영이 **같은 설정**을 씁니다.
+
+> 엔드포인트 노출(`exposure.include`)은 여전히 YAML이라 이 방법으로 확인할 수 없습니다.
+> 그건 Prometheus의 **수집 대상 상태(up) 패널**이 답합니다 — 노출이 꺼지면 타깃이 down으로 떨어집니다.
+
+### 겪은 문제 — 죽은 줄 알았던 프로세스가 컨슈머 그룹을 붙들고 있었다
+
+부하를 걸었는데 송금이 전부 `CREDIT_COMPLETED`에서 멈췄습니다. ledger의 파티션 1에만
+lag 342가 얼어붙어 있었습니다.
+
+원인은 제품이 아니라 환경이었습니다. `pkill`이 ledger 프로세스 하나를 못 잡았고,
+**그 낡은 프로세스가 포트 8083과 컨슈머 그룹 자리를 붙들고** 있었습니다.
+새로 띄운 프로세스는 그룹에 못 들어가 `(Re-)joining group`에서 멈춰 있었습니다.
+
+**`/actuator/health`는 UP이라고 답했습니다** — 낡은 프로세스가 답한 것이었습니다.
+`SIGKILL`로 정리하고 다시 띄우니 밀려 있던 339건이 전부 COMPLETED로 풀렸습니다.
+
+> 확인해야 할 것은 "포트가 응답하는가"가 아니라 **"내가 띄운 그 프로세스가 응답하는가"**입니다.
+> 파티션 할당 로그(`partitions assigned`)를 함께 보는 편이 낫습니다.
+
+### 결정 — 빈 패널과 0을 구분한다
+
+에러율·컨슈머 실패 패널은 **실패가 없으면 계열 자체가 사라집니다.** 그러면
+"실패 0건"인지 "수집이 끊겼는지" 화면만 보고는 알 수 없습니다.
+
+```promql
+sum by (service) (rate(...{result="failure"}[1m]))
+  or sum by (service) (rate(...[1m])) * 0      ← 0을 명시적으로 그린다
+```
+
+Step 1에서 k6 요약에 "0건인 카운터를 `—`로 찍지 않는다"고 고친 것과 같은 원칙입니다.
+Kafka lag의 `NaN`(끊긴 선)은 반대로 **살려뒀습니다** — 그건 그 컨슈머가 한가하다는 뜻이라
+0으로 덮으면 거짓말이 됩니다. 대신 패널 설명에 적어뒀습니다.
+
+### 검증 — 대시보드의 모든 쿼리를 실제로 돌렸다
+
+패널을 눈으로 보는 것으로는 부족해서, 대시보드 JSON에서 쿼리를 뽑아 Prometheus API에
+직접 던지는 스크립트로 확인했습니다. 부하(k6 smoke)를 흘린 뒤 **13개 쿼리 전부 값을 냈습니다.**
+
+| | |
+|---|---|
+| 수집 대상 | 6개 전부 up (5개 서비스 + Prometheus 자기 자신) |
+| 빈 결과 쿼리 | **0개** (처음엔 6개였다) |
+| 버킷 | `http.server.requests` 24개 계열, `spring.kafka.listener`·`hikaricp.connections.acquire`도 확인 |
+
+테스트는 `MetricsExposureTest`(transfer, 5건)로 고정했습니다.
+
+| 테스트 | 확인하는 것 |
+|---|---|
+| `분포_설정이_잘못되면_요청이_죽으므로_진짜_포트로_때려본다` | 실제 포트로 GET → 200 (500이면 분포 설정 오류) |
+| `대시보드가_쓰는_타이머에는_히스토그램_버킷이_붙는다` (3건) | 세 타이머 이름에 버킷이 실제로 붙는가 |
+| `prometheus_엔드포인트가_버킷을_실제로_내보낸다` | 레지스트리가 아니라 **스크랩되는 본문**에 버킷이 있는가 |
+
+`MeterFilter` 빈을 떼고 되돌려 **4건이 빨개지는 것**을 확인했습니다.
+`./gradlew test` — **436건 전부 통과** (431 → 436).
+
+### 이번에 안 심은 것 — 공짜로 나오는 게 꽤 있었다
+
+ROADMAP에 "직접 심어야 한다"고 적어둔 것 중 둘은 이미 나오고 있었습니다.
+
+| 항목 | 결론 |
+|---|---|
+| HikariCP 커넥션 사용률·대기 | ✅ `hikaricp_connections_*` 그대로 있음 (버킷만 켜면 됨) |
+| Kafka consumer lag | ✅ `kafka_consumer_fetch_manager_records_lag_max` |
+| Outbox 적체 · 락 대기·실패 · 낙관적 락 충돌 · DLT 적재 | 🔴 없음 — 직접 심어야 한다 |
+
+**먼저 무엇이 있는지 보고 나서 심는 편이 낫습니다.** 있는 걸 다시 만들 뻔했습니다.
+
+### 남은 것 (Step 2 후반부)
+
+- **직접 심을 메트릭 4종** — Outbox 미발행 적체, 분산 락 대기·획득 실패, 낙관적 락 충돌,
+  **DLT 적재 건수**(e2e에서 로그조차 없다는 걸 확인한 그것)
+- **정합성 대사 결과를 메트릭으로** — 지금은 API를 열어봐야 안다
+- `spring_kafka_listener_seconds`의 `name` 라벨이 `KafkaListenerEndpointContainer#0-0`이라
+  **어느 토픽인지 읽히지 않습니다.** `@KafkaListener(id = ...)`를 주면 라벨이 읽을 수 있게 바뀝니다
+
+---
+
 ## 브랜치 히스토리
 
 ```
