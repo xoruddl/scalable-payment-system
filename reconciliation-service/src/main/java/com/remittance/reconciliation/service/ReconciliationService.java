@@ -43,6 +43,7 @@ public class ReconciliationService {
 	private final ReconciliationRunRepository runRepository;
 	private final ReconciliationFindingRepository findingRepository;
 	private final ReconciliationProperties properties;
+	private final ReconciliationMetrics metrics;
 
 	@Transactional
 	public ReconciliationRun runOnce() {
@@ -59,11 +60,15 @@ public class ReconciliationService {
 				log.warn("대사에서 어긋남을 찾았다 (runId={}, 계좌 {}건 확인, 발견 {}건)",
 						run.getId(), accountsChecked, findings.size());
 			}
+			metrics.record(run, findings);
 			return run;
 		} catch (RuntimeException e) {
 			// 결과를 지우지 않고 실패로 남긴다. "깨끗했다"와 "못 읽었다"는 전혀 다른 얘기다.
 			log.error("대사가 끝까지 돌지 못했다 (runId={})", run.getId(), e);
 			run.fail(shortReason(e), Instant.now());
+			// 실패한 회차도 알린다. 이걸 빼면 배치가 계속 실패하는 동안 지표는 마지막 성공
+			// 회차의 값에 멈춰 있어, 화면상으로는 아무 일도 없는 것처럼 보인다.
+			metrics.record(run, List.of());
 			return run;
 		}
 	}

@@ -1836,6 +1836,104 @@ ROADMAP에 "직접 심어야 한다"고 적어둔 것 중 둘은 이미 나오�
 
 ---
 
+## Phase 5 Step 2 — 직접 심은 메트릭 (후반부) ✅
+
+**목표**: 공짜로 나오지 않는 것들을 심어, **병목이 어디인지** 말할 수 있게 하기
+
+전반부에서 세운 화면은 접수·컨슈머·자원까지만 보여줍니다. 정작 이 시스템 고유의 병목
+(Outbox 릴레이, 계좌 락, 상태 전이 경합)은 아무 데도 안 나옵니다. 다섯 가지를 심었습니다.
+
+| 메트릭 | 무엇을 말해주나 |
+|---|---|
+| `remittance.outbox.backlog` | 릴레이가 부하를 못 따라가는가 |
+| `remittance.lock.wait{outcome}` | 계좌 락을 얼마나 기다리는가 / 못 잡고 포기했는가 |
+| `remittance.optimistic.lock.conflict{entity,outcome}` | 락이 막지 못한 경합이 있는가 |
+| `remittance.kafka.dlt.published{topic}` | 죽어서 사람을 기다리는 메시지가 있는가 |
+| `remittance.reconciliation.*` | 대사가 무엇을 찾았나 — 그리고 **돌긴 했나** |
+
+### 결정 — 실패 횟수를 별도 카운터로 두지 않는다
+
+락 획득 실패는 `remittance.lock.wait{outcome="timeout"}` 타이머의 count가 그대로 답합니다.
+카운터를 따로 두면 **둘이 어긋났을 때 어느 쪽이 맞는지 알 수 없습니다.**
+같은 사건을 두 곳에서 세는 건 지표를 늘리는 게 아니라 신뢰를 나누는 일입니다.
+
+### 결정 — 대사에서 가장 중요한 값은 발견 건수가 아니라 경과 시간
+
+`remittance.reconciliation.last.run.age.seconds`가 이 묶음의 핵심입니다.
+발견 건수만 보면 **"어긋난 게 없었다"와 "대사가 아예 안 돌았다"가 똑같이 0**입니다.
+배치가 죽은 걸 깨끗하다고 오해하는 게 어긋남 자체보다 위험합니다 —
+`ReconciliationRun`을 회차로 남긴 이유와 같은 이야기입니다.
+
+한 번도 안 돌았으면 0이 아니라 **NaN**을 냅니다. 0을 내면 "방금 돌았다"는 거짓말이 되고,
+그게 이 지표가 막으려던 오해 그 자체입니다.
+
+### 결정 — 게이지 안에서 예외를 삼킨다
+
+Outbox 적체는 스크랩할 때마다 `COUNT` 한 번을 던집니다. 그 쿼리가 실패하면 예외를 밖으로
+내보내지 않고 NaN을 냅니다. **스크랩 하나가 통째로 실패하면 JVM·커넥션 풀·컨슈머 지표까지
+전부 사라지기 때문**입니다. DB가 죽은 순간이 바로 그 지표들이 가장 필요한 때인데,
+Outbox 하나 때문에 다 잃는 건 손해가 큽니다.
+
+반대로 대사 지표는 스크랩할 때 DB를 **안 읽습니다.** 회차가 끝날 때 갱신해 메모리에 둡니다.
+대신 재기동하면 값이 비므로 기동 시 마지막 회차를 한 번 읽어 채웁니다 —
+그러지 않으면 재기동 직후가 "대사가 한 번도 안 돌았다"처럼 보입니다.
+
+### 겪은 문제 — 평소에 0인 지표는 사전에 만들어 둬야 한다
+
+대시보드 쿼리를 전부 돌려보니 **낙관적 락 충돌만 빈 결과**였습니다. 버그가 아니라
+카운터의 성질입니다 — **카운터는 처음 증가할 때 생깁니다.** 충돌이 한 번도 없으면
+시계열 자체가 없고, 화면에서는 "충돌 0건"과 "수집이 안 됨"이 똑같이 빈 칸입니다.
+
+처음엔 쿼리에서 `or ... * 0`으로 메우려 했는데, 없는 메트릭은 fallback도 못 만듭니다.
+**소스에서 고쳤습니다** — 기동 시 `retried`·`exhausted` 카운터를 미리 만들어 둡니다.
+이 지표는 평소에 0인 게 정상이라, **0을 그릴 수 있어야 값어치가 있습니다.**
+
+### 검증 — DLT 로그가 이제 실제로 남는다
+
+e2e에서 "DLT로 가는데 WARN·ERROR가 0건"이라고 적었던 그 자리를 다시 밟았습니다.
+본문이 깨진 메시지를 넣으니 이번에는 남습니다.
+
+```
+WARN c.r.n.config.KafkaErrorHandlingConfig : 메시지를 DLT로 보낸다 - 사람이 봐야 한다
+  (topic=transfer.completed, partition=1, offset=409, key=poison-metrics, reason=...)
+```
+
+카운터도 함께 올라갔습니다 (`remittance_kafka_dlt_published_total{topic="transfer.completed"} 1`).
+**로그는 사람이 볼 때만 보이지만 카운터는 그래프에서 튑니다.** 둘 다 필요합니다.
+
+### 검증 — 화면의 모든 쿼리와, 되돌리기
+
+부하(k6 `hot-account` smoke)를 흘린 뒤 대시보드 JSON에서 쿼리를 뽑아 전부 던졌습니다.
+**23개 쿼리 전부 값을 냅니다.**
+
+| 확인한 값 (실측) | |
+|---|---|
+| `remittance_lock_wait_seconds_count` | acquired 346건 / timeout 0건 |
+| `remittance_reconciliation_findings` | BALANCE_MISMATCH 17 · UNSETTLED_TRANSFER 4 · STRANDED_KEY 3 |
+| `remittance_reconciliation_last_run_age_seconds` | 44.5초 (주기 60초이므로 정상 톱니) |
+| `remittance_outbox_backlog` | account 0 · transfer 0 (릴레이가 따라가고 있다) |
+
+테스트는 9건 늘었습니다 — **445건 전부 통과** (436 → 445).
+
+| 테스트 | 확인하는 것 |
+|---|---|
+| `OutboxBacklogMetricsTest` (2건) | 미발행이 쌓이면 오르고, 발행되면 내려간다 |
+| `DistributedLockTest` (+2건) | 기다린 시간을 재고, 못 잡고 포기한 것도 센다 |
+| `AccountServiceTest`·`TransferServiceTest` (+4건 상당) | 충돌을 `retried`/`exhausted`로 갈라 센다 |
+| `ReconciliationMetricsTest` (5건) | 유형별 분리 · 지난 회차가 안 샌다 · 실패 표시 · 경과 시간 NaN/재개 |
+| `KafkaErrorHandlingTest` (+1 검증) | DLT로 갈 때 카운터가 오른다 |
+
+### 남은 것
+
+- **Step 3 baseline 측정** — 이제 잴 수단과 볼 수단이 다 있습니다. ROADMAP의 네 가지 가설
+  (송금 TPS 50 근처, 같은 계좌 상한, 락 대기 3초 초과 시 대량 실패, 커넥션 10개 고갈)을
+  숫자로 확인할 차례입니다
+- `spring_kafka_listener_seconds`의 `name` 라벨이 아직 `KafkaListenerEndpointContainer#0-0`이라
+  어느 토픽인지 안 읽힙니다 (`@KafkaListener(id = ...)`로 고칠 수 있음)
+- 알림(Alertmanager)은 아직 없습니다. 지금은 **화면을 열어야** 보입니다
+
+---
+
 ## 브랜치 히스토리
 
 ```

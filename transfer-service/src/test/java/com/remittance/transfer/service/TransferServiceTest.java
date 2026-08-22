@@ -8,6 +8,8 @@ import com.remittance.transfer.outbox.TransferEventType;
 import com.remittance.transfer.outbox.TransferOutboxRecorder;
 import com.remittance.transfer.repository.TransferRepository;
 import com.remittance.transfer.web.dto.CreateTransferRequest;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -51,8 +53,20 @@ class TransferServiceTest {
 	@Mock
 	private TransferStateUpdater stateUpdater;
 
+	/**
+	 * 메트릭은 목이 아니라 진짜 레지스트리를 쓴다. 목으로 두면 "increment()가 불렸다"까지만
+	 * 확인하게 되는데, 정작 알고 싶은 건 <b>어떤 태그로 몇이 찍혔나</b>이다.
+	 */
+	private final MeterRegistry meterRegistry = new SimpleMeterRegistry();
+
 	private TransferService transferService() {
-		return new TransferService(transferRepository, idempotencyService, outboxRecorder, stateUpdater);
+		return new TransferService(transferRepository, idempotencyService, outboxRecorder, stateUpdater, meterRegistry);
+	}
+
+	private double conflictCount(String outcome) {
+		return meterRegistry.find("remittance.optimistic.lock.conflict")
+				.tag("entity", "transfer").tag("outcome", outcome)
+				.counters().stream().mapToDouble(counter -> counter.count()).sum();
 	}
 
 	private final UUID fromAccountId = UUID.randomUUID();
@@ -118,6 +132,9 @@ class TransferServiceTest {
 				transferId, BigDecimal.valueOf(4_000), Instant.now()));
 
 		verify(stateUpdater, times(2)).advanceTo(transferId, TransferStatus.DEBIT_COMPLETED);
+		// Step 4d에서 이 경합이 실제로 터져 "바깥에는 실패라고 알려놓고 자기 기록은 진행 중"인
+		// 상태를 만들었다. 로그로만 남기면 그때처럼 사고가 난 뒤에야 찾아보게 된다.
+		assertThat(conflictCount("retried")).isEqualTo(1);
 	}
 
 	/** 끝내 못 잡으면 삼키지 않는다. 컨슈머가 재시도하고, 그래도 안 되면 DLT로 가야 한다. */
@@ -130,5 +147,7 @@ class TransferServiceTest {
 		assertThatThrownBy(() -> transferService().applyDebited(new TransferEvents.Debited(
 				transferId, BigDecimal.valueOf(4_000), Instant.now())))
 				.isInstanceOf(ObjectOptimisticLockingFailureException.class);
+		// 포기한 것과 넘긴 것은 성격이 다르다 — 이건 메시지가 DLT로 가는 길이다.
+		assertThat(conflictCount("exhausted")).isEqualTo(1);
 	}
 }

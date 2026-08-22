@@ -12,6 +12,9 @@ import com.remittance.transfer.outbox.TransferEventType;
 import com.remittance.transfer.outbox.TransferOutboxRecorder;
 import com.remittance.transfer.repository.TransferRepository;
 import com.remittance.transfer.web.dto.CreateTransferRequest;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
+import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -66,6 +69,7 @@ public class TransferService {
 	private final IdempotencyService idempotencyService;
 	private final TransferOutboxRecorder outboxRecorder;
 	private final TransferStateUpdater stateUpdater;
+	private final MeterRegistry meterRegistry;
 
 	/**
 	 * 송금 요청의 공개 진입점. 송금을 <b>접수</b>하고 바로 돌아온다.
@@ -254,12 +258,43 @@ public class TransferService {
 				return;
 			} catch (ObjectOptimisticLockingFailureException conflict) {
 				if (attempt == MAX_OPTIMISTIC_LOCK_RETRIES) {
+					conflicts("exhausted").increment();
 					log.warn("상태 전이 경합이 계속된다 - 재시도를 포기한다 (transferId={})", transferId);
 					throw conflict;
 				}
+				conflicts("retried").increment();
 				log.info("상태 전이 경합 - 다시 읽고 판단한다 (transferId={}, 시도={})", transferId, attempt);
 			}
 		}
+	}
+
+	/**
+	 * 상태 전이 경합을 <b>센다</b> (Phase 5 Step 2).
+	 *
+	 * <p>Saga 단계마다 토픽이 다르고 토픽마다 리스너 스레드가 다르므로, 다섯 리스너가 같은
+	 * 송금 행을 동시에 건드릴 수 있다. Step 4d에서 이 경합이 실제로 터져 <b>바깥에는 실패라고
+	 * 알려놓고 자기 기록은 진행 중</b>인 상태를 만들었다. 로그로만 남기면 그때처럼
+	 * 사고가 난 뒤에야 찾아보게 된다.
+	 */
+
+	/**
+	 * 충돌이 한 번도 없어도 <b>0으로 보이게</b> 미리 만들어 둔다 (Phase 5 Step 2).
+	 *
+	 * <p>카운터는 처음 증가할 때 생긴다. 그대로 두면 충돌이 없는 동안 시계열 자체가 없어서
+	 * 화면에서 <b>"충돌 0건"과 "수집이 안 되고 있다"가 똑같이 빈 칸</b>으로 보인다.
+	 * 정작 이 지표는 평소에 0인 게 정상이라, 0을 그릴 수 있어야 값어치가 있다.
+	 */
+	@PostConstruct
+	void 충돌_카운터를_미리_만든다() {
+		conflicts("retried");
+		conflicts("exhausted");
+	}
+	private Counter conflicts(String outcome) {
+		return Counter.builder("remittance.optimistic.lock.conflict")
+				.description("낙관적 락 충돌 횟수")
+				.tag("entity", "transfer")
+				.tag("outcome", outcome)
+				.register(meterRegistry);
 	}
 
 	@Transactional(readOnly = true)

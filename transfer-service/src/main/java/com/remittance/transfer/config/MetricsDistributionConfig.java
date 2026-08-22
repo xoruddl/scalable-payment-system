@@ -53,10 +53,20 @@ public class MetricsDistributionConfig {
 	/** 커넥션 획득 대기. HikariCP의 타임아웃이 30초라 그보다 긴 대기는 존재할 수 없다. */
 	private static final Duration[] ACQUIRE_BUCKETS = buckets(1, 5, 10, 50, 100, 500, 1_000, 5_000, 10_000, 30_000);
 
+	/**
+	 * 분산 락을 기다린 시간. 대기 상한이 3초라 그 부근을 촘촘히 본다 —
+	 * 3초에 붙기 시작하면 곧 {@code outcome=timeout}으로 넘어간다는 신호다.
+	 */
+	private static final Duration[] LOCK_WAIT_BUCKETS =
+			buckets(1, 5, 10, 25, 50, 100, 250, 500, 1_000, 2_000, 3_000);
+
 	private static final Map<String, Duration[]> BUCKETS_BY_METER = Map.of(
 			"http.server.requests", HTTP_BUCKETS,
 			"spring.kafka.listener", LISTENER_BUCKETS,
-			"hikaricp.connections.acquire", ACQUIRE_BUCKETS);
+			"hikaricp.connections.acquire", ACQUIRE_BUCKETS,
+			// 이 타이머는 account-service에만 있지만, 다섯 복사본을 똑같이 유지한다.
+			// 없는 이름은 그냥 매칭되지 않을 뿐이고, 복사본이 갈라지면 관리가 안 된다.
+			"remittance.lock.wait", LOCK_WAIT_BUCKETS);
 
 	private static Duration[] buckets(long... millis) {
 		Duration[] durations = new Duration[millis.length];
