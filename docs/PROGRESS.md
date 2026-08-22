@@ -22,7 +22,9 @@ Phase 0  ✅  프로젝트 기반 설정
 Phase 1  ✅  핵심 도메인 서비스 (Account / Transfer / Ledger)
 Phase 2  ✅  분산 환경 데이터 정합성   ← 모든 Step 완료
 Phase 3  ✅  이벤트 기반 아키텍처 (알림 컨슈머까지)
-Phase 4~13   미착수
+Phase 4       미착수 (Gateway·Config — 측정을 먼저 하기로 해서 뒤로 밀림)
+Phase 5  🔵  측정 기반    Step 1 ✅ 부하 · Step 2 ✅ 관측 · Step 3 ⬜ baseline  ← 지금 여기
+Phase 6~13   미착수
 ```
 
 **다음 Phase의 방향이 바뀌었습니다** — 측정(Phase 5)을 고동시성 대응(Phase 6)보다 **앞으로**
@@ -31,7 +33,9 @@ Phase 4~13   미착수
 
 **작업 브랜치**: `develop` — `main`과 같은 지점입니다(역머지 완료). 다음 작업은
 `feature/phase-5-*`를 새로 내서 시작합니다.
-**빌드 상태**: 🟢 `./gradlew test` 통과 (테스트 431건) · `./gradlew unitTest` 331건 9초
+**빌드 상태**: 🟢 `./gradlew test` 통과 (테스트 445건)
+**관측**: 🟢 `docker compose up -d prometheus grafana` → http://localhost:3000
+(대시보드 `송금 시스템 — 개요`. 23개 쿼리 전부 값이 나오는 것을 확인)
 **크로스 서비스 e2e**: 🟢 **밀려 있던 확인을 모두 마쳤습니다** (2026-08-22, 커밋 `54a0da2` 기준).
 기존 5개 시나리오 회귀 + Step 6a·6b + Phase 3 알림까지 9건 전부 통과 —
 아래 "밀린 e2e를 몰아서 확인했다" 참고.
