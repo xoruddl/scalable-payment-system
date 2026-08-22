@@ -10,6 +10,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
+import org.springframework.kafka.config.KafkaListenerEndpointRegistry;
 
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -51,6 +52,9 @@ class MetricsExposureTest extends AbstractIntegrationTest {
 	@Autowired
 	private MeterRegistry meterRegistry;
 
+	@Autowired
+	private KafkaListenerEndpointRegistry listenerRegistry;
+
 	private HttpResponse<String> get(String path) throws Exception {
 		return HttpClient.newHttpClient().send(
 				HttpRequest.newBuilder(URI.create("http://localhost:" + port + path)).GET().build(),
@@ -83,6 +87,25 @@ class MetricsExposureTest extends AbstractIntegrationTest {
 				.as("%s에 버킷이 없다 — application.yml의 management.metrics.distribution.slo를 확인하라. "
 						+ "버킷이 없으면 histogram_quantile()이 조용히 빈 패널을 낸다", meterName)
 				.isNotEmpty();
+	}
+
+	/**
+	 * 리스너 지표의 {@code name} 라벨은 <b>컨테이너 빈 이름</b>이 그대로 쓰인다.
+	 * {@code @KafkaListener}에 {@code id}를 주지 않으면
+	 * {@code org.springframework.kafka.KafkaListenerEndpointContainer#0-0}이 되는데,
+	 * 그걸로는 <b>어느 토픽이 느린지 화면에서 읽을 수 없다.</b>
+	 *
+	 * <p>라벨은 <b>baseline을 재기 전에</b> 확정해야 한다. 나중에 바꾸면 시계열이 갈라져
+	 * Phase 6의 재측정을 baseline과 같은 잣대로 비교할 수 없다.
+	 */
+	@Test
+	void 리스너_지표가_어느_토픽인지_읽을_수_있다() {
+		assertThat(listenerRegistry.getListenerContainers())
+				.isNotEmpty()
+				.allSatisfy(container -> assertThat(container.getListenerId())
+						.as("id를 안 주면 라벨이 컨테이너 빈 이름이 되어 어느 토픽인지 못 읽는다")
+						.doesNotContain("KafkaListenerEndpointContainer")
+						.startsWith("transfer."));
 	}
 
 	@Test

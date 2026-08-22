@@ -22,12 +22,12 @@ public class TransferOutcomeConsumer {
 	private final NotificationService notificationService;
 	private final ObjectMapper objectMapper;
 
-	@KafkaListener(topics = TransferEvents.COMPLETED, groupId = "${spring.kafka.consumer.group-id}")
+	@KafkaListener(id = TransferEvents.COMPLETED, topics = TransferEvents.COMPLETED, groupId = "${spring.kafka.consumer.group-id}")
 	public void onCompleted(String payload) {
 		notificationService.onCompleted(parse(payload));
 	}
 
-	@KafkaListener(topics = TransferEvents.FAILED, groupId = "${spring.kafka.consumer.group-id}")
+	@KafkaListener(id = TransferEvents.FAILED, topics = TransferEvents.FAILED, groupId = "${spring.kafka.consumer.group-id}")
 	public void onFailed(String payload) {
 		notificationService.onFailed(parse(payload));
 	}

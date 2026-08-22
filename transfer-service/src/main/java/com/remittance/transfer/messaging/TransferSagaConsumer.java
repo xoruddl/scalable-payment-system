@@ -21,32 +21,32 @@ public class TransferSagaConsumer {
 	private final TransferService transferService;
 	private final ObjectMapper objectMapper;
 
-	@KafkaListener(topics = TransferEvents.DEBITED, groupId = "${spring.kafka.consumer.group-id}")
+	@KafkaListener(id = TransferEvents.DEBITED, topics = TransferEvents.DEBITED, groupId = "${spring.kafka.consumer.group-id}")
 	public void onDebited(String payload) {
 		transferService.applyDebited(objectMapper.readValue(payload, TransferEvents.Debited.class));
 	}
 
-	@KafkaListener(topics = TransferEvents.CREDITED, groupId = "${spring.kafka.consumer.group-id}")
+	@KafkaListener(id = TransferEvents.CREDITED, topics = TransferEvents.CREDITED, groupId = "${spring.kafka.consumer.group-id}")
 	public void onCredited(String payload) {
 		transferService.applyCredited(objectMapper.readValue(payload, TransferEvents.Credited.class));
 	}
 
-	@KafkaListener(topics = TransferEvents.LEDGER_RECORDED, groupId = "${spring.kafka.consumer.group-id}")
+	@KafkaListener(id = TransferEvents.LEDGER_RECORDED, topics = TransferEvents.LEDGER_RECORDED, groupId = "${spring.kafka.consumer.group-id}")
 	public void onLedgerRecorded(String payload) {
 		transferService.applyLedgerRecorded(objectMapper.readValue(payload, TransferEvents.LedgerRecorded.class));
 	}
 
-	@KafkaListener(topics = TransferEvents.DEBIT_FAILED, groupId = "${spring.kafka.consumer.group-id}")
+	@KafkaListener(id = TransferEvents.DEBIT_FAILED, topics = TransferEvents.DEBIT_FAILED, groupId = "${spring.kafka.consumer.group-id}")
 	public void onDebitFailed(String payload) {
 		transferService.applyDebitFailed(objectMapper.readValue(payload, TransferEvents.StepFailed.class));
 	}
 
-	@KafkaListener(topics = TransferEvents.CREDIT_FAILED, groupId = "${spring.kafka.consumer.group-id}")
+	@KafkaListener(id = TransferEvents.CREDIT_FAILED, topics = TransferEvents.CREDIT_FAILED, groupId = "${spring.kafka.consumer.group-id}")
 	public void onCreditFailed(String payload) {
 		transferService.applyCreditFailed(objectMapper.readValue(payload, TransferEvents.StepFailed.class));
 	}
 
-	@KafkaListener(topics = TransferEvents.DEBIT_REVERSED, groupId = "${spring.kafka.consumer.group-id}")
+	@KafkaListener(id = TransferEvents.DEBIT_REVERSED, topics = TransferEvents.DEBIT_REVERSED, groupId = "${spring.kafka.consumer.group-id}")
 	public void onDebitReversed(String payload) {
 		transferService.applyDebitReversed(objectMapper.readValue(payload, TransferEvents.StepFailed.class));
 	}

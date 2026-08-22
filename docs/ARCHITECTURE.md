@@ -397,6 +397,22 @@ at-least-once이므로 같은 이벤트가 두 번 옵니다. **되돌릴 수 �
 > ⚠️ 중복 선언은 안전하지만 **선언이 어긋나면 큰 쪽이 이깁니다.**
 > 파티션 수를 바꿀 때는 그 토픽을 쓰는 서비스를 함께 확인하세요.
 
+### 리스너에는 `id`를 줍니다 — 지표에 그 이름이 그대로 찍힙니다
+
+```java
+@KafkaListener(id = TransferEvents.DEBITED, topics = TransferEvents.DEBITED, ...)
+```
+
+`spring.kafka.listener` 지표의 `name` 라벨은 **컨테이너 빈 이름**입니다.
+`id`를 주지 않으면 `org.springframework.kafka.KafkaListenerEndpointContainer#0-0`이 되어,
+**어느 토픽이 느린지 화면에서 읽을 수 없습니다.** Kafka 클라이언트의 `client.id`도 같이 읽기 좋아집니다.
+
+`groupId`를 함께 지정하므로 `id`가 컨슈머 그룹으로 쓰이지는 않습니다.
+
+> ⚠️ **라벨을 바꾸면 시계열이 갈라집니다.** baseline(Phase 5 Step 3)을 잰 뒤에 이름을 바꾸면
+> 이전 측정과 같은 잣대로 비교할 수 없습니다. 리스너를 새로 만들 때 `id`를 빼먹지 마세요
+> (`MetricsExposureTest`가 지킵니다).
+
 ---
 
 ## 8. 뒤에서 도는 것들
