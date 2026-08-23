@@ -32,8 +32,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 })
 class OutboxRelayDrainTest extends AbstractIntegrationTest {
 
-	/** 배치 크기(100)보다 확실히 많고, 한 주기 상한(20배치)보다는 적은 수. */
+	/** 배치 크기보다 확실히 많고, 한 주기 상한(20배치 = 2,000건)보다는 적은 수. */
 	private static final int PENDING_COUNT = 250;
+
+	/** {@link OutboxRelay}의 배치 크기. 사전조건은 "한 배치보다 많다"이면 충분하다. */
+	private static final int BATCH_SIZE = 100;
 
 	@Autowired
 	private OutboxRelay relay;
@@ -49,7 +52,12 @@ class OutboxRelayDrainTest extends AbstractIntegrationTest {
 		for (int i = 0; i < PENDING_COUNT; i++) {
 			outboxRecorder.record(newTransfer(), TransferEventType.REQUESTED);
 		}
-		assertThat(unpublished()).as("준비 상태").isGreaterThanOrEqualTo(PENDING_COUNT);
+		// 정확히 PENDING_COUNT를 요구하지 않는다 — 기동 직후 스케줄러가 한 번 돌면서 몇 건을
+		// 먼저 가져갈 수 있고, 같은 DB를 쓰는 다른 테스트가 남긴 행이 섞일 수도 있다.
+		// 이 검증에 필요한 사전조건은 "한 배치보다 많이 쌓여 있다"뿐이다.
+		assertThat(unpublished())
+				.as("한 배치보다 많이 쌓여 있어야 이 검증이 의미가 있다")
+				.isGreaterThan(BATCH_SIZE);
 
 		relay.publishPending();
 
