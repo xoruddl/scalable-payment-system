@@ -47,6 +47,7 @@
 | `docs/PROGRESS.md` | **실제로 한 일과 그 이유** — 시간순 기록 | 현재 상태를 파악할 때 (문서 상단에 현재 위치·브랜치·빌드 상태) |
 | `docs/CONTRIBUTING.md` | **규칙** — 커밋 컨벤션, git flow 브랜치 전략 | 커밋/브랜치를 만들기 전 |
 | `docs/openapi.yaml` | API 계약 (Gateway가 외부에 노출하는 스펙) | 엔드포인트를 추가·변경할 때 |
+| `docs/SLO.md` | **약속한 목표와 측정된 용량** — 접수/종결 지연·오류율, 지금 용량은 **40 TPS** | 성능을 논하기 전에. **처리량 숫자 하나만으로 좋아졌다고 말하지 않는다** |
 | `docs/HOMELAB.md` | **측정 전용 홈서버** — 성능 숫자는 여기서 잰다 | 부하 테스트·baseline을 잴 때 |
 | `docs/HELP.md` | Spring Initializr 자동 생성물 (`.gitignore` 대상) | 볼 일 없음 |
 
