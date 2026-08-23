@@ -41,6 +41,21 @@ class DistributedLockTest extends AbstractIntegrationTest {
 		return meterRegistry.get("remittance.lock.wait").tag("outcome", outcome).timer();
 	}
 
+	private Timer holdTimer() {
+		return meterRegistry.get("remittance.lock.hold").timer();
+	}
+
+	/**
+	 * 이번 호출이 <b>얼마를 보탰는지</b> 잰다.
+	 *
+	 * <p>{@code Timer.max()}를 쓰면 안 된다 — 그건 <b>그 타이머의 전체 이력 최댓값</b>이라
+	 * 같은 클래스의 다른 테스트가 기록한 값까지 섞인다(실제로 여기서 한 번 걸렸다).
+	 * 누적 시간의 차이를 봐야 이번 호출만 잰다.
+	 */
+	private double holdDelta(double before) {
+		return holdTimer().totalTime(TimeUnit.MILLISECONDS) - before;
+	}
+
 	/**
 	 * 락 대기 시간을 재는 이유 (Phase 5 Step 2).
 	 *
@@ -48,6 +63,51 @@ class DistributedLockTest extends AbstractIntegrationTest {
 	 * 비동기 파이프라인 뒤에서 벌어지기 때문이다. 그 뒤에서 무슨 일이 나는지 말해주는 게 이 값이라,
 	 * Phase 6에서 락을 바꿀 때 <b>무엇이 나아졌는지 말할 근거</b>가 된다.
 	 */
+	/**
+	 * 대기와 <b>보유</b>를 나눠 재는 이유 (Phase 6 Step 1).
+	 *
+	 * <p>2026-08-23 핫 계좌 측정에서 대기 p99가 95~100ms였는데, <b>그게 왜 100ms인지는
+	 * 대기만 봐서는 알 수 없었다.</b> 앞사람이 오래 붙들고 있어서인지, 놓은 걸 뒷사람이
+	 * 늦게 알아채서인지(이 구현은 50ms마다 다시 물어본다) 구분이 안 된다.
+	 * <b>처방이 서로 달라서</b> — 전자는 임계 구역을 줄여야 하고 후자는 폴링을 그만둬야 한다 —
+	 * 가르지 않으면 무엇을 고친 건지 말할 수 없다.
+	 *
+	 * <p>보유 시간은 그 자체로 <b>한 계좌의 처리량 상한</b>이기도 하다. 10ms면 그 계좌는
+	 * 서버를 아무리 늘려도 초당 100건을 못 넘는다.
+	 */
+	@Test
+	void 락을_쥐고_있던_시간을_잰다() {
+		long beforeCount = holdTimer().count();
+		double beforeTotal = holdTimer().totalTime(TimeUnit.MILLISECONDS);
+
+		distributedLock.executeWithLock(newKey(), Duration.ofSeconds(5), Duration.ofSeconds(1), () -> {
+			sleep(60);
+			return null;
+		});
+
+		assertThat(holdTimer().count()).isEqualTo(beforeCount + 1);
+		assertThat(holdDelta(beforeTotal))
+				.as("임계 구역에서 60ms를 썼으니 그만큼은 잡혀야 한다")
+				.isGreaterThanOrEqualTo(50);
+	}
+
+	/**
+	 * 보유 시간에 <b>해제(Redis 왕복)까지 넣으면 안 된다.</b> 그건 임계 구역이 아니라 뒷정리다.
+	 * 넣으면 "임계 구역을 줄였는데 보유 시간이 안 줄어드는" 상황이 생겨 판단이 흐려진다.
+	 */
+	@Test
+	void 보유_시간에_해제_시간은_넣지_않는다() {
+		long beforeCount = holdTimer().count();
+		double beforeTotal = holdTimer().totalTime(TimeUnit.MILLISECONDS);
+
+		distributedLock.executeWithLock(newKey(), Duration.ofSeconds(5), Duration.ofSeconds(1), () -> null);
+
+		assertThat(holdTimer().count()).isEqualTo(beforeCount + 1);
+		assertThat(holdDelta(beforeTotal))
+				.as("아무것도 안 하는 임계 구역이라 Redis 왕복 시간이 섞이면 안 된다")
+				.isLessThan(50);
+	}
+
 	@Test
 	void 락을_기다린_시간을_잰다() {
 		long before = waitTimer("acquired").count();

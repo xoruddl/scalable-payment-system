@@ -36,6 +36,22 @@ import java.util.function.Supplier;
  * {@code outcome=timeout}으로 떨어진다.
  *
  * <p>Phase 6에서 락을 다른 방식으로 바꿀 때 <b>무엇이 나아졌는지 말할 수 있는 근거</b>가 이 값이다.
+ *
+ * <h2>대기와 보유를 나눠 재는 이유 (Phase 6 Step 1)</h2>
+ * 2026-08-23 핫 계좌 측정에서 대기 p99가 95~100ms로 나왔다. 그런데 <b>그게 왜 100ms인지는
+ * 대기 시간만으로 알 수 없다.</b> 두 가지가 섞여 있기 때문이다.
+ *
+ * <ul>
+ *   <li><b>보유 시간</b> — 앞사람이 임계 구역을 붙들고 있는 시간. 여기서는 JPA 트랜잭션
+ *       전체(INSERT 3번 + UPDATE 1번 + 커밋)가 락 안에서 돈다.</li>
+ *   <li><b>넘겨받는 지연</b> — 앞사람이 놓은 것을 <b>뒷사람이 알아채기까지</b> 걸리는 시간.
+ *       이 구현은 {@link #RETRY_INTERVAL}마다 Redis에 다시 물어보므로,
+ *       락이 5ms 만에 풀려도 <b>최대 50ms를 더 기다린다.</b></li>
+ * </ul>
+ *
+ * <p>둘은 처방이 다르다. 보유가 길면 <b>임계 구역을 줄여야</b> 하고, 넘겨받는 지연이 크면
+ * <b>폴링을 그만두고 알림을 받아야</b> 한다(Redisson은 pub/sub을 쓴다).
+ * <b>가르지 않고 고치면 어느 쪽을 고친 건지 말할 수 없다.</b>
  */
 @Component
 public class DistributedLock {
@@ -58,10 +74,19 @@ public class DistributedLock {
 	private final Timer acquired;
 	private final Timer timedOut;
 
+	/**
+	 * 락을 <b>쥐고 있던</b> 시간. 이게 곧 한 계좌의 처리량 상한이다 —
+	 * 보유가 10ms면 그 계좌는 아무리 서버를 늘려도 <b>초당 100건을 넘지 못한다.</b>
+	 */
+	private final Timer held;
+
 	public DistributedLock(StringRedisTemplate redisTemplate, MeterRegistry meterRegistry) {
 		this.redisTemplate = redisTemplate;
 		this.acquired = waitTimer(meterRegistry, "acquired");
 		this.timedOut = waitTimer(meterRegistry, "timeout");
+		this.held = Timer.builder("remittance.lock.hold")
+				.description("분산 락을 쥐고 있던 시간 — 한 계좌의 처리량 상한을 정한다")
+				.register(meterRegistry);
 	}
 
 	private static Timer waitTimer(MeterRegistry meterRegistry, String outcome) {
@@ -82,9 +107,12 @@ public class DistributedLock {
 	public <T> T executeWithLock(String key, Duration ttl, Duration waitTimeout, Supplier<T> action) {
 		String token = UUID.randomUUID().toString();
 		acquire(key, token, ttl, waitTimeout);
+		long heldFrom = System.nanoTime();
 		try {
 			return action.get();
 		} finally {
+			// 해제보다 먼저 잰다. 해제(Redis 왕복)는 임계 구역이 아니라 뒷정리다.
+			held.record(System.nanoTime() - heldFrom, TimeUnit.NANOSECONDS);
 			release(key, token);
 		}
 	}

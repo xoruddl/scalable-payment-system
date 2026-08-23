@@ -60,13 +60,22 @@ public class MetricsDistributionConfig {
 	private static final Duration[] LOCK_WAIT_BUCKETS =
 			buckets(1, 5, 10, 25, 50, 100, 250, 500, 1_000, 2_000, 3_000);
 
+	/**
+	 * 분산 락을 쥐고 있던 시간 (Phase 6 Step 1). 대기보다 <b>훨씬 짧은 쪽을 촘촘히</b> 본다 —
+	 * 임계 구역이 JPA 트랜잭션 하나라 밀리초 단위이고, 여기가 곧 <b>한 계좌의 처리량 상한</b>이다.
+	 * 보유가 10ms면 그 계좌는 서버를 늘려도 초당 100건을 못 넘는다.
+	 */
+	private static final Duration[] LOCK_HOLD_BUCKETS =
+			buckets(1, 2, 5, 10, 15, 25, 50, 100, 250, 500, 1_000);
+
 	private static final Map<String, Duration[]> BUCKETS_BY_METER = Map.of(
 			"http.server.requests", HTTP_BUCKETS,
 			"spring.kafka.listener", LISTENER_BUCKETS,
 			"hikaricp.connections.acquire", ACQUIRE_BUCKETS,
 			// 이 타이머는 account-service에만 있지만, 다섯 복사본을 똑같이 유지한다.
 			// 없는 이름은 그냥 매칭되지 않을 뿐이고, 복사본이 갈라지면 관리가 안 된다.
-			"remittance.lock.wait", LOCK_WAIT_BUCKETS);
+			"remittance.lock.wait", LOCK_WAIT_BUCKETS,
+			"remittance.lock.hold", LOCK_HOLD_BUCKETS);
 
 	private static Duration[] buckets(long... millis) {
 		Duration[] durations = new Duration[millis.length];
