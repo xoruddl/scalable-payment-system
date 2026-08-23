@@ -31,6 +31,33 @@ export function loadStages(stages) {
 	return SMOKE ? [{ target: 5, duration: '20s' }] : stages;
 }
 
+/**
+ * 고정 도착률로 짧게 돌린다 — <b>변경이 도움이 됐는지</b>를 볼 때 쓴다.
+ *
+ *   RATE=30 k6 run load-test/scenarios/hot-account.js
+ *
+ * <b>왜 필요한가</b>: 기본 계단은 초당 400건까지 밀어 올린다. 그건 <b>천장을 찾는 포화 시험</b>인데,
+ * 이 시스템 용량은 40 TPS다. 감당 못 하는 10배를 4분간 부으면 적체가 2만 건 쌓이고
+ * <b>그게 빠지기를 10분 넘게 기다려야</b> 한다. 그 10분은 아무것도 알려주지 않는다 —
+ * 이미 아는 사실(포화된다)을 다시 확인할 뿐이다.
+ *
+ * <p>용량 근처로 걸면 적체가 안 쌓여 <b>드레인이 수십 초로 줄고</b>, 락 대기·보유·충돌·갇힘 같은
+ * <b>알고 싶은 값은 그대로 나온다.</b> 게다가 그게 실제로 서비스하는 구간이다.
+ *
+ * <p><b>주의</b>: 이렇게 잰 값은 포화 상태에서 잰 값과 <b>나란히 놓으면 안 된다.</b>
+ * 조건이 다르다. 기록에 도착률을 함께 남길 것.
+ */
+export function fixedRateStages(stages, duration = '2m') {
+	if (SMOKE) {
+		return [{ target: 5, duration: '20s' }];
+	}
+	const rate = Number(__ENV.RATE || 0);
+	return rate > 0 ? [{ target: rate, duration }] : stages;
+}
+
+/** 고정 도착률 모드인가. 요약에 "무슨 조건으로 쟀는지"를 남기기 위해 필요하다. */
+export const FIXED_RATE = Number(__ENV.RATE || 0);
+
 export function proberDuration(duration) {
 	return SMOKE ? '20s' : duration;
 }

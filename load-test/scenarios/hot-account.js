@@ -1,4 +1,4 @@
-import { TREND_STATS, loadStages, proberDuration, seedCount } from '../lib/config.js';
+import { FIXED_RATE, TREND_STATS, fixedRateStages, proberDuration, seedCount } from '../lib/config.js';
 import { pick, seedAccounts } from '../lib/seed.js';
 import { requestAndAwaitSettle, requestTransfer } from '../lib/transfer.js';
 import { summaryFor } from '../lib/summary.js';
@@ -34,7 +34,8 @@ export const options = {
 			timeUnit: '1s',
 			preAllocatedVUs: 50,
 			maxVUs: 600,
-			stages: loadStages([
+			// 기본은 천장을 찾는 계단. RATE를 주면 그 도착률로 2분만 돈다 (lib/config.js 참고).
+			stages: fixedRateStages([
 				{ target: 50, duration: '1m' },
 				{ target: 100, duration: '1m' },
 				{ target: 200, duration: '1m' },
@@ -46,7 +47,7 @@ export const options = {
 			exec: 'probe',
 			rate: 1,
 			timeUnit: '1s',
-			duration: proberDuration('4m'),
+			duration: FIXED_RATE > 0 ? '2m' : proberDuration('4m'),
 			preAllocatedVUs: 20,
 			maxVUs: 100,
 		},

@@ -33,9 +33,23 @@ function textSummary(name, data) {
 	// 빈 칸으로 채운 섹션을 보여주면 "못 쟀나?"로 읽혀서 아예 뺀다.
 	const hasSettle = data.metrics.settle_duration !== undefined;
 
+	// 어떤 조건으로 쟀는지를 숫자 바로 옆에 남긴다. 포화 시험(계단)과 고정 도착률은
+	// 값의 뜻이 달라서, 조건을 안 적어두면 나중에 나란히 놓게 된다.
+	const rate = Number(__ENV.RATE || 0);
+	const smoke = __ENV.SMOKE === '1' || __ENV.SMOKE === 'true';
+	let condition;
+	if (smoke) {
+		condition = 'SMOKE — 배선 확인용. 이 숫자는 성능 값이 아니다';
+	} else if (rate > 0) {
+		condition = `고정 도착률 ${rate} TPS — 용량 근처. 포화 시험 값과 나란히 두지 말 것`;
+	} else {
+		condition = '계단 부하 (최대 400 TPS) — 천장을 찾는 포화 시험';
+	}
+
 	const lines = [
 		'',
 		`  === ${name} ===`,
+		`  ${condition}`,
 		'',
 		hasSettle
 			? '  접수 (POST /transfers — 여기만 보면 시스템이 멀쩡해 보인다)'
