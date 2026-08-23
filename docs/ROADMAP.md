@@ -316,8 +316,18 @@ transfer HikariCP **pending 193** / 획득 대기 p99 **4.9초**.
 - [ ] **Trivy로 이미지 취약점 스캔** — Harbor가 해주는 일 중 하나를 CI에서 대신합니다
 
 ## Phase 8. Kubernetes 배포
-- [ ] **🔁 맨 `@Scheduled` → ShedLock** — replica가 늘면 Outbox 릴레이와 대사가 중복 실행됩니다.
-      **HPA를 켜기 전에** 들어가야 합니다. 없으면 **스케일 아웃이 곧바로 버그**입니다
+- [ ] **🔁 맨 `@Scheduled` → 중복 실행 방지** — replica가 늘면 Outbox 릴레이와 대사가
+      중복 실행됩니다. **HPA를 켜기 전에** 들어가야 합니다. 없으면 **스케일 아웃이 곧바로 버그**입니다.
+      **다만 둘에 같은 처방을 쓰면 안 됩니다** (2026-08-23에 갈라 적음):
+      - **대사 배치 → ShedLock.** 처리량이 필요 없으니 **리더 하나만 돌면 충분**합니다
+      - **Outbox 릴레이 → `SELECT ... FOR UPDATE SKIP LOCKED`** (또는 ID 샤딩).
+        여기에 ShedLock을 쓰면 **릴레이가 1대분으로 묶여**, Phase 6에서 올려놓은 발행 처리량을
+        스케일 아웃하면서 도로 잃습니다. 인스턴스마다 **다른 100건**을 집어가야 합니다
+- [ ] **리스너 `concurrency`를 인스턴스 수와 함께 다시 계산한다.**
+      지금 `concurrency = 3`이고 파티션도 3개입니다. 인스턴스를 3대로 늘리면
+      **스레드 9개가 파티션 3개를 두고 경합**해 6개는 놉니다.
+      **파티션을 먼저 늘리거나 인스턴스당 `concurrency`를 낮춰야** 합니다 —
+      스케일 아웃이 처리량으로 이어지지 않는 대표적인 함정입니다
 - [ ] minikube 또는 kind로 로컬 클러스터 구성
 - [ ] 서비스별 Deployment/Service/ConfigMap/Secret manifest 작성
 - [ ] **Kustomize로 환경별 차이 관리** (Helm보다 배우기 쉽고 K8s 네이티브)
