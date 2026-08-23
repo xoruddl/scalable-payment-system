@@ -4,6 +4,7 @@ import com.remittance.account.domain.Account;
 import com.remittance.account.domain.AccountType;
 import com.remittance.account.exception.AccountNotFoundException;
 import com.remittance.account.exception.ConcurrentUpdateException;
+import com.remittance.account.lock.AccountLockPolicy;
 import com.remittance.account.lock.DistributedLock;
 import com.remittance.account.messaging.AccountEvents;
 import com.remittance.account.repository.AccountRepository;
@@ -33,6 +34,7 @@ public class AccountService {
 
 	private final AccountRepository accountRepository;
 	private final DistributedLock distributedLock;
+	private final AccountLockPolicy lockPolicy;
 	private final BalanceMutationExecutor mutationExecutor;
 	private final MeterRegistry meterRegistry;
 
@@ -64,6 +66,10 @@ public class AccountService {
 	 *       분산 락이 뚫린 경우를 잡는 최후 안전망. 그래서 재시도 로직을 그대로 남겨둔다.</li>
 	 * </ol>
 	 * 락은 변경하는 계좌 하나에만 건다. 범위를 넓히면 데드락과 처리량 저하로 이어진다.
+	 *
+	 * <p>첫 겹은 {@link AccountLockPolicy}로 끌 수 있다 — 분산 락이 <b>정말로 도움이 되는지</b>를
+	 * 숫자로 확인하기 위한 스위치다(Phase 6 Step 1). <b>둘째 겹은 못 끈다.</b>
+	 * 낙관적 락은 선택이 아니라 마지막 방어선이다.
 	 */
 	public Account debit(UUID accountId, BigDecimal amount, String currency) {
 		return guarded(accountId, () -> mutationExecutor.execute(accountId,
@@ -85,6 +91,11 @@ public class AccountService {
 	 * 동시에 건드릴 수 있으므로, 방어가 한쪽에만 있으면 없는 것과 같다.
 	 */
 	public <T> T guarded(UUID accountId, Supplier<T> action) {
+		if (!lockPolicy.usesDistributedLock()) {
+			// 낙관적 락만으로 간다 (Phase 6 Step 1의 비교 실험). 경합 구간이 UPDATE~커밋으로
+			// 짧아지는 대신, 충돌하면 트랜잭션을 처음부터 다시 한다.
+			return withOptimisticRetry(accountId, action);
+		}
 		return withAccountLock(accountId, () -> withOptimisticRetry(accountId, action));
 	}
 

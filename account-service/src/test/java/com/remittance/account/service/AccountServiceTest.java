@@ -4,6 +4,7 @@ import com.remittance.account.domain.Account;
 import com.remittance.account.domain.AccountType;
 import com.remittance.account.exception.AccountNotFoundException;
 import com.remittance.account.exception.ConcurrentUpdateException;
+import com.remittance.account.lock.AccountLockPolicy;
 import com.remittance.account.lock.DistributedLock;
 import com.remittance.account.repository.AccountRepository;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -38,6 +39,9 @@ class AccountServiceTest {
 	private DistributedLock distributedLock;
 
 	@Mock
+	private AccountLockPolicy lockPolicy;
+
+	@Mock
 	private BalanceMutationExecutor mutationExecutor;
 
 	/**
@@ -56,9 +60,16 @@ class AccountServiceTest {
 				.counters().stream().mapToDouble(counter -> counter.count()).sum();
 	}
 
-	/** 락 자체는 여기서 검증 대상이 아니므로, 그냥 통과시켜 원래 동작을 실행하게 한다. */
+	/**
+	 * <b>분산 락 전략</b>으로 두되, 락 자체는 여기서 검증 대상이 아니므로 그냥 통과시켜
+	 * 원래 동작을 실행하게 한다.
+	 *
+	 * <p>전략을 명시하는 이유: 기본값을 안 정해두면 목이 {@code false}를 돌려주어
+	 * <b>낙관적 락 경로로 새는데</b>, 그러면 이 클래스의 재시도 검증들이 무엇을 재는지 흐려진다.
+	 */
 	@SuppressWarnings("unchecked")
 	private void passThroughLock() {
+		given(lockPolicy.usesDistributedLock()).willReturn(true);
 		given(distributedLock.executeWithLock(any(), any(), any(), any()))
 				.willAnswer(invocation -> ((Supplier<Account>) invocation.getArgument(3)).get());
 	}
