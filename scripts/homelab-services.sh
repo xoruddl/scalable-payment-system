@@ -47,6 +47,14 @@ SERVICES=(
 # 비워두면 서비스가 코어를 전부 쓴다 — k6를 노트북에서 돌리는 기본 구성이 그렇다.
 CPUSET="${CPUSET:-}"
 
+# 실험용 설정을 서비스에 넘긴다. 공백으로 구분한 KEY=VALUE 목록.
+#
+#   SERVICE_ENV="ACCOUNT_LOCK_STRATEGY=OPTIMISTIC" ./scripts/homelab-services.sh restart
+#
+# 왜 이렇게 하나: 같은 것을 두 가지 설정으로 비교하려면 **같은 jar**여야 한다.
+# 코드를 고쳐가며 재면 빌드가 달라져 무엇 때문에 숫자가 바뀌었는지 말할 수 없다.
+SERVICE_ENV="${SERVICE_ENV:-}"
+
 container_name() { echo "remittance-$1-service"; }
 jar_path() { echo "/app/$1-service/build/libs/$1-service-0.0.1-SNAPSHOT.jar"; }
 
@@ -79,11 +87,15 @@ cmd_start() {
 		local cpuset_arg=()
 		[ -n "$CPUSET" ] && cpuset_arg=(--cpuset-cpus "$CPUSET")
 
+		local env_args=()
+		for kv in $SERVICE_ENV; do env_args+=(-e "$kv"); done
+
 		docker run -d \
 			--name "$local_name" \
 			--network host \
 			--memory "$mem" \
 			"${cpuset_arg[@]}" \
+			"${env_args[@]}" \
 			-v "$PWD":/app:ro \
 			-w /app \
 			--restart no \
@@ -125,11 +137,18 @@ cmd_status() {
 	echo "▶ HEAD=$head"
 	for entry in "${SERVICES[@]}"; do
 		IFS=: read -r name port _ _ <<<"$entry"
-		local commit
-		commit="$(curl -s -m 2 "http://localhost:$port/actuator/info" 2>/dev/null \
-			| sed -n 's/.*"commit":"\([^"]*\)".*/\1/p')"
+		local commit info extra
+		info="$(curl -s -m 2 "http://localhost:$port/actuator/info" 2>/dev/null)"
+		commit="$(echo "$info" | sed -n 's/.*"commit":"\([^"]*\)".*/\1/p')"
+		# 실험 설정도 함께 보여준다. 어느 전략으로 쟀는지 물어볼 수 없으면
+		# 나중에 그 숫자가 무엇이었는지 말할 수 없다 — 커밋을 확인하는 이유와 같다.
+		extra=""
+		case "$info" in
+			*accountLockStrategy*)
+				extra=" [$(echo "$info" | sed -n 's/.*"accountLockStrategy":"\([^"]*\)".*/\1/p')]" ;;
+		esac
 		if [ "$commit" = "$head" ]; then
-			printf "   %-14s %s ✅\n" "$name" "$commit"
+			printf "   %-14s %s ✅%s\n" "$name" "$commit" "$extra"
 		else
 			printf "   %-14s %s 🔴 HEAD와 다르다\n" "$name" "${commit:-응답없음}"
 			mismatch=1
