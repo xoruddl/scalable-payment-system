@@ -5,9 +5,26 @@ spring:
     url: jdbc:mysql://localhost:3306/account_db?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
     username: root
     password: root
+  # 스키마는 앱이 아니라 여기 있는 SQL이 만든다 (DECISIONS.md 교체 4번).
+  #   src/main/resources/db/migration/V1__baseline.sql
+  flyway:
+    # 이미 테이블이 있는데 이력 테이블이 없으면, V1을 실행하는 대신
+    # "지금 이 상태가 V1이다"라고 도장만 찍고 넘어간다.
+    #
+    # 이게 없으면 <b>기존 볼륨에서 뜨는 순간 기동이 실패한다</b> — Flyway는 빈 스키마를
+    # 기대하는데 테이블이 이미 있으니 V1의 CREATE TABLE이 충돌한다. 홈서버 DB에는
+    # 지금까지 쌓인 데이터가 있어서 지우고 시작할 수 없으므로 이 다리가 필요하다.
+    #
+    # 대가는 명확하다. <b>도장은 내용을 확인하지 않는다.</b> 실제 스키마가 V1과 달라도
+    # 그냥 통과시킨다. 그래서 이것만 믿으면 안 되고, 아래 ddl-auto: validate가 짝이다 —
+    # 엔티티와 실제 테이블이 어긋나면 그쪽에서 기동이 멈춘다.
+    baseline-on-migrate: true
+    baseline-version: 1
   jpa:
     hibernate:
-      ddl-auto: update
+      # 스키마를 <b>만들지 않고 대조만</b> 한다. 엔티티에 컬럼을 추가하고 마이그레이션 파일을
+      # 빠뜨리면 여기서 기동이 실패한다 — 운영에서 조용히 틀어지는 것보다 배포가 멈추는 게 낫다.
+      ddl-auto: validate
     open-in-view: false
     properties:
       hibernate:
