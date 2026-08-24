@@ -41,7 +41,7 @@ function textSummary(name, data) {
 	if (smoke) {
 		condition = 'SMOKE — 배선 확인용. 이 숫자는 성능 값이 아니다';
 	} else if (rate > 0) {
-		condition = `고정 도착률 ${rate} TPS — 용량 근처. 포화 시험 값과 나란히 두지 말 것`;
+		condition = `고정 도착률 ${rate} TPS (램프 없음) — 포화 시험 값과 나란히 두지 말 것`;
 	} else {
 		condition = '계단 부하 (최대 400 TPS) — 천장을 찾는 포화 시험';
 	}
@@ -60,10 +60,16 @@ function textSummary(name, data) {
 		hasSettle
 			? '  접수 (POST /transfers — 여기만 보면 시스템이 멀쩡해 보인다)'
 			: '  요청',
-		`    처리량        ${metric(data, 'http_reqs', 'rate')} req/s`,
-		`    p95           ${metric(data, 'http_req_duration', 'p(95)')} ms`,
-		`    p99           ${metric(data, 'http_req_duration', 'p(99)')} ms`,
+		// 접수만 센다. http_reqs 전체를 쓰면 prober의 폴링 GET과 setup의 계좌 생성까지
+		// 섞여서, "접수가 몇 건/s였나"에 답하지 못한다. 실제로 그 값을 접수 처리량으로 읽고
+		// 없는 병목을 쫓을 뻔했다 (2026-08-24).
+		`    접수 처리량   ${metric(data, 'http_reqs{name:accept}', 'rate')} req/s`,
+		`    p95           ${metric(data, 'http_req_duration{name:accept}', 'p(95)')} ms`,
+		`    p99           ${metric(data, 'http_req_duration{name:accept}', 'p(99)')} ms`,
 		`    실패율        ${metric(data, 'http_req_failed', 'rate')}`,
+		// k6가 도착률을 못 맞춘 건수. 0이 아니면 <b>요청한 부하가 실제로 안 걸린 것</b>이라
+		// 그 실행의 지연 값은 의미가 없다.
+		`    미발사        ${metric(data, 'dropped_iterations', 'count', '0')}  ← 0이 아니면 그 부하는 안 걸린 것`,
 	];
 
 	if (hasSettle) {

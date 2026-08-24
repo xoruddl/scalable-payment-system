@@ -58,6 +58,20 @@ export function fixedRateStages(stages, duration = '2m') {
 /** 고정 도착률 모드인가. 요약에 "무슨 조건으로 쟀는지"를 남기기 위해 필요하다. */
 export const FIXED_RATE = Number(__ENV.RATE || 0);
 
+/**
+ * `ramping-arrival-rate`의 시작 도착률.
+ *
+ * <p><b>이게 없으면 RATE는 고정 도착률이 아니라 램프가 된다.</b> 단계가
+ * {@code [{target: RATE}]} 하나뿐이어도 시작이 10이면 10 → RATE로 2분간 올라가므로,
+ * 실제 평균은 {@code (10 + RATE) / 2}다. 2026-08-24에 이걸 모르고
+ * <b>"RATE=60을 견딘다"고 적었는데 실제로는 평균 35였다.</b>
+ *
+ * <p>시작을 목표와 같게 두면 램프 구간이 없어져 <b>진짜 고정</b>이 된다.
+ */
+export function fixedStartRate(fallback) {
+	return FIXED_RATE > 0 ? FIXED_RATE : fallback;
+}
+
 export function proberDuration(duration) {
 	return SMOKE ? '20s' : duration;
 }
