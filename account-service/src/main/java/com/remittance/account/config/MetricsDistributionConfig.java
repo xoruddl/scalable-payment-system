@@ -68,6 +68,10 @@ public class MetricsDistributionConfig {
 	private static final Duration[] LOCK_HOLD_BUCKETS =
 			buckets(1, 2, 5, 10, 15, 25, 50, 100, 250, 500, 1_000);
 
+	/** Account Saga 한 건의 내부 구간. 현재 병목인 80ms 주변을 촘촘히 가른다. */
+	private static final Duration[] SAGA_STEP_BUCKETS =
+			buckets(1, 2, 5, 10, 15, 25, 50, 75, 100, 150, 250, 500, 1_000);
+
 	private static final Map<String, Duration[]> BUCKETS_BY_METER = Map.of(
 			"http.server.requests", HTTP_BUCKETS,
 			"spring.kafka.listener", LISTENER_BUCKETS,
@@ -75,7 +79,9 @@ public class MetricsDistributionConfig {
 			// 이 타이머는 account-service에만 있지만, 다섯 복사본을 똑같이 유지한다.
 			// 없는 이름은 그냥 매칭되지 않을 뿐이고, 복사본이 갈라지면 관리가 안 된다.
 			"remittance.lock.wait", LOCK_WAIT_BUCKETS,
-			"remittance.lock.hold", LOCK_HOLD_BUCKETS);
+			"remittance.lock.hold", LOCK_HOLD_BUCKETS,
+			"remittance.account.saga.stage", SAGA_STEP_BUCKETS,
+			"remittance.account.saga.transaction", SAGA_STEP_BUCKETS);
 
 	private static Duration[] buckets(long... millis) {
 		Duration[] durations = new Duration[millis.length];

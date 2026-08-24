@@ -42,6 +42,7 @@ public class SagaStepExecutor {
 	private final OutboxEventRepository outboxEventRepository;
 	private final BalanceJournal balanceJournal;
 	private final ObjectMapper objectMapper;
+	private final SagaStepMetrics metrics;
 
 	/**
 	 * 이 단계가 잔액을 어떻게 움직였는지 — 분개장에 남길 내용이다.
@@ -66,19 +67,28 @@ public class SagaStepExecutor {
 	public void execute(String consumedEventType, UUID transferId, UUID accountId, short shardNo,
 			Consumer<AccountBalance> mutation, String nextEventType,
 			Function<AccountBalance, Object> nextEventBody, BalanceChange balanceChange) {
+		SagaStepMetrics.Measurement measurement = metrics.start(consumedEventType);
+
 		// 이미 처리한 이벤트면 PK 중복으로 여기서 DataIntegrityViolationException이 난다.
 		// 조회 후 INSERT가 아니라 INSERT 먼저인 이유는, 두 스레드가 동시에 "없다"를 보는 경합을 막기 위함.
-		processedEventRepository.saveAndFlush(new ProcessedEvent(consumedEventType, transferId));
+		measurement.record(SagaStepMetrics.DEDUPLICATION_FLUSH,
+				() -> {
+					processedEventRepository.saveAndFlush(new ProcessedEvent(consumedEventType, transferId));
+				});
 
 		// 방향이 읽을 조각 수를 정한다 — 넣는 것은 조각 하나, 빼는 것은 전부.
-		AccountBalance balance = balanceShards.load(accountId, balanceChange.direction(), shardNo);
+		AccountBalance balance = measurement.record(SagaStepMetrics.BALANCE_LOAD,
+				() -> balanceShards.load(accountId, balanceChange.direction(), shardNo));
 		mutation.accept(balance);
-		balanceShards.flush(balance);
+		measurement.record(SagaStepMetrics.BALANCE_FLUSH, () -> balanceShards.flush(balance));
 
-		record(transferId, nextEventType, nextEventBody.apply(balance));
-		// 잔액이 움직였으면 반드시 분개장에도 남는다 — 입출금 API와 같은 규칙이다.
-		balanceJournal.record(balance, balanceChange.reason(), balanceChange.direction(),
-				balanceChange.amount(), transferId);
+		measurement.record(SagaStepMetrics.OUTBOX_ENQUEUE, () -> {
+			record(transferId, nextEventType, nextEventBody.apply(balance));
+			// 잔액이 움직였으면 반드시 분개장에도 남는다 — 입출금 API와 같은 규칙이다.
+			balanceJournal.record(balance, balanceChange.reason(), balanceChange.direction(),
+					balanceChange.amount(), transferId);
+		});
+		measurement.markWorkFinished();
 	}
 
 	/**
