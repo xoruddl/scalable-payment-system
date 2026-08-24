@@ -28,6 +28,7 @@ import java.util.function.Supplier;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyShort;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -49,6 +50,9 @@ class AccountServiceTest {
 
 	@Mock
 	private BalanceShards balanceShards;
+
+	@Mock
+	private ShardRouter shardRouter;
 
 	/**
 	 * 메트릭은 목이 아니라 진짜 레지스트리를 쓴다. 목으로 두면 "increment()가 불렸다"까지만
@@ -98,7 +102,7 @@ class AccountServiceTest {
 		AccountBalance balance = AccountBalance.whole(account, List.of(
 				new AccountBalanceShard(account.getAccountId(), (short) 0, BigDecimal.valueOf(1000))));
 
-		given(mutationExecutor.execute(any(), any(), any(), any(), any()))
+		given(mutationExecutor.execute(any(), anyShort(), any(), any(), any(), any()))
 				.willThrow(new ObjectOptimisticLockingFailureException(Account.class, accountId))
 				.willThrow(new ObjectOptimisticLockingFailureException(Account.class, accountId))
 				.willReturn(balance);
@@ -106,7 +110,7 @@ class AccountServiceTest {
 		AccountBalance result = accountService.credit(accountId, BigDecimal.valueOf(100), "KRW");
 
 		assertThat(result).isSameAs(balance);
-		verify(mutationExecutor, times(3)).execute(any(), any(), any(), any(), any());
+		verify(mutationExecutor, times(3)).execute(any(), anyShort(), any(), any(), any(), any());
 		// 충돌이 두 번 났고 둘 다 재시도로 넘겼다. 이 값이 0에서 뜨기 시작하면
 		// 분산 락이 막지 못한 경합이 실제로 있다는 뜻이다 (Phase 5 Step 2).
 		assertThat(conflictCount("retried")).isEqualTo(2);
@@ -117,7 +121,7 @@ class AccountServiceTest {
 	void 재시도를_모두_소진하면_예외() {
 		passThroughLock();
 		UUID accountId = UUID.randomUUID();
-		given(mutationExecutor.execute(any(), any(), any(), any(), any()))
+		given(mutationExecutor.execute(any(), anyShort(), any(), any(), any(), any()))
 				.willThrow(new ObjectOptimisticLockingFailureException(Account.class, accountId));
 
 		assertThatThrownBy(() -> accountService.credit(accountId, BigDecimal.valueOf(100), "KRW"))

@@ -114,8 +114,8 @@ public class TransferSagaService {
 			SagaStepExecutor.BalanceChange balanceChange, Function<String, Fallback> fallback) {
 		try {
 			// 잔액 변경이므로 REST 진입점과 똑같은 동시성 방어(분산 락 + 낙관적 락)를 거친다.
-			accountService.guarded(accountId, () -> {
-				sagaStepExecutor.execute(consumedEventType, transferId, accountId,
+			accountService.guarded(accountId, balanceChange.direction(), shardNo -> {
+				sagaStepExecutor.execute(consumedEventType, transferId, accountId, shardNo,
 						mutation, nextEventType, nextEventBody, balanceChange);
 				return null;
 			});

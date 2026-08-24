@@ -57,11 +57,13 @@ public class SagaStepExecutor {
 	/**
 	 * @param consumedEventType 방금 소비한 이벤트 타입. 중복 판정 키의 일부가 된다.
 	 * @param accountId         잔액을 변경할 계좌. 호출부가 이 계좌의 락을 이미 잡고 있어야 한다.
+	 * @param shardNo           입금이면 넣을 조각, 출금이면 {@code ALL_SHARDS}. 락 키와 <b>같은 번호</b>여야 한다 —
+	 *                          다르면 잠그지 않은 조각을 만지게 된다.
 	 * @param nextEventBody     변경 <b>후</b>의 잔액을 받아 다음 이벤트 본문을 만든다.
 	 * @param balanceChange     분개장에 남길 내용. 잔액 변경과 같은 트랜잭션에 들어가야 한다.
 	 */
 	@Transactional
-	public void execute(String consumedEventType, UUID transferId, UUID accountId,
+	public void execute(String consumedEventType, UUID transferId, UUID accountId, short shardNo,
 			Consumer<AccountBalance> mutation, String nextEventType,
 			Function<AccountBalance, Object> nextEventBody, BalanceChange balanceChange) {
 		// 이미 처리한 이벤트면 PK 중복으로 여기서 DataIntegrityViolationException이 난다.
@@ -69,7 +71,7 @@ public class SagaStepExecutor {
 		processedEventRepository.saveAndFlush(new ProcessedEvent(consumedEventType, transferId));
 
 		// 방향이 읽을 조각 수를 정한다 — 넣는 것은 조각 하나, 빼는 것은 전부.
-		AccountBalance balance = balanceShards.load(accountId, balanceChange.direction());
+		AccountBalance balance = balanceShards.load(accountId, balanceChange.direction(), shardNo);
 		mutation.accept(balance);
 		balanceShards.flush(balance);
 

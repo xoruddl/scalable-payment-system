@@ -28,10 +28,10 @@ public class BalanceMutationExecutor {
 	private final BalanceJournal balanceJournal;
 
 	@Transactional
-	public AccountBalance execute(UUID accountId, Consumer<AccountBalance> mutation,
+	public AccountBalance execute(UUID accountId, short shardNo, Consumer<AccountBalance> mutation,
 			AccountEvents.BalanceChangeReason reason, AccountEvents.TransactionDirection direction,
 			BigDecimal amount) {
-		AccountBalance balance = balanceShards.load(accountId, direction);
+		AccountBalance balance = balanceShards.load(accountId, direction, shardNo);
 		mutation.accept(balance);
 		balanceShards.flush(balance);
 		// 송금과 무관한 변경이라 transferId가 없다.

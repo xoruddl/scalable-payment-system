@@ -13,7 +13,6 @@ import org.springframework.stereotype.Component;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.UUID;
-import java.util.concurrent.ThreadLocalRandom;
 
 /**
  * 잔액 조각을 <b>읽어오고 저장하는</b> 한 곳. 조각을 몇 개 읽을지가 여기서 갈린다.
@@ -47,9 +46,9 @@ public class BalanceShards {
 	 * 호출부가 매번 고르게 하면 <b>한 곳만 잘못 골라도 조용히 틀린다</b>(안 읽은 조각의 돈이
 	 * 없는 것처럼 보인다). 그래서 여기서 정한다.
 	 */
-	public AccountBalance load(UUID accountId, AccountEvents.TransactionDirection direction) {
+	public AccountBalance load(UUID accountId, AccountEvents.TransactionDirection direction, short shardNo) {
 		return direction == AccountEvents.TransactionDirection.CREDIT
-				? forCredit(accountId) : whole(accountId);
+				? forCredit(accountId, shardNo) : whole(accountId);
 	}
 
 	/** 조각을 전부 읽는다. 출금과 조회가 쓴다. */
@@ -64,28 +63,15 @@ public class BalanceShards {
 	 * <p>조각이 하나뿐인 계좌(대부분)는 <b>전부 읽는 것과 같다.</b> 그래서 나머지 합을 구하는
 	 * 쿼리를 아예 내보내지 않는다 — 안 쪼갠 계좌가 쪼개기 때문에 느려지면 안 된다.
 	 */
-	public AccountBalance forCredit(UUID accountId) {
+	public AccountBalance forCredit(UUID accountId, short shardNo) {
 		Account account = account(accountId);
 		if (account.getShardCount() <= 1) {
 			return AccountBalance.whole(account, shardRepository.findByAccountIdOrderByShardNoAsc(accountId));
 		}
-		short shardNo = pick(account.getShardCount());
 		AccountBalanceShard shard = shardRepository.findByAccountIdAndShardNo(accountId, shardNo)
 				.orElseThrow(() -> new IllegalStateException(
 						"있어야 할 조각이 없다 (accountId=%s, shardNo=%d)".formatted(accountId, shardNo)));
 		return AccountBalance.onlyShard(account, shard, shardRepository.totalExcluding(accountId, shardNo));
-	}
-
-	/**
-	 * 어느 조각에 넣을지 고른다. <b>무작위</b>다.
-	 *
-	 * <p>순번을 돌리면(round-robin) 인스턴스마다 자기 순번을 갖게 되어, 인스턴스가 여럿이면
-	 * 같은 조각을 동시에 고르는 일이 오히려 잦아진다. 무작위는 그런 결이 없다.
-	 * 송금 ID로 해시하는 방법도 있지만, 그러면 <b>같은 송금의 재시도가 같은 조각으로 몰려</b>
-	 * 경합이 난 조각을 계속 다시 두드리게 된다.
-	 */
-	private short pick(short shardCount) {
-		return (short) ThreadLocalRandom.current().nextInt(shardCount);
 	}
 
 	/** 바뀐 조각을 즉시 반영한다. 낙관적 락 충돌을 이 트랜잭션 안에서 만나야 재시도가 걸린다. */
