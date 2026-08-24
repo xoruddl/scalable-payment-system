@@ -41,24 +41,34 @@ class TransferEventConsumerConcurrencyTest extends AbstractIntegrationTest {
 	private static final List<String> CONSUMED_TOPICS =
 			List.of(TransferEvents.REQUESTED, TransferEvents.DEBITED, TransferEvents.CREDIT_FAILED);
 
-	private static final int EXPECTED_CONCURRENCY = 3;
-
 	@Autowired
 	private KafkaListenerEndpointRegistry registry;
 
 	@Autowired
 	private KafkaAdmin kafkaAdmin;
 
+	/**
+	 * 기대값을 <b>브로커에 물어본 파티션 수에서 끌어온다.</b> 상수로 박아두면 파티션을 늘릴 때마다
+	 * 테스트를 함께 고쳐야 하는데, 그건 검증이 아니라 <b>숫자를 두 곳에 적어두는 것</b>이다.
+	 * 실제로 3 → 6으로 올릴 때 여기서 red가 났고, 고칠 곳은 코드가 아니라 이 상수였다.
+	 *
+	 * <p>이렇게 두면 검증하는 명제가 "지금 3이 맞나"에서
+	 * <b>"스레드가 파티션을 남김없이 쓰고 있나"</b>로 바뀐다 — 그게 원래 알고 싶던 것이다.
+	 */
 	@Test
 	void 리스너마다_스레드가_파티션_수만큼_뜬다() {
+		Map<String, TopicDescription> described =
+				kafkaAdmin.describeTopics(CONSUMED_TOPICS.toArray(String[]::new));
+
 		for (String topic : CONSUMED_TOPICS) {
+			int partitions = described.get(topic).partitions().size();
 			ConcurrentMessageListenerContainer<?, ?> container = containerFor(topic);
 
 			// 자식 컨테이너는 기동하면서 만들어지므로 잠깐 기다린다.
 			await().atMost(Duration.ofSeconds(30)).untilAsserted(() ->
 					assertThat(container.getContainers())
-							.as("%s 리스너의 실제 스레드 수", topic)
-							.hasSize(EXPECTED_CONCURRENCY));
+							.as("%s 리스너의 실제 스레드 수 (파티션 %d개)", topic, partitions)
+							.hasSize(partitions));
 		}
 	}
 
