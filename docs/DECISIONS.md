@@ -100,7 +100,80 @@ JVM + Spring Boot   ·   MySQL   ·   Redis   ·   Kafka   ·   Kubernetes   · 
 
 ## 교체 이력
 
-> 아직 없습니다. Phase 0~3은 전부 자체 구현 단계입니다.
+### D-001 · `ddl-auto: update`를 Flyway로 (Phase 6)
+
+**면접 한 줄**: "스키마를 `ddl-auto: update`로 만들고 있었는데, `Transfer.idempotencyKey`의
+unique를 떼고 테스트했을 때 **컨테이너가 새로 떴기 때문에** 실패가 잡혔습니다. 기존 DB였다면
+인덱스가 남아 통과했을 겁니다. **검증 결과가 DB 상태에 따라 달라진다**는 게 드러나서 Flyway로
+옮겼습니다. 대신 스키마를 바꿀 때마다 마이그레이션 파일을 함께 써야 합니다."
+
+**바꾼 것**: `ddl-auto: update` → `Flyway 12.4.0` + `ddl-auto: validate`  ·  **커밋**: `f0dcbb2`
+
+#### ① 어떤 문제가 있었나
+
+`ddl-auto: update`는 **더하기만 하고 빼지 않습니다.** 컬럼도 인덱스도 지우지 않습니다.
+그래서 스키마가 **어느 DB에서 언제부터 떠 있었느냐**에 따라 달라집니다.
+
+| 증상 | 무슨 일이 일어났나 |
+|---|---|
+| unique를 뗐는데 테스트가 red | 컨테이너가 새로 떠서 인덱스가 안 만들어졌다. **기존 DB였으면 green** |
+| `notification_db`를 추가했는데 안 생김 | `01-databases.sql`은 **볼륨이 비었을 때만** 돈다 |
+
+두 번째가 특히 나쁩니다. "스키마를 누가 만드나"의 답이 **앱, 초기화 스크립트, 사람 손** 셋으로
+갈라져 있었고, 셋 다 "이미 있으면 안 한다"라서 **어긋난 상태를 아무도 못 봅니다.**
+
+#### ② 자체 구현이 가르쳐준 것
+
+`ddl-auto`가 만든 스키마를 실제로 뜯어보니, **이름이 전부 Hibernate의 것**이었습니다 —
+`UKc662f7lm5ec167m89rp50kb1d` 같은. 인덱스를 지우려면 이 이름을 알아야 하는데,
+엔티티 어디에도 적혀 있지 않습니다. **되돌릴 방법이 없는 변경을 계속 쌓고 있었던** 셈입니다.
+
+#### ③ 어떤 대안을 봤나
+
+| 후보 | 채택 안 한 이유 |
+|---|---|
+| **Flyway** | ← 채택. SQL 그대로 씀. Spring Boot 4.1이 `spring-boot-starter-flyway`로 기본 통합 |
+| Liquibase | XML/YAML 추상화로 DB 이식성이 좋지만, **MySQL 하나로 갈 거라 그 이점을 못 씁니다** |
+| 계속 `ddl-auto` | 운영에서 못 씁니다. 컨테이너 여럿이 뜨면 DDL이 서로 경합하기까지 합니다 |
+
+#### ④ 왜 이걸 골랐나
+
+혼자 하는 저장소라 **배우는 비용이 가장 싼 것**이 유리하고, Flyway는 파일 이름 규칙과
+`flyway_schema_history` 테이블 하나가 전부입니다. 이식성은 애초에 필요가 없습니다.
+
+#### ⑤ 무엇을 포기했나  ★
+
+- **엔티티만 고치면 되던 게 두 곳이 됐습니다.** 컬럼 하나 추가에 SQL 파일이 따라옵니다.
+- **`baseline-on-migrate: true`가 남습니다.** 이미 테이블이 있는데 이력이 없으면
+  "지금 이게 V1이다"라고 **도장만 찍고 내용을 확인하지 않습니다.** 실제 스키마가 V1과 달라도
+  통과합니다. 그래서 `ddl-auto: validate`를 짝으로 켜뒀습니다 — 엔티티와 실제 테이블이
+  어긋나면 그쪽에서 기동이 멈춥니다. **한쪽만으로는 부족한 구성**입니다.
+- **베이스라인이 예쁘지 않습니다.** `UKc662f7lm5ec167m89rp50kb1d`를 그대로 뒀습니다.
+  여기서 이름을 고치면 **도장만 찍고 넘어가는 기존 DB**와 **V1을 실행하는 새 DB**의 스키마가
+  갈라집니다. 고치려면 지금부터는 V2입니다.
+
+#### ⑥ 어떻게 확인했나
+
+**둘 다 확인해야 합니다** — 새 DB에서 V1이 맞게 만드는가, 기존 DB에서 안 깨지고 뜨는가.
+
+| 무엇 | 어떻게 | 결과 |
+|---|---|---|
+| Flyway가 진짜 도는가 | V1의 컬럼 이름 하나를 **일부러 틀리게** 하고 테스트 | notification 7개가 전부 `SchemaManagementException`으로 **red** |
+| V1 == 엔티티 | 되돌린 뒤 다섯 서비스 테스트 | 전부 green (새 컨테이너 → V1 실행 → validate 통과) |
+| 기존 DB에서 안 깨지나 | 데이터가 든 홈서버 DB에 배포 | 네 DB 전부 `<< Flyway Baseline >>` / `success=1`, **V1은 실행 안 됨** |
+| 데이터가 남아 있나 | 재시작 후 행 수 | accounts 61 · transfers 2521 · notifications 5042 — 그대로 |
+
+**일부러 깨보지 않았으면 아무것도 확인 못 했을 겁니다.** 테스트가 green인 것만으로는
+"Flyway가 돌았다"가 아니라 "어쨌든 테이블이 있었다"까지밖에 말할 수 없습니다.
+
+#### 겪은 것
+
+- Boot 4.1은 `flyway-core`를 직접 넣지 않고 **`spring-boot-starter-flyway`**를 씁니다
+  (→ flyway-core 12.4.0). MySQL은 **`flyway-mysql`이 따로** 있어야 방언을 인식합니다.
+- **베이스라인은 설계하는 게 아니라 뜨는 것**입니다. `mysqldump --no-data`로 받아
+  `AUTO_INCREMENT=N`(스키마가 아니라 데이터 상태)만 지웠습니다.
+- 원장(ledger)은 MongoDB라 이 작업에서 빠집니다. 같은 문제(`MongoIndexInitializer`가
+  기동할 때 인덱스를 만든다)가 남아 있고, **Mongock**으로 Phase 7에 옮깁니다.
 
 <details>
 <summary><b>기록 양식</b> — 면접 질문 순서 그대로 (펼치기)</summary>
@@ -149,7 +222,7 @@ JVM + Spring Boot   ·   MySQL   ·   Redis   ·   Kafka   ·   Kubernetes   · 
 | 1 | 손으로 쓴 `openapi.yaml` | **springdoc-openapi** | Phase 4 | 이미 코드와 어긋나 있음 |
 | 2 | 폴링 Outbox 릴레이 | **Debezium (CDC)** | Phase 6 | **Phase 5 baseline** |
 | 3 | `SET NX PX` + Lua | **Redisson** | Phase 6 | **Phase 6 핫 계좌 실험** |
-| 4 | `ddl-auto: update` | **Flyway** | Phase 7 **전** | 이미 테스트 신뢰도를 갉아먹음 |
+| ~~4~~ | ~~`ddl-auto: update`~~ | **Flyway** ✅ | ~~Phase 7 전~~ → **Phase 6에서 완료** | → **D-001** |
 | 5 | 맨 `@Scheduled` | **ShedLock** | Phase 8 **전** | HPA를 켜는 순간 |
 | 6 | Choreography Saga | **Temporal / Camunda 8** | Phase 12 | 흐름이 안 보임, 타임아웃 없음 |
 
@@ -157,32 +230,10 @@ JVM + Spring Boot   ·   MySQL   ·   Redis   ·   Kafka   ·   Kubernetes   · 
 > **측정을 앞으로 당기면서(Phase 5) 둘 다 "숫자로 병목을 확인한 뒤"인 Phase 6으로** 모였습니다.
 > 근거 없이 바꾸면 "좋다길래 썼다"가 되고, 근거가 있으면 "재고 고쳤다"가 됩니다.
 
-### 1 · `ddl-auto: update` → Flyway
+### ~~1 · `ddl-auto: update` → Flyway~~ ✅ 완료
 
-> **면접 한 줄**: "`ddl-auto: update`로 스키마를 만들고 있었는데, 테스트에서 unique 인덱스를
-> 떼고 돌렸을 때 **컨테이너가 새로 떴기 때문에** 실패가 잡혔습니다. 기존 DB였다면 인덱스가 남아
-> 통과했을 겁니다. 검증 결과가 DB 상태에 따라 달라지는 게 드러나서 Flyway로 옮겼습니다.
-> 대신 스키마를 바꿀 때마다 마이그레이션 파일을 쓰는 수고가 생겼습니다."
-
-**① 문제** — `ddl-auto: update`는 **컬럼과 인덱스를 삭제하지 않습니다.** 실제로 이번에
-`Transfer.idempotencyKey`의 `unique = true`를 떼고 테스트한 적이 있는데, 새 컨테이너라 인덱스
-없이 만들어져 red가 나왔습니다. **기존 DB였다면 통과했을 것**입니다.
-
-또 `docker/mysql-init/01-databases.sql`은 **볼륨이 이미 있으면 다시 안 돕니다.**
-`notification_db`를 추가했지만 기존 볼륨에는 안 생깁니다. 이런 것도 마이그레이션의 일입니다.
-
-**③ 대안**
-
-| 후보 | 판단 |
-|---|---|
-| **Flyway** | SQL 그대로 씀. 배우는 데 30분. Spring Boot 기본 통합 |
-| Liquibase | XML/YAML 추상화로 DB 이식성이 좋지만, **MySQL 하나로 갈 거라 그 이점을 못 씁니다** |
-| 계속 `ddl-auto` | 운영에서 못 씁니다 |
-
-**⑤ 포기하는 것** — 엔티티만 고치면 되던 게 **마이그레이션 파일을 함께 써야** 합니다.
-초기에는 확실히 느려집니다. 그리고 이미 만들어진 스키마를 **베이스라인으로 뜨는 작업**이 한 번 필요합니다.
-
-**왜 Phase 7 전인가** — 컨테이너 여럿이 동시에 뜨면 각자 DDL을 날려 경합합니다.
+**Phase 6에서 했습니다.** 잔액 샤딩이 스키마를 바꾸므로 그 직전에 넣었습니다.
+기록은 위 **D-001**에 있습니다.
 
 ### 2 · 맨 `@Scheduled` → ShedLock
 

@@ -231,7 +231,11 @@ CI는 `.github/workflows/build.yml` 하나가 이미 돌고 있습니다(actionl
       다시 하는데, 감당 가능한 구간에서는 그 헛일이 락 대기보다 비싸다.
       **SLO(종결 p99 < 5초)도 분산 락만 통과한다**(2.6초 vs 7.0초).
       스위치는 남긴다 — 틀린 발상이라서가 아니라 지금 근거가 없어서 안 하는 것
-- [ ] **🔁 Flyway** — 잔액 샤딩이 스키마를 바꾸므로 그 직전에 넣는다 (`DECISIONS.md` 4번)
+- [x] **🔁 Flyway** ✅ — 스키마를 앱이 아니라 `db/migration`의 SQL이 만든다 (`DECISIONS.md` **D-001**).
+      베이스라인은 설계하지 않고 홈서버 DB를 그대로 떴다. `ddl-auto`는 `validate`로 —
+      **엔티티에 컬럼을 더하고 마이그레이션을 빠뜨리면 기동이 멈춘다.**
+      확인: V1의 컬럼 이름을 일부러 틀리게 하니 7개가 red. 기존 데이터가 든 DB에는
+      `<< Flyway Baseline >>` 도장만 찍히고 V1은 실행되지 않았다 (데이터 그대로)
 - [ ] **잔액 샤딩** ← **지금 여기.** 한 계좌 상한 **26건/s**를 깨는 유일한 방법.
       핫 계좌 잔액을 N개로 쪼갠다 — 입금은 랜덤 샤드, 조회는 합산.
       **출금이 복잡해지는 것**이 대가다
@@ -373,9 +377,9 @@ JPA를 쓴다면 `kotlin.plugin.jpa`(기본 생성자).
 ## Phase 7. 컨테이너화
 - [ ] **🔁 Mongo 인덱스 startup 생성 → Mongock** — 지금은 기동할 때 `IndexResolver`로 만듭니다.
       **큰 컬렉션에서는 그동안 기동이 막히고, 이미 중복이 있으면 unique 인덱스 생성이 실패합니다.**
-      `ddl-auto: update`와 같은 문제(스키마를 앱이 암묵적으로 만든다)이므로 Flyway와 함께 옮깁니다
-- [ ] **🔁 `ddl-auto: update` → Flyway** — 컨테이너 여럿이 동시에 뜨면 DDL이 경합합니다.
-      컨테이너화보다 **먼저** 들어가야 합니다 (지금도 테스트 신뢰도를 갉아먹는 중)
+      `ddl-auto: update`와 같은 문제(스키마를 앱이 암묵적으로 만든다)입니다.
+      **JPA 쪽만 Flyway로 먼저 갔으므로(D-001), 원장만 옛 방식으로 남아 있습니다** — 여기서 맞춥니다
+- [x] **~~🔁 `ddl-auto: update` → Flyway~~** — **Phase 6에서 앞당겨 끝냈습니다** (`DECISIONS.md` D-001)
 - [ ] 각 서비스 Dockerfile 작성 (멀티스테이지, Spring Boot **layered jar**로 레이어 캐싱)
 - [ ] `docker-compose.yml`로 로컬 통합 환경 구성 (MySQL, MongoDB, Redis, Kafka)
 - [ ] 로컬 통합 테스트 (docker-compose 기동 후 전체 플로우 확인)

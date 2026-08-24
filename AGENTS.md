@@ -80,6 +80,12 @@
    선택 이유 / **포기한 것** / 검증 방법. 각 항목에 30초짜리 "면접 한 줄"을 답니다.
    **자체 구현의 이유를 지우지 마세요** — 코드는 지우되 `PROGRESS.md`의 서술은 남깁니다.
    대비가 이 저장소의 자산입니다.
+8. **엔티티를 바꾸면 마이그레이션 파일도 함께 쓴다.** (Phase 6부터, `DECISIONS.md` D-001)
+   스키마는 이제 `ddl-auto`가 아니라 `*/src/main/resources/db/migration`의 SQL이 만듭니다.
+   `ddl-auto`는 `validate`뿐이라 **빠뜨리면 기동이 실패합니다** — 조용히 넘어가지 않으니
+   테스트가 알려줍니다. 파일 이름은 `V<번호>__<설명>.sql`이고, **이미 나간 파일은 고치지 않습니다**
+   (체크섬이 어긋나 기동이 막힙니다). 고칠 게 있으면 다음 번호로 씁니다.
+   ⚠️ 원장(ledger)은 MongoDB라 아직 예외입니다 — `MongoIndexInitializer`가 기동할 때 만듭니다.
 
 ## 검증 방법
 
@@ -162,7 +168,7 @@ docker compose -f docker-compose.dev.yml up -d
 
 > **성능을 재는 것은 노트북에서 하지 마세요.** 부하 생성기와 측정 대상이 같은 CPU를 두고
 > 싸워서, "앱이 느린 것"과 "부하 생성기가 앱의 CPU를 뺏은 것"이 구분되지 않습니다.
-> 측정 전용 홈서버 절차는 `docs/HOMELAB.md`에 있습니다 (`ssh home1`).
+> 측정 전용 홈서버 절차는 `docs/HOMELAB.md`에 있습니다 (집 안이면 `ssh home1`, 집 밖이면 `ssh home2`).
 - Testcontainers를 쓰는 통합 테스트는 Docker 데몬이 필요합니다.
 
 ### 통합 테스트용 컨테이너
