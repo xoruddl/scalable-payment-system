@@ -97,7 +97,7 @@ class AccountLockStrategyTest extends AbstractIntegrationTest {
 		executor.shutdownNow();
 
 		assertThat(succeeded.get() + rejected.get()).isEqualTo(THREADS);
-		assertThat(accountService.getBalance(accountId).getBalance())
+		assertThat(accountService.getBalance(accountId).total())
 				.as("성공 %d건 · 거절 %d건 — 잔액은 성공한 만큼만 움직여야 한다",
 						succeeded.get(), rejected.get())
 				.isEqualByComparingTo(AMOUNT.multiply(BigDecimal.valueOf(succeeded.get())));

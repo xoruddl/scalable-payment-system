@@ -1,7 +1,7 @@
 package com.remittance.account.service;
 
 import com.remittance.account.domain.Account;
-import com.remittance.account.exception.AccountNotFoundException;
+import com.remittance.account.domain.AccountBalance;
 import com.remittance.account.exception.StaleBalanceSnapshotException;
 import com.remittance.account.exception.UnpublishedJournalException;
 import com.remittance.account.messaging.AccountEvents;
@@ -28,13 +28,15 @@ import java.util.UUID;
 public class OpeningBalanceExecutor {
 
 	private final AccountRepository accountRepository;
+	private final BalanceShards balanceShards;
 	private final OutboxEventRepository outboxEventRepository;
 	private final BalanceJournal balanceJournal;
 
 	@Transactional
 	public OpeningBalanceResult execute(UUID accountId, BigDecimal observedBalance, BigDecimal ledgerBalance) {
-		Account account = accountRepository.findByAccountId(accountId)
-				.orElseThrow(() -> new AccountNotFoundException(accountId));
+		// 이월은 잔액을 바꾸지 않지만 <b>합을 봐야</b> 한다 — 원장과의 차이를 재는 게 일이다.
+		AccountBalance balance = balanceShards.whole(accountId);
+		Account account = balance.account();
 
 		if (account.isOpeningBalanceCarried()) {
 			// 두 번 심으면 그 액수만큼 원장이 잔액보다 커진다. 조용히 넘어가는 게 맞다 —
@@ -44,11 +46,11 @@ public class OpeningBalanceExecutor {
 		if (outboxEventRepository.existsByAggregateIdAndPublishedAtIsNull(accountId)) {
 			throw new UnpublishedJournalException(accountId);
 		}
-		if (account.getBalance().compareTo(observedBalance) != 0) {
-			throw new StaleBalanceSnapshotException(accountId, observedBalance, account.getBalance());
+		if (balance.total().compareTo(observedBalance) != 0) {
+			throw new StaleBalanceSnapshotException(accountId, observedBalance, balance.total());
 		}
 
-		BigDecimal gap = account.getBalance().subtract(ledgerBalance);
+		BigDecimal gap = balance.total().subtract(ledgerBalance);
 		account.markOpeningBalanceCarried();
 		accountRepository.saveAndFlush(account);
 
@@ -57,7 +59,7 @@ public class OpeningBalanceExecutor {
 			return OpeningBalanceResult.alreadyConsistent(accountId);
 		}
 
-		balanceJournal.record(account,
+		balanceJournal.record(balance,
 				AccountEvents.BalanceChangeReason.OPENING_BALANCE,
 				gap.signum() > 0
 						? AccountEvents.TransactionDirection.CREDIT

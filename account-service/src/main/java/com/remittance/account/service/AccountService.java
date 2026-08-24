@@ -1,6 +1,7 @@
 package com.remittance.account.service;
 
 import com.remittance.account.domain.Account;
+import com.remittance.account.domain.AccountBalance;
 import com.remittance.account.domain.AccountType;
 import com.remittance.account.exception.AccountNotFoundException;
 import com.remittance.account.exception.ConcurrentUpdateException;
@@ -36,16 +37,19 @@ public class AccountService {
 	private final DistributedLock distributedLock;
 	private final AccountLockPolicy lockPolicy;
 	private final BalanceMutationExecutor mutationExecutor;
+	private final BalanceShards balanceShards;
 	private final MeterRegistry meterRegistry;
 
 	@Transactional
 	public Account createAccount(UUID ownerId, String currency, AccountType accountType) {
-		Account account = Account.builder()
+		Account account = accountRepository.save(Account.builder()
 				.ownerId(ownerId)
 				.currency(currency)
 				.accountType(accountType != null ? accountType : AccountType.PERSONAL)
-				.build();
-		return accountRepository.save(account);
+				.build());
+		// 조각 없는 계좌는 존재할 수 없다 — 잔액을 물으면 "없는 돈"과 "0원"을 구분하지 못한다.
+		balanceShards.createFirstShard(account);
+		return account;
 	}
 
 	@Transactional(readOnly = true)
@@ -54,8 +58,8 @@ public class AccountService {
 	}
 
 	@Transactional(readOnly = true)
-	public Account getBalance(UUID accountId) {
-		return findByAccountId(accountId);
+	public AccountBalance getBalance(UUID accountId) {
+		return balanceShards.whole(accountId);
 	}
 
 	/**
@@ -71,16 +75,16 @@ public class AccountService {
 	 * 숫자로 확인하기 위한 스위치다(Phase 6 Step 1). <b>둘째 겹은 못 끈다.</b>
 	 * 낙관적 락은 선택이 아니라 마지막 방어선이다.
 	 */
-	public Account debit(UUID accountId, BigDecimal amount, String currency) {
+	public AccountBalance debit(UUID accountId, BigDecimal amount, String currency) {
 		return guarded(accountId, () -> mutationExecutor.execute(accountId,
-				account -> account.debit(amount, currency),
+				balance -> balance.debit(amount, currency),
 				AccountEvents.BalanceChangeReason.WITHDRAWAL,
 				AccountEvents.TransactionDirection.DEBIT, amount));
 	}
 
-	public Account credit(UUID accountId, BigDecimal amount, String currency) {
+	public AccountBalance credit(UUID accountId, BigDecimal amount, String currency) {
 		return guarded(accountId, () -> mutationExecutor.execute(accountId,
-				account -> account.credit(amount, currency),
+				balance -> balance.credit(amount, currency),
 				AccountEvents.BalanceChangeReason.DEPOSIT,
 				AccountEvents.TransactionDirection.CREDIT, amount));
 	}

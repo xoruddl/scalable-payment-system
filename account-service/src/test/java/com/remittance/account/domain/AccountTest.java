@@ -2,15 +2,18 @@ package com.remittance.account.domain;
 
 import com.remittance.account.exception.AccountNotActiveException;
 import com.remittance.account.exception.CurrencyMismatchException;
-import com.remittance.account.exception.InsufficientBalanceException;
 import org.junit.jupiter.api.Test;
 
-import java.math.BigDecimal;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+/**
+ * 잔액이 {@link AccountBalanceShard}로 나가면서 이 클래스에 남은 규칙은
+ * <b>계좌를 쓸 수 있는가</b>뿐이다. 금액 계산은 {@link AccountBalanceTest}에 있다.
+ */
 class AccountTest {
 
 	private Account newAccount() {
@@ -18,29 +21,19 @@ class AccountTest {
 	}
 
 	@Test
-	void credit_증가한다() {
-		Account account = newAccount();
-
-		account.credit(BigDecimal.valueOf(1000), "KRW");
-
-		assertThat(account.getBalance()).isEqualByComparingTo("1000");
+	void 새_계좌는_쪼개지_않은_상태로_시작한다() {
+		// 계좌 대부분은 경합이 없다. 쪼개는 것은 붐비는 계좌에만 하는 처방이다.
+		assertThat(newAccount().getShardCount()).isEqualTo((short) 1);
 	}
 
 	@Test
-	void debit_잔액을_초과하면_예외() {
-		Account account = newAccount();
-		account.credit(BigDecimal.valueOf(500), "KRW");
-
-		assertThatThrownBy(() -> account.debit(BigDecimal.valueOf(1000), "KRW"))
-				.isInstanceOf(InsufficientBalanceException.class);
+	void 통화가_같고_활성이면_통과한다() {
+		assertThatCode(() -> newAccount().assertUsable("KRW")).doesNotThrowAnyException();
 	}
 
 	@Test
-	void debit_통화가_다르면_예외() {
-		Account account = newAccount();
-		account.credit(BigDecimal.valueOf(1000), "KRW");
-
-		assertThatThrownBy(() -> account.debit(BigDecimal.valueOf(100), "USD"))
+	void 통화가_다르면_예외() {
+		assertThatThrownBy(() -> newAccount().assertUsable("USD"))
 				.isInstanceOf(CurrencyMismatchException.class);
 	}
 
@@ -49,17 +42,20 @@ class AccountTest {
 		Account account = newAccount();
 		account.freeze();
 
-		assertThatThrownBy(() -> account.credit(BigDecimal.valueOf(100), "KRW"))
+		assertThatThrownBy(() -> account.assertUsable("KRW"))
 				.isInstanceOf(AccountNotActiveException.class);
 	}
 
 	@Test
-	void debit_성공시_잔액이_차감된다() {
+	void 조각을_늘릴_수는_있어도_줄일_수는_없다() {
 		Account account = newAccount();
-		account.credit(BigDecimal.valueOf(1000), "KRW");
 
-		account.debit(BigDecimal.valueOf(300), "KRW");
+		account.widenShards((short) 4);
+		assertThat(account.getShardCount()).isEqualTo((short) 4);
 
-		assertThat(account.getBalance()).isEqualByComparingTo("700");
+		// 줄이려면 없어지는 조각의 돈을 옮겨야 하는데 그 절차가 없다.
+		// 조용히 받아주면 그 조각의 잔액이 조회에서 사라진다.
+		assertThatThrownBy(() -> account.widenShards((short) 2))
+				.isInstanceOf(IllegalArgumentException.class);
 	}
 }

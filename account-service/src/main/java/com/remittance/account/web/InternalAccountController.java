@@ -1,6 +1,6 @@
 package com.remittance.account.web;
 
-import com.remittance.account.domain.Account;
+import com.remittance.account.domain.AccountBalance;
 import com.remittance.account.service.AccountService;
 import com.remittance.account.web.dto.AdjustBalanceRequest;
 import com.remittance.account.web.dto.BalanceResponse;
@@ -26,13 +26,13 @@ public class InternalAccountController {
 
 	@PostMapping("/{accountId}/debit")
 	public BalanceResponse debit(@PathVariable UUID accountId, @Valid @RequestBody AdjustBalanceRequest request) {
-		Account account = accountService.debit(accountId, request.amount(), request.currency());
-		return BalanceResponse.from(account);
+		AccountBalance balance = accountService.debit(accountId, request.amount(), request.currency());
+		return BalanceResponse.from(balance);
 	}
 
 	@PostMapping("/{accountId}/credit")
 	public BalanceResponse credit(@PathVariable UUID accountId, @Valid @RequestBody AdjustBalanceRequest request) {
-		Account account = accountService.credit(accountId, request.amount(), request.currency());
-		return BalanceResponse.from(account);
+		AccountBalance balance = accountService.credit(accountId, request.amount(), request.currency());
+		return BalanceResponse.from(balance);
 	}
 }

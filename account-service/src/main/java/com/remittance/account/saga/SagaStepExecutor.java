@@ -1,13 +1,11 @@
 package com.remittance.account.saga;
 
-import com.remittance.account.domain.Account;
+import com.remittance.account.domain.AccountBalance;
 import com.remittance.account.domain.ProcessedEvent;
-import com.remittance.account.exception.AccountNotFoundException;
 import com.remittance.account.messaging.AccountEvents;
 import com.remittance.account.outbox.BalanceJournal;
 import com.remittance.account.outbox.OutboxEvent;
 import com.remittance.account.outbox.OutboxEventRepository;
-import com.remittance.account.repository.AccountRepository;
 import com.remittance.account.repository.ProcessedEventRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
@@ -39,7 +37,7 @@ public class SagaStepExecutor {
 
 	private static final String AGGREGATE_TYPE = "Account";
 
-	private final AccountRepository accountRepository;
+	private final com.remittance.account.service.BalanceShards balanceShards;
 	private final ProcessedEventRepository processedEventRepository;
 	private final OutboxEventRepository outboxEventRepository;
 	private final BalanceJournal balanceJournal;
@@ -59,25 +57,25 @@ public class SagaStepExecutor {
 	/**
 	 * @param consumedEventType 방금 소비한 이벤트 타입. 중복 판정 키의 일부가 된다.
 	 * @param accountId         잔액을 변경할 계좌. 호출부가 이 계좌의 락을 이미 잡고 있어야 한다.
-	 * @param nextEventBody     변경 <b>후</b>의 계좌를 받아 다음 이벤트 본문을 만든다.
+	 * @param nextEventBody     변경 <b>후</b>의 잔액을 받아 다음 이벤트 본문을 만든다.
 	 * @param balanceChange     분개장에 남길 내용. 잔액 변경과 같은 트랜잭션에 들어가야 한다.
 	 */
 	@Transactional
 	public void execute(String consumedEventType, UUID transferId, UUID accountId,
-			Consumer<Account> mutation, String nextEventType, Function<Account, Object> nextEventBody,
-			BalanceChange balanceChange) {
+			Consumer<AccountBalance> mutation, String nextEventType,
+			Function<AccountBalance, Object> nextEventBody, BalanceChange balanceChange) {
 		// 이미 처리한 이벤트면 PK 중복으로 여기서 DataIntegrityViolationException이 난다.
 		// 조회 후 INSERT가 아니라 INSERT 먼저인 이유는, 두 스레드가 동시에 "없다"를 보는 경합을 막기 위함.
 		processedEventRepository.saveAndFlush(new ProcessedEvent(consumedEventType, transferId));
 
-		Account account = accountRepository.findByAccountId(accountId)
-				.orElseThrow(() -> new AccountNotFoundException(accountId));
-		mutation.accept(account);
-		accountRepository.saveAndFlush(account);
+		// 방향이 읽을 조각 수를 정한다 — 넣는 것은 조각 하나, 빼는 것은 전부.
+		AccountBalance balance = balanceShards.load(accountId, balanceChange.direction());
+		mutation.accept(balance);
+		balanceShards.flush(balance);
 
-		record(transferId, nextEventType, nextEventBody.apply(account));
+		record(transferId, nextEventType, nextEventBody.apply(balance));
 		// 잔액이 움직였으면 반드시 분개장에도 남는다 — 입출금 API와 같은 규칙이다.
-		balanceJournal.record(account, balanceChange.reason(), balanceChange.direction(),
+		balanceJournal.record(balance, balanceChange.reason(), balanceChange.direction(),
 				balanceChange.amount(), transferId);
 	}
 

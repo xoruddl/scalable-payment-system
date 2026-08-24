@@ -66,7 +66,7 @@ class TransferEventConsumerTest extends AbstractIntegrationTest {
 		kafkaTemplate.send(TransferEvents.REQUESTED, transferId.toString(), payload).join();
 
 		await().atMost(Duration.ofSeconds(30)).untilAsserted(() -> {
-			assertThat(accountRepository.findByAccountId(from.getAccountId()).orElseThrow().getBalance())
+			assertThat(accountService.getBalance(from.getAccountId()).total())
 					.isEqualByComparingTo("4000.00");
 			assertThat(outboxEventRepository.findByAggregateIdOrderByIdAsc(transferId))
 					.singleElement()

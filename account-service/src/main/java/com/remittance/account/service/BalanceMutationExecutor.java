@@ -1,17 +1,15 @@
 package com.remittance.account.service;
 
-import com.remittance.account.domain.Account;
-import com.remittance.account.exception.AccountNotFoundException;
+import com.remittance.account.domain.AccountBalance;
 import com.remittance.account.messaging.AccountEvents;
 import com.remittance.account.outbox.BalanceJournal;
-import com.remittance.account.repository.AccountRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
-import java.util.UUID;
 import java.util.function.Consumer;
+import java.util.UUID;
 
 /**
  * 입출금 API로 들어온 잔액 변경을 <b>하나의 트랜잭션</b>으로 처리한다 —
@@ -26,19 +24,18 @@ import java.util.function.Consumer;
 @RequiredArgsConstructor
 public class BalanceMutationExecutor {
 
-	private final AccountRepository accountRepository;
+	private final BalanceShards balanceShards;
 	private final BalanceJournal balanceJournal;
 
 	@Transactional
-	public Account execute(UUID accountId, Consumer<Account> mutation,
+	public AccountBalance execute(UUID accountId, Consumer<AccountBalance> mutation,
 			AccountEvents.BalanceChangeReason reason, AccountEvents.TransactionDirection direction,
 			BigDecimal amount) {
-		Account account = accountRepository.findByAccountId(accountId)
-				.orElseThrow(() -> new AccountNotFoundException(accountId));
-		mutation.accept(account);
-		accountRepository.saveAndFlush(account);
+		AccountBalance balance = balanceShards.load(accountId, direction);
+		mutation.accept(balance);
+		balanceShards.flush(balance);
 		// 송금과 무관한 변경이라 transferId가 없다.
-		balanceJournal.record(account, reason, direction, amount, null);
-		return account;
+		balanceJournal.record(balance, reason, direction, amount, null);
+		return balance;
 	}
 }
