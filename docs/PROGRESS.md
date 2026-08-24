@@ -32,7 +32,8 @@ Phase 6  🔄  고동시성 대응   ← 지금 여기
              🔁 Flyway     ✅ 스키마를 앱이 아니라 SQL이 만든다 (D-001)
              잔액 샤딩     ✅ 핫 계좌 용량 25 → 50 TPS (2배)
              파티션 3 → 6   ✅ 용량 50 → 60 TPS (2배가 아니라 1.2배)
-                              → 다음: 입금 한 건 80ms 줄이기 (경합이 MySQL로 옮겨갔다)
+             80ms 구간 계측 ✅ 처리 흔적 · 잔액 조회/flush · 지연 쓰기+commit을 분리
+                              → 다음: 홈서버 60 TPS로 어느 구간이 늘었는지 확정
 Phase 7~13   미착수
 ```
 
@@ -50,11 +51,12 @@ Phase 7~13   미착수
 
 **측정 환경**: 홈서버(집 안이면 `ssh home1`, 집 밖이면 `ssh home2`).
 **노트북에서 잰 값은 성능 숫자로 쓰지 않습니다** (`HOMELAB.md`).
-**빌드 상태**: 🟢 `./gradlew test` 통과 (테스트 480건)
+**빌드 상태**: 🟢 `./gradlew test` 통과 (테스트 482건)
 **스키마**: 🟢 Flyway가 만듭니다 (`*/src/main/resources/db/migration`). `ddl-auto`는 `validate`뿐 —
 **엔티티에 컬럼을 더하면 마이그레이션 파일도 함께 써야 기동됩니다** (원장은 MongoDB라 아직 예외).
 **관측**: 🟢 `docker compose up -d prometheus grafana` → http://localhost:3000
-(대시보드 `송금 시스템 — 개요`. 23개 쿼리 전부 값이 나오는 것을 확인)
+(대시보드 `송금 시스템 — 개요`. 기존 23개 쿼리는 값 확인 완료,
+입금 내부 구간 2개 패널은 홈서버 배포 후 확인 예정)
 **크로스 서비스 e2e**: 🟢 **밀려 있던 확인을 모두 마쳤습니다** (2026-08-22, 커밋 `54a0da2` 기준).
 기존 5개 시나리오 회귀 + Step 6a·6b + Phase 3 알림까지 9건 전부 통과 —
 아래 "밀린 e2e를 몰아서 확인했다" 참고.
@@ -3461,6 +3463,58 @@ group commit이 되고 있는지부터 봐야 합니다.
 - `KafkaTopicPartitionTest` → **운영 상수** `KafkaTopicsConfig.PARTITIONS`를 읽습니다
 
 검증하는 명제도 "지금 3인가"에서 **"스레드가 파티션을 남김없이 쓰고 있나"**로 바뀌었습니다.
+
+---
+
+## 입금 80ms를 내부 구간으로 갈랐다 — 아직 최적화하지 않았다 ★
+
+**커밋**: `d51449e`
+
+파티션과 리스너 스레드를 3 → 6으로 늘리자 입금 한 건이 52.5 → 80ms로 느려졌습니다.
+지금 필요한 것은 추측으로 `flush`를 지우는 게 아니라, **80ms 중 어느 구간이 동시성 2배에서
+부푼 것인지 같은 부하로 확인하는 것**입니다.
+
+`SagaStepExecutor`를 다음 다섯 구간으로 나눠 Micrometer Timer를 심었습니다.
+
+| stage | 실제로 재는 것 |
+|---|---|
+| `deduplication_flush` | `processed_events` INSERT + flush. 중복을 잔액 변경 전에 잡는 구간 |
+| `balance_load` | account와 필요한 잔액 조각 SELECT |
+| `balance_flush` | 잔액 조각 UPDATE + flush |
+| `outbox_enqueue` | 다음 단계와 분개 이벤트를 영속성 컨텍스트에 넣고 직렬화하는 시간 |
+| `deferred_writes_and_commit` | 메서드 본문 뒤로 밀린 Outbox INSERT와 commit 완료까지 |
+
+### Outbox를 INSERT 시간이라고 부르지 않았다
+
+JPA의 `save()`는 SQL을 즉시 보내지 않고 flush/commit까지 미룰 수 있습니다. 호출부만 감싸서
+`outbox_insert`라고 이름 붙이면 값은 거의 0인데, 실제 INSERT는 마지막 구간에서 일어나는
+**틀린 그래프**가 됩니다. 그래서 앞은 `enqueue`, 실제 DB 지연 쓰기와 커밋은
+`deferred_writes_and_commit`으로 갈랐습니다.
+
+전체 트랜잭션은 `remittance.account.saga.transaction`으로 따로 재고, `outcome=committed|rolled_back`을
+붙였습니다. 같은 이벤트 재전송이 PK 중복으로 롤백되는 것은 정상 동작인데, 그 짧은 값을 성공 지연과
+섞으면 p95가 실제보다 좋아 보이기 때문입니다. transferId·accountId는 태그로 넣지 않았습니다 —
+요청마다 값이 달라 Prometheus 시계열 수가 폭발합니다.
+
+Grafana에는 다음 두 패널을 추가했습니다.
+
+- `transfer.debited`의 내부 구간별 p95
+- 이벤트별 커밋된 Saga 트랜잭션 전체 p95
+
+### 검증
+
+- 정상 입금에서 다섯 stage와 `outcome=committed`가 각각 정확히 한 번 증가
+- 중복 입금 이벤트에서 `outcome=rolled_back`만 증가하고 잔액 조회에는 진입하지 않음
+- `markWorkFinished()`를 일부러 제거하자 새 테스트가 red가 되는 것을 확인한 뒤 복원
+- `./gradlew test` — **482건 전부 통과**
+- Grafana dashboard JSON 파싱 성공, 쿼리 수 23 → **25개**
+
+### 다음 — 홈서버에서 숫자를 채운다
+
+이 커밋은 **보는 수단만 만들었고 성능을 개선하지 않았습니다.** 홈서버에 같은 jar를 올리고,
+재기동 직후 실행은 버린 뒤 60 TPS를 같은 조건으로 걸어 다섯 구간의 p95를 채웁니다.
+가장 큰 구간 하나만 바꾸고 다시 재는 것이 다음 독립 Step입니다. 새 패널 두 개가 실제 값을
+내는지도 그때 확인합니다.
 
 ---
 
