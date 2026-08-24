@@ -63,7 +63,10 @@ function textSummary(name, data) {
 		// 접수만 센다. http_reqs 전체를 쓰면 prober의 폴링 GET과 setup의 계좌 생성까지
 		// 섞여서, "접수가 몇 건/s였나"에 답하지 못한다. 실제로 그 값을 접수 처리량으로 읽고
 		// 없는 병목을 쫓을 뻔했다 (2026-08-24).
-		`    접수 처리량   ${metric(data, 'http_reqs{name:accept}', 'rate')} req/s`,
+		// ⚠️ rate의 분모는 <b>setup부터 마지막 VU가 끝날 때까지</b>다. 부하 구간(2분)보다 길어서
+		// 실제 도착률보다 낮게 나온다. 2026-08-24에 이 값(55 req/s)을 보고 "접수가 포화했다"고
+		// 판단했는데, k6는 60.00 iters/s를 정확히 넣고 있었다. <b>건수를 함께 봐야 한다.</b>
+		`    접수          ${metric(data, 'http_reqs{name:accept}', 'count', '0')}건 (${metric(data, 'http_reqs{name:accept}', 'rate')} req/s — 분모가 전체 실행 시간이라 낮게 나온다)`,
 		`    p95           ${metric(data, 'http_req_duration{name:accept}', 'p(95)')} ms`,
 		`    p99           ${metric(data, 'http_req_duration{name:accept}', 'p(99)')} ms`,
 		`    실패율        ${metric(data, 'http_req_failed', 'rate')}`,
