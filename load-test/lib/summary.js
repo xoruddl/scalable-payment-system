@@ -45,6 +45,12 @@ function textSummary(name, data) {
 	} else {
 		condition = '계단 부하 (최대 400 TPS) — 천장을 찾는 포화 시험';
 	}
+	// 받는 계좌를 쪼갰는지는 핫 계좌 숫자를 읽는 데 반드시 필요하다.
+	// 쪼갠 값과 안 쪼갠 값을 나란히 두면 그냥 틀린 비교가 된다.
+	const shards = Number(__ENV.SHARDS || 1);
+	if (shards > 1) {
+		condition += ` · 받는 계좌 ${shards}조각`;
+	}
 
 	const lines = [
 		'',

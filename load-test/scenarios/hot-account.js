@@ -1,5 +1,5 @@
 import { FIXED_RATE, TREND_STATS, fixedRateStages, proberDuration, seedCount } from '../lib/config.js';
-import { pick, seedAccounts } from '../lib/seed.js';
+import { pick, seedAccounts, shard } from '../lib/seed.js';
 import { requestAndAwaitSettle, requestTransfer } from '../lib/transfer.js';
 import { summaryFor } from '../lib/summary.js';
 
@@ -22,6 +22,15 @@ import { summaryFor } from '../lib/summary.js';
  */
 
 const SENDERS = Number(__ENV.SENDERS || 60);
+/**
+ * 받는 계좌를 몇 조각으로 쓸지. 1이면 쪼개지 않은 예전 그대로다.
+ *
+ *   SHARDS=8 k6 run load-test/scenarios/hot-account.js
+ *
+ * <b>같은 jar에 이 값만 바꿔 나란히 잰다.</b> 코드를 고쳐가며 재면 빌드가 달라져
+ * 무엇 때문에 숫자가 바뀌었는지 말할 수 없다 (락 전략 비교 때와 같은 규칙).
+ */
+const SHARDS = Number(__ENV.SHARDS || 1);
 
 export const options = {
 	summaryTrendStats: TREND_STATS,
@@ -65,6 +74,7 @@ export function setup() {
 	const senders = seedAccounts(seedCount(SENDERS));
 	// 돈이 몰릴 계좌. 받기만 하므로 충전할 필요가 없다.
 	const hotAccount = seedAccounts(1, { funded: false })[0];
+	shard(hotAccount, SHARDS);
 	return { senders, hotAccount };
 }
 
