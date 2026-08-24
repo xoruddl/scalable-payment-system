@@ -34,7 +34,7 @@ docker run --rm --network host --cpuset-cpus="${K6_CPUSET:-10-11}" \
 	-e "RATE=$RATE" -e "SHARDS=$SHARDS" \
 	-v "$PWD:/work" -w /work grafana/k6:latest \
 	run load-test/scenarios/hot-account.js 2>&1 |
-	grep -E '^  === |종결|p95|p99|성공률|시간초과|처리량'
+	grep -E '^  === |종결|p95|p99|성공률|시간초과|처리량|미발사'
 
 echo "   -- 드레인 대기 --"
 for _ in $(seq 1 "$DRAIN_TIMEOUT_TICKS"); do
