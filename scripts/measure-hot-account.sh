@@ -29,6 +29,32 @@ RATE="${1:?도착률(TPS)을 넘겨라}"
 SHARDS="${2:-1}"
 DRAIN_TIMEOUT_TICKS="${DRAIN_TIMEOUT_TICKS:-60}"
 
+# 재기 전에 <b>DB가 저장소와 같은 설정인지</b> 본다.
+#
+# 2026-08-24에 실험용 binlog_group_commit_sync_delay=1000을 켜둔 채 되돌리지 않았고,
+# 그 위에서 잰 값을 결과로 적었다. 앱 커밋 해시는 확인했는데 DB 설정은 아무도 확인하지 않았다.
+# 커밋 해시가 맞아도 <b>DB가 다르면 다른 시스템을 잰 것</b>이다.
+#
+# 여기 적힌 값이 docker-compose로 띄운 MySQL 8의 기본값이자 이 저장소가 전제하는 설정이다.
+# 일부러 바꿔서 재는 실험이라면 EXPECT_DEFAULT_DB=0으로 끄면 된다.
+check_db_settings() {
+	[ "${EXPECT_DEFAULT_DB:-1}" = "1" ] || return 0
+	local actual expected="0|1|1"
+	actual="$(docker exec remittance-mysql mysql -uroot -proot -N -e "
+		SELECT CONCAT(@@binlog_group_commit_sync_delay, '|',
+		              @@innodb_flush_log_at_trx_commit, '|', @@sync_binlog);" 2>/dev/null)"
+	if [ "$actual" != "$expected" ]; then
+		echo "⚠️  MySQL 설정이 저장소 기준과 다르다 (delay|flush_log|sync_binlog)"
+		echo "    기대: $expected"
+		echo "    실제: $actual"
+		echo "    이 상태로 잰 값은 다른 시스템의 값이다. 되돌리고 다시 재라:"
+		echo "      docker exec remittance-mysql mysql -uroot -proot -e \\"
+		echo "        \"SET GLOBAL binlog_group_commit_sync_delay=0;\""
+		exit 2
+	fi
+}
+check_db_settings
+
 echo "######## RATE=$RATE SHARDS=$SHARDS ########"
 docker run --rm --network host --cpuset-cpus="${K6_CPUSET:-10-11}" \
 	-e "RATE=$RATE" -e "SHARDS=$SHARDS" \
