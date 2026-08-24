@@ -315,7 +315,10 @@ transfer HikariCP **pending 193** / 획득 대기 p99 **4.9초**.
       - [x] **내부 구간별 계측** — 처리 흔적 flush, 잔액 조회·flush, Outbox enqueue,
             지연 쓰기+commit을 Timer로 분리했다. 정상 commit과 중복 rollback도 따로 센다.
             Grafana 패널과 통합 테스트까지 완료 (`d51449e`)
-      - [ ] 홈서버 60 TPS에서 구간별 p95를 채우고 가장 큰 구간 하나를 다음 표적으로 확정
+      - [x] 홈서버 60 TPS에서 구간별 p95를 채웠다 — **지연 쓰기+commit이 평균 49.5ms,
+            p95 114.9ms로 전체 평균의 90.7%**. 나머지는 전부 평균 2ms 아래 (`ccef131`)
+      - [ ] MySQL 부하 전후 `fsync`·log write delta를 함께 수집해 group commit 여부를 확인.
+            내구성 설정을 바꾸는 것은 그 숫자를 본 뒤 별도 A/B로 한다
 - [ ] **🔁 폴링 Outbox 릴레이 → Debezium(CDC)** — 위를 다 해도 폴링이 상한이면 갈아탄다.
       **병목임을 숫자로 보여준 뒤** 바꾼다
 - [ ] Kafka **파티션 수** — `concurrency`를 3까지 올려도 모자라면 파티션부터 늘려야 한다
