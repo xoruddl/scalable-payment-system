@@ -5,7 +5,6 @@ import com.remittance.transfer.domain.TransferStatus;
 import com.remittance.transfer.exception.InvalidTransferRequestException;
 import com.remittance.transfer.messaging.TransferEvents;
 import com.remittance.transfer.outbox.TransferEventType;
-import com.remittance.transfer.outbox.TransferOutboxRecorder;
 import com.remittance.transfer.repository.TransferRepository;
 import com.remittance.transfer.web.dto.CreateTransferRequest;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -24,6 +23,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.willThrow;
@@ -48,7 +48,7 @@ class TransferServiceTest {
 	private IdempotencyService idempotencyService;
 
 	@Mock
-	private TransferOutboxRecorder outboxRecorder;
+	private TransferAcceptExecutor acceptExecutor;
 
 	@Mock
 	private TransferStateUpdater stateUpdater;
@@ -60,7 +60,7 @@ class TransferServiceTest {
 	private final MeterRegistry meterRegistry = new SimpleMeterRegistry();
 
 	private TransferService transferService() {
-		return new TransferService(transferRepository, idempotencyService, outboxRecorder, stateUpdater, meterRegistry);
+		return new TransferService(transferRepository, idempotencyService, acceptExecutor, stateUpdater, meterRegistry);
 	}
 
 	private double conflictCount(String outcome) {
@@ -75,9 +75,14 @@ class TransferServiceTest {
 	// (BigDecimal.equals()는 scale까지 비교한다)
 	private final BigDecimal amount = new BigDecimal("1000.00");
 
-	private void stubSaveReturnsArgument() {
-		given(outboxRecorder.record(any(Transfer.class), any()))
-				.willAnswer(invocation -> invocation.getArgument(0));
+	/**
+	 * 접수 실행은 {@link TransferAcceptExecutor}로 옮겼다(한 트랜잭션으로 묶기 위해).
+	 * 여기서는 <b>거기까지 도달하는가</b>만 보고, 무엇이 저장되는지는
+	 * {@code TransferAcceptExecutorTest}가 진짜 DB로 확인한다.
+	 */
+	private void stubAcceptReturnsNewTransfer() {
+		given(acceptExecutor.accept(anyString(), any(CreateTransferRequest.class)))
+				.willAnswer(invocation -> newTransfer());
 	}
 
 	private Transfer newTransfer() {
@@ -92,17 +97,20 @@ class TransferServiceTest {
 
 	@Test
 	void 접수하면_PENDING으로_남기고_transfer_requested만_발행한다() {
-		stubSaveReturnsArgument();
+		stubAcceptReturnsNewTransfer();
 		String key = "key-" + UUID.randomUUID();
+		CreateTransferRequest request =
+				new CreateTransferRequest(fromAccountId, toAccountId, amount, "KRW", null);
 
-		Transfer result = transferService().requestTransfer(key,
-				new CreateTransferRequest(fromAccountId, toAccountId, amount, "KRW", null));
+		Transfer result = transferService().requestTransfer(key, request);
 
 		assertThat(result.getStatus())
 				.as("응답 시점에는 아직 아무 돈도 움직이지 않았다")
 				.isEqualTo(TransferStatus.PENDING);
-		verify(outboxRecorder).record(any(Transfer.class), eq(TransferEventType.REQUESTED));
-		verify(idempotencyService).complete(key, result.getTransferId());
+		// 키를 선점한 뒤 접수를 한 트랜잭션으로 실행한다.
+		// hash()가 목이라 두 번째 인자는 null이다 — 여기서 볼 것은 "그 키로 선점했나"다.
+		verify(idempotencyService).reserve(eq(key), any());
+		verify(acceptExecutor).accept(key, request);
 	}
 
 	@Test
@@ -113,7 +121,7 @@ class TransferServiceTest {
 		assertThatThrownBy(() -> transferService().requestTransfer("key-1", request))
 				.isInstanceOf(InvalidTransferRequestException.class);
 
-		verify(outboxRecorder, never()).record(any(), any());
+		verify(acceptExecutor, never()).accept(any(), any());
 		verify(idempotencyService, never()).reserve(any(), any());
 	}
 

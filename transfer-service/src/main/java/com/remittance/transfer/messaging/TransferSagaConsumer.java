@@ -37,7 +37,7 @@ public class TransferSagaConsumer {
 	 * 리스너당 스레드 수. 파티션 수(3)에 맞춘 값이 기본이고, 파티션을 넘겨 봐야 놀기만 한다.
 	 * 기본값이 코드에 있어야 테스트가 같은 값으로 돈다 — 테스트용 yml이 운영 yml을 가리기 때문이다.
 	 */
-	private static final String CONCURRENCY = "${remittance.kafka.listener.concurrency:3}";
+	private static final String CONCURRENCY = "${remittance.kafka.listener.concurrency:6}";
 
 	private final TransferService transferService;
 	private final ObjectMapper objectMapper;

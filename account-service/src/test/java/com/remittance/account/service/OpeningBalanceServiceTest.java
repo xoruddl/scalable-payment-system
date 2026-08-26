@@ -78,7 +78,7 @@ class OpeningBalanceServiceTest extends AbstractIntegrationTest {
 	}
 
 	private BigDecimal balanceOf(UUID accountId) {
-		return accountRepository.findByAccountId(accountId).orElseThrow().getBalance();
+		return accountService.getBalance(accountId).total();
 	}
 
 	@Test

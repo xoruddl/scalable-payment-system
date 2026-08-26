@@ -1,3 +1,12 @@
+-- 서비스마다 DB를 나눈다. 여기서 만드는 것은 <b>DB(스키마)까지</b>이고,
+-- 그 안의 테이블은 각 서비스의 Flyway가 만든다 (src/main/resources/db/migration).
+--
+-- 왜 나뉘어 있나: Flyway는 이미 있는 DB에 붙어 테이블을 만들 뿐, DB 자체를 만들지 않는다.
+-- 접속할 DB가 없으면 Flyway가 돌기도 전에 커넥션이 실패한다.
+--
+-- ⚠️ 이 파일은 <b>볼륨이 비어 있을 때만</b> 실행된다. 이미 쓰던 볼륨에 DB를 하나 더
+-- 추가하려면 손으로 CREATE DATABASE 하거나 볼륨을 지워야 한다.
+-- (실제로 notification_db를 추가했을 때 이것 때문에 한 번 막혔다.)
 CREATE DATABASE IF NOT EXISTS account_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 CREATE DATABASE IF NOT EXISTS transfer_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 CREATE DATABASE IF NOT EXISTS reconciliation_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;

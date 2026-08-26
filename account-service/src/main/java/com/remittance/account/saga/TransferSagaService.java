@@ -1,6 +1,6 @@
 package com.remittance.account.saga;
 
-import com.remittance.account.domain.Account;
+import com.remittance.account.domain.AccountBalance;
 import com.remittance.account.exception.AccountNotActiveException;
 import com.remittance.account.exception.AccountNotFoundException;
 import com.remittance.account.exception.CurrencyMismatchException;
@@ -54,11 +54,11 @@ public class TransferSagaService {
 	/** 송금 접수 → 출금 계좌에서 뺀다. */
 	public void onRequested(TransferEvents.Requested event) {
 		runStep(TransferEvents.REQUESTED, event.transferId(), event.fromAccountId(),
-				account -> account.debit(event.amount(), event.currency()),
+				balance -> balance.debit(event.amount(), event.currency()),
 				TransferEvents.DEBITED,
-				account -> new TransferEvents.Debited(
+				balance -> new TransferEvents.Debited(
 						event.transferId(), event.fromAccountId(), event.toAccountId(),
-						event.amount(), event.currency(), account.getBalance(), Timestamps.now()),
+						event.amount(), event.currency(), balance.total(), Timestamps.now()),
 				new SagaStepExecutor.BalanceChange(AccountEvents.BalanceChangeReason.TRANSFER_DEBIT,
 						AccountEvents.TransactionDirection.DEBIT, event.amount()),
 				// 출금이 실패했으면 아직 움직인 돈이 없다. 되돌릴 것 없이 송금만 종결하면 된다.
@@ -70,11 +70,11 @@ public class TransferSagaService {
 	/** 출금 완료 → 입금 계좌에 넣는다. */
 	public void onDebited(TransferEvents.Debited event) {
 		runStep(TransferEvents.DEBITED, event.transferId(), event.toAccountId(),
-				account -> account.credit(event.amount(), event.currency()),
+				balance -> balance.credit(event.amount(), event.currency()),
 				TransferEvents.CREDITED,
-				account -> new TransferEvents.Credited(
+				balance -> new TransferEvents.Credited(
 						event.transferId(), event.fromAccountId(), event.toAccountId(),
-						event.amount(), event.currency(), event.fromBalanceAfter(), account.getBalance(),
+						event.amount(), event.currency(), event.fromBalanceAfter(), balance.total(),
 						Timestamps.now()),
 				new SagaStepExecutor.BalanceChange(AccountEvents.BalanceChangeReason.TRANSFER_CREDIT,
 						AccountEvents.TransactionDirection.CREDIT, event.amount()),
@@ -94,11 +94,11 @@ public class TransferSagaService {
 	 */
 	public void onCreditFailed(TransferEvents.CreditFailed event) {
 		runStep(TransferEvents.CREDIT_FAILED, event.transferId(), event.fromAccountId(),
-				account -> account.credit(event.amount(), event.currency()),
+				balance -> balance.credit(event.amount(), event.currency()),
 				TransferEvents.DEBIT_REVERSED,
-				account -> new TransferEvents.DebitReversed(
+				balance -> new TransferEvents.DebitReversed(
 						event.transferId(), event.fromAccountId(), event.amount(), event.currency(),
-						account.getBalance(), event.failureReason(), Timestamps.now()),
+						balance.total(), event.failureReason(), Timestamps.now()),
 				new SagaStepExecutor.BalanceChange(AccountEvents.BalanceChangeReason.TRANSFER_REFUND,
 						AccountEvents.TransactionDirection.CREDIT, event.amount()),
 				null);
@@ -109,12 +109,13 @@ public class TransferSagaService {
 	 *                 뜻으로, 실패를 삼키지 않고 밖으로 던져 재배달되게 한다.
 	 */
 	private void runStep(String consumedEventType, UUID transferId, UUID accountId,
-			Consumer<Account> mutation, String nextEventType, Function<Account, Object> nextEventBody,
+			Consumer<AccountBalance> mutation, String nextEventType,
+			Function<AccountBalance, Object> nextEventBody,
 			SagaStepExecutor.BalanceChange balanceChange, Function<String, Fallback> fallback) {
 		try {
 			// 잔액 변경이므로 REST 진입점과 똑같은 동시성 방어(분산 락 + 낙관적 락)를 거친다.
-			accountService.guarded(accountId, () -> {
-				sagaStepExecutor.execute(consumedEventType, transferId, accountId,
+			accountService.guarded(accountId, balanceChange.direction(), shardNo -> {
+				sagaStepExecutor.execute(consumedEventType, transferId, accountId, shardNo,
 						mutation, nextEventType, nextEventBody, balanceChange);
 				return null;
 			});

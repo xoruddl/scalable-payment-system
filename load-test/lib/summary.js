@@ -33,17 +33,46 @@ function textSummary(name, data) {
 	// 빈 칸으로 채운 섹션을 보여주면 "못 쟀나?"로 읽혀서 아예 뺀다.
 	const hasSettle = data.metrics.settle_duration !== undefined;
 
+	// 어떤 조건으로 쟀는지를 숫자 바로 옆에 남긴다. 포화 시험(계단)과 고정 도착률은
+	// 값의 뜻이 달라서, 조건을 안 적어두면 나중에 나란히 놓게 된다.
+	const rate = Number(__ENV.RATE || 0);
+	const smoke = __ENV.SMOKE === '1' || __ENV.SMOKE === 'true';
+	let condition;
+	if (smoke) {
+		condition = 'SMOKE — 배선 확인용. 이 숫자는 성능 값이 아니다';
+	} else if (rate > 0) {
+		condition = `고정 도착률 ${rate} TPS (램프 없음) — 포화 시험 값과 나란히 두지 말 것`;
+	} else {
+		condition = '계단 부하 (최대 400 TPS) — 천장을 찾는 포화 시험';
+	}
+	// 받는 계좌를 쪼갰는지는 핫 계좌 숫자를 읽는 데 반드시 필요하다.
+	// 쪼갠 값과 안 쪼갠 값을 나란히 두면 그냥 틀린 비교가 된다.
+	const shards = Number(__ENV.SHARDS || 1);
+	if (shards > 1) {
+		condition += ` · 받는 계좌 ${shards}조각`;
+	}
+
 	const lines = [
 		'',
 		`  === ${name} ===`,
+		`  ${condition}`,
 		'',
 		hasSettle
 			? '  접수 (POST /transfers — 여기만 보면 시스템이 멀쩡해 보인다)'
 			: '  요청',
-		`    처리량        ${metric(data, 'http_reqs', 'rate')} req/s`,
-		`    p95           ${metric(data, 'http_req_duration', 'p(95)')} ms`,
-		`    p99           ${metric(data, 'http_req_duration', 'p(99)')} ms`,
+		// 접수만 센다. http_reqs 전체를 쓰면 prober의 폴링 GET과 setup의 계좌 생성까지
+		// 섞여서, "접수가 몇 건/s였나"에 답하지 못한다. 실제로 그 값을 접수 처리량으로 읽고
+		// 없는 병목을 쫓을 뻔했다 (2026-08-24).
+		// ⚠️ rate의 분모는 <b>setup부터 마지막 VU가 끝날 때까지</b>다. 부하 구간(2분)보다 길어서
+		// 실제 도착률보다 낮게 나온다. 2026-08-24에 이 값(55 req/s)을 보고 "접수가 포화했다"고
+		// 판단했는데, k6는 60.00 iters/s를 정확히 넣고 있었다. <b>건수를 함께 봐야 한다.</b>
+		`    접수          ${metric(data, 'http_reqs{name:accept}', 'count', '0')}건 (${metric(data, 'http_reqs{name:accept}', 'rate')} req/s — 분모가 전체 실행 시간이라 낮게 나온다)`,
+		`    p95           ${metric(data, 'http_req_duration{name:accept}', 'p(95)')} ms`,
+		`    p99           ${metric(data, 'http_req_duration{name:accept}', 'p(99)')} ms`,
 		`    실패율        ${metric(data, 'http_req_failed', 'rate')}`,
+		// k6가 도착률을 못 맞춘 건수. 0이 아니면 <b>요청한 부하가 실제로 안 걸린 것</b>이라
+		// 그 실행의 지연 값은 의미가 없다.
+		`    미발사        ${metric(data, 'dropped_iterations', 'count', '0')}  ← 0이 아니면 그 부하는 안 걸린 것`,
 	];
 
 	if (hasSettle) {

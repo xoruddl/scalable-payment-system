@@ -12,6 +12,9 @@ public interface AccountRepository extends JpaRepository<Account, Long> {
 
 	Optional<Account> findByAccountId(UUID accountId);
 
+	/** 쪼갠 계좌만. 몇 개 안 되므로 통째로 읽어 메모리에 들고 있는다 ({@code ShardRouter}). */
+	List<Account> findByShardCountGreaterThan(short shardCount);
+
 	/** 대사가 계좌를 순번대로 훑을 때 쓴다. 커서는 마지막으로 본 순번이다. */
 	List<Account> findByIdGreaterThanOrderByIdAsc(Long id, Limit limit);
 }

@@ -45,7 +45,7 @@ public class TransferEventConsumer {
 	 * 리스너당 스레드 수. 파티션 수(3)에 맞춘 값이 기본이고, 파티션을 넘겨 봐야 놀기만 한다.
 	 * 프로퍼티로 낮출 수 있게 열어 두지만, 기본값은 코드에 있어야 테스트가 같은 값으로 돈다.
 	 */
-	private static final String CONCURRENCY = "${remittance.kafka.listener.concurrency:3}";
+	private static final String CONCURRENCY = "${remittance.kafka.listener.concurrency:6}";
 
 	private final TransferSagaService transferSagaService;
 	private final ObjectMapper objectMapper;

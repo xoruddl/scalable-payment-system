@@ -2,7 +2,6 @@ package com.remittance.account.domain;
 
 import com.remittance.account.exception.AccountNotActiveException;
 import com.remittance.account.exception.CurrencyMismatchException;
-import com.remittance.account.exception.InsufficientBalanceException;
 import com.remittance.account.support.Timestamps;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -18,7 +17,6 @@ import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
-import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.UUID;
 
@@ -45,8 +43,17 @@ public class Account {
 	@Column(nullable = false, length = 20, updatable = false)
 	private AccountType accountType;
 
-	@Column(nullable = false, precision = 19, scale = 2)
-	private BigDecimal balance;
+	/**
+	 * 이 계좌의 잔액을 몇 조각으로 쪼갰나 (Phase 6 Step 1). 1이면 안 쪼갠 것이다.
+	 *
+	 * <p><b>잔액 자체는 여기 없다.</b> {@link AccountBalanceShard}에 있고, 계좌의 잔액은
+	 * 그 조각들의 합이다. 한 행에 두면 그 계좌의 입금이 전부 그 행에 줄을 서기 때문이다.
+	 *
+	 * <p>기본이 1인 이유 — 계좌 대부분은 경합이 없다. 경합 없는 계좌를 쪼개면
+	 * 조회할 때마다 합산만 늘어 손해다. <b>쪼개는 것은 붐비는 계좌에만 하는 처방</b>이다.
+	 */
+	@Column(nullable = false)
+	private short shardCount;
 
 	@Enumerated(EnumType.STRING)
 	@Column(nullable = false, length = 20)
@@ -76,24 +83,28 @@ public class Account {
 		this.ownerId = ownerId;
 		this.currency = currency;
 		this.accountType = accountType;
-		this.balance = BigDecimal.ZERO;
+		this.shardCount = 1;
 		this.status = AccountStatus.ACTIVE;
 		this.createdAt = Timestamps.now();
 		this.updatedAt = Timestamps.now();
 	}
 
-	public void debit(BigDecimal amount, String currency) {
+	/**
+	 * 이 계좌로 돈을 움직여도 되는가. 잔액이 조각으로 나가면서 <b>계좌에 남은 규칙은 이것뿐</b>이다.
+	 * 잔액이 모자란지는 조각들의 합을 봐야 알 수 있어 {@link AccountBalance}가 판단한다.
+	 */
+	public void assertUsable(String currency) {
 		validateActiveAndCurrency(currency);
-		if (this.balance.compareTo(amount) < 0) {
-			throw new InsufficientBalanceException(this.accountId);
-		}
-		this.balance = this.balance.subtract(amount);
-		this.updatedAt = Timestamps.now();
 	}
 
-	public void credit(BigDecimal amount, String currency) {
-		validateActiveAndCurrency(currency);
-		this.balance = this.balance.add(amount);
+	/** 쪼갤 조각 수를 바꾼다. 줄이는 것은 남는 조각의 돈을 옮겨야 해서 아직 지원하지 않는다. */
+	public void widenShards(short shardCount) {
+		if (shardCount < this.shardCount) {
+			throw new IllegalArgumentException(
+					"조각은 줄일 수 없다 (지금 %d → %d). 남는 조각의 돈을 옮기는 절차가 없다."
+							.formatted(this.shardCount, shardCount));
+		}
+		this.shardCount = shardCount;
 		this.updatedAt = Timestamps.now();
 	}
 

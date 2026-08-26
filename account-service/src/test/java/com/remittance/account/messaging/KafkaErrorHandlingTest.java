@@ -131,7 +131,7 @@ class KafkaErrorHandlingTest extends AbstractIntegrationTest {
 				new TransferEvents.Requested(transferId, from, to, amount, "KRW"), transferId);
 
 		await().atMost(Duration.ofSeconds(60)).untilAsserted(() -> {
-			assertThat(accountRepository.findByAccountId(from).orElseThrow().getBalance())
+			assertThat(accountService.getBalance(from).total())
 					.as("한 번 실패했다고 포기하면 출금이 영영 일어나지 않는다")
 					.isEqualByComparingTo("4000.00");
 		});

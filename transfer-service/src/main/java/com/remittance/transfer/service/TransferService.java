@@ -8,8 +8,6 @@ import com.remittance.transfer.exception.IdempotencyInProgressException;
 import com.remittance.transfer.exception.InvalidTransferRequestException;
 import com.remittance.transfer.exception.TransferNotFoundException;
 import com.remittance.transfer.messaging.TransferEvents;
-import com.remittance.transfer.outbox.TransferEventType;
-import com.remittance.transfer.outbox.TransferOutboxRecorder;
 import com.remittance.transfer.repository.TransferRepository;
 import com.remittance.transfer.web.dto.CreateTransferRequest;
 import io.micrometer.core.instrument.Counter;
@@ -67,7 +65,7 @@ public class TransferService {
 
 	private final TransferRepository transferRepository;
 	private final IdempotencyService idempotencyService;
-	private final TransferOutboxRecorder outboxRecorder;
+	private final TransferAcceptExecutor acceptExecutor;
 	private final TransferStateUpdater stateUpdater;
 	private final MeterRegistry meterRegistry;
 
@@ -99,15 +97,12 @@ public class TransferService {
 	}
 
 	/** 선점에 성공한 뒤 실제로 접수한다. */
+	/**
+	 * 송금 저장 · Outbox 기록 · 키 결과 기록이 <b>한 트랜잭션</b>이다
+	 * ({@link TransferAcceptExecutor}). 전에는 뒤의 하나가 갈라져 커밋이 두 번이었다.
+	 */
 	private Transfer accept(String idempotencyKey, CreateTransferRequest request) {
-		// 송금 저장과 transfer.requested 기록이 한 트랜잭션이다.
-		// 둘 중 하나만 성공하는 경우가 없으므로 "접수됐는데 아무도 모르는 송금"이 생기지 않는다.
-		Transfer transfer = createTransfer(idempotencyKey, request);
-
-		// 여기서 COMPLETED는 "송금이 끝났다"가 아니라 "접수가 끝났다"는 뜻이다.
-		// 재요청은 이 시점 이후로 항상 같은 transferId를 돌려받는다.
-		idempotencyService.complete(idempotencyKey, transfer.getTransferId());
-		return transfer;
+		return acceptExecutor.accept(idempotencyKey, request);
 	}
 
 	private void validate(CreateTransferRequest request) {
@@ -185,19 +180,6 @@ public class TransferService {
 		return Optional.empty();
 	}
 
-	private Transfer createTransfer(String idempotencyKey, CreateTransferRequest request) {
-		return outboxRecorder.record(
-				Transfer.builder()
-						.fromAccountId(request.fromAccountId())
-						.toAccountId(request.toAccountId())
-						.amount(request.amount())
-						.currency(request.currency())
-						.memo(request.memo())
-						// 송금 저장과 같은 트랜잭션에 들어간다 — 송금이 있으면 키도 반드시 적혀 있다.
-						.idempotencyKey(idempotencyKey)
-						.build(),
-				TransferEventType.REQUESTED);
-	}
 
 	public void applyDebited(TransferEvents.Debited event) {
 		withOptimisticRetry(event.transferId(),

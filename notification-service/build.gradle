@@ -5,6 +5,10 @@ plugins {
 dependencies {
 	implementation 'org.springframework.boot:spring-boot-starter-web'
 	implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+	// 스키마는 ddl-auto가 아니라 db/migration의 SQL이 만든다 (DECISIONS.md 교체 4번).
+	implementation 'org.springframework.boot:spring-boot-starter-flyway'
+	// MySQL 8은 별도 모듈이 있어야 Flyway가 방언을 인식한다. 없으면 기동 시 "Unsupported Database"로 죽는다.
+	runtimeOnly 'org.flywaydb:flyway-mysql'
 	implementation 'org.springframework.boot:spring-boot-starter-kafka'
 	runtimeOnly 'com.mysql:mysql-connector-j'
 	testImplementation 'org.springframework.boot:spring-boot-webmvc-test'

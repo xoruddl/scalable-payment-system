@@ -33,8 +33,16 @@ import java.util.stream.Stream;
 @Configuration
 public class KafkaTopicsConfig {
 
-	/** 컨슈머 인스턴스를 3개까지 늘려 병렬 처리할 수 있다는 뜻. */
-	private static final int PARTITIONS = 3;
+	/**
+	 * <b>컨슈머 스레드 수의 상한</b>이다 — 스레드는 파티션 수를 넘을 수 없다.
+	 * 3 → 6으로 올렸다. 근거와 주의사항은 account-service의 같은 파일에 적어두었다
+	 * (네 서비스가 같은 값을 선언해야 한다 — 어긋나면 큰 쪽이 이긴다).
+	 *
+	 * <p>{@code private}이 아닌 이유: {@code KafkaTopicPartitionTest}가 이 값을 읽는다.
+	 * 테스트가 기대값을 따로 적어두면 <b>같은 숫자를 두 곳에 두는 것</b>이라, 바꿀 때
+	 * 한쪽만 고치고 red를 보게 된다(실제로 3 → 6에서 그랬다).
+	 */
+	static final int PARTITIONS = 6;
 	/** 로컬은 단일 브로커라 1. 운영이라면 최소 3이어야 한다. */
 	private static final int REPLICAS = 1;
 

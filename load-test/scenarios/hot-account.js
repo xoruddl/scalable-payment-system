@@ -1,5 +1,5 @@
-import { TREND_STATS, loadStages, proberDuration, seedCount } from '../lib/config.js';
-import { pick, seedAccounts } from '../lib/seed.js';
+import { FIXED_RATE, TREND_STATS, fixedRateStages, fixedStartRate, proberDuration, seedCount } from '../lib/config.js';
+import { pick, seedAccounts, shard } from '../lib/seed.js';
 import { requestAndAwaitSettle, requestTransfer } from '../lib/transfer.js';
 import { summaryFor } from '../lib/summary.js';
 
@@ -22,6 +22,15 @@ import { summaryFor } from '../lib/summary.js';
  */
 
 const SENDERS = Number(__ENV.SENDERS || 60);
+/**
+ * 받는 계좌를 몇 조각으로 쓸지. 1이면 쪼개지 않은 예전 그대로다.
+ *
+ *   SHARDS=8 k6 run load-test/scenarios/hot-account.js
+ *
+ * <b>같은 jar에 이 값만 바꿔 나란히 잰다.</b> 코드를 고쳐가며 재면 빌드가 달라져
+ * 무엇 때문에 숫자가 바뀌었는지 말할 수 없다 (락 전략 비교 때와 같은 규칙).
+ */
+const SHARDS = Number(__ENV.SHARDS || 1);
 
 export const options = {
 	summaryTrendStats: TREND_STATS,
@@ -30,11 +39,13 @@ export const options = {
 		load: {
 			executor: 'ramping-arrival-rate',
 			exec: 'fireAndForget',
-			startRate: 10,
+			// RATE를 주면 시작도 그 값이라 램프 없이 <b>진짜 고정</b>이 된다 (lib/config.js).
+			startRate: fixedStartRate(10),
 			timeUnit: '1s',
 			preAllocatedVUs: 50,
 			maxVUs: 600,
-			stages: loadStages([
+			// 기본은 천장을 찾는 계단. RATE를 주면 그 도착률로 2분만 돈다 (lib/config.js 참고).
+			stages: fixedRateStages([
 				{ target: 50, duration: '1m' },
 				{ target: 100, duration: '1m' },
 				{ target: 200, duration: '1m' },
@@ -46,13 +57,16 @@ export const options = {
 			exec: 'probe',
 			rate: 1,
 			timeUnit: '1s',
-			duration: proberDuration('4m'),
+			duration: FIXED_RATE > 0 ? '2m' : proberDuration('4m'),
 			preAllocatedVUs: 20,
 			maxVUs: 100,
 		},
 	},
 	thresholds: {
 		// 접수는 spread와 똑같이 빠를 것이다 — 그게 함정이라는 걸 보여주려고 같은 기준을 둔다.
+		// 이 두 줄은 통과 기준이 아니라 <b>부분지표를 만들기 위한 것</b>이다.
+		// k6는 threshold에 적힌 부분지표만 만든다 — 안 적으면 요약에서 '—'로 나온다.
+		'http_reqs{name:accept}': ['count>0'],
 		'http_req_duration{name:accept}': ['p(95)<200'],
 		// 이쪽이 무너진다. baseline에서는 통과하지 못하는 게 정상이다.
 		settle_duration: ['p(95)<5000'],
@@ -64,6 +78,7 @@ export function setup() {
 	const senders = seedAccounts(seedCount(SENDERS));
 	// 돈이 몰릴 계좌. 받기만 하므로 충전할 필요가 없다.
 	const hotAccount = seedAccounts(1, { funded: false })[0];
+	shard(hotAccount, SHARDS);
 	return { senders, hotAccount };
 }
 
