@@ -56,11 +56,22 @@ check_db_settings() {
 check_db_settings
 
 echo "######## RATE=$RATE SHARDS=$SHARDS ########"
+#
+# k6의 종료 코드를 <b>반드시 살려야 한다.</b> 파이프로 grep에 넘기면 grep의 코드만 남는다.
+# 2026-08-26에 그것 때문에 70 TPS가 종결 p99 11.7초로 SLO를 깨뜨렸는데도
+# 스크립트가 "✅ 용량 조건을 통과했다"고 찍었다 — 드레인과 대사만 보고 지연을 안 본 것이다.
+k6_log="$(mktemp)"
+trap 'rm -f "$k6_log"' EXIT
 docker run --rm --network host --cpuset-cpus="${K6_CPUSET:-10-11}" \
 	-e "RATE=$RATE" -e "SHARDS=$SHARDS" \
 	-v "$PWD:/work" -w /work grafana/k6:latest \
-	run load-test/scenarios/hot-account.js 2>&1 |
-	grep -E '^  === |종결|p95|p99|성공률|시간초과|처리량|미발사'
+	run load-test/scenarios/hot-account.js > "$k6_log" 2>&1
+k6_status=$?
+grep -E '^  === |종결|p95|p99|성공률|시간초과|처리량|미발사' "$k6_log"
+if [ "$k6_status" -ne 0 ]; then
+	echo "   ⚠️  k6 threshold 미달 (SLO는 docs/SLO.md)"
+	grep -o "thresholds on metrics '[^']*' have been crossed" "$k6_log" | sed 's/^/      /'
+fi
 
 echo "   -- ① 적체가 끝까지 빠지는가 (과부하 회복) --"
 #
@@ -112,8 +123,20 @@ print('%s|계좌 %s건 대조, 어긋남 %s건' % ('OK' if n == 0 else 'NG', d.g
 " 2>/dev/null)"
 echo "      ${verdict#*|}"
 case "$verdict" in
-	OK*) echo "   ✅ 이 TPS는 용량 조건을 통과했다" ;;
+	OK*) ;;
 	*)   echo "   ❌ 잔액–원장이 어긋났다. p99가 좋아도 이 TPS는 용량이 아니다"
 	     echo "      자세히: curl -s localhost:8084/reconciliations/findings | head"
 	     exit 4 ;;
 esac
+
+echo "   -- ③ 판정 --"
+# 셋을 <b>전부</b> 통과해야 용량이다. 하나라도 빼면 그건 다른 것을 잰 것이다.
+#
+#   지연     k6 threshold (docs/SLO.md의 p99)
+#   회복     새 요청을 끊으면 적체가 끝까지 빠지는가
+#   정합성   drain 뒤 정식 대사 0건
+if [ "$k6_status" -ne 0 ]; then
+	echo "   ❌ 적체와 정합성은 통과했지만 지연 SLO를 못 지켰다. 이 TPS는 용량이 아니다."
+	exit 5
+fi
+echo "   ✅ 지연·회복·정합성을 모두 통과했다 — 이 TPS는 용량이다"
