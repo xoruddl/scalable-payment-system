@@ -11,5 +11,7 @@ include 'transfer-service'
 include 'ledger-service'
 include 'reconciliation-service'
 include 'notification-service'
+// Phase 6.5 — 상대 은행. 우리 조직이 아닌 것을 흉내 내므로 Kotlin으로 만든다.
+include 'external-bank-service'
 include 'gateway'
 include 'config-server'

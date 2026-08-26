@@ -2,6 +2,19 @@ plugins {
 	id 'java'
 	id 'org.springframework.boot' version '4.1.0' apply false
 	id 'io.spring.dependency-management' version '1.1.7' apply false
+	/*
+	 * Phase 6.5의 상대 은행만 Kotlin이다 (external-bank-service).
+	 *
+	 * 플러그인 버전은 여기 적어야 한다. Boot의 의존성 관리는 Kotlin <b>라이브러리</b> 버전만
+	 * 맞춰주고, Gradle 플러그인 버전까지 정해주지는 않는다.
+	 *
+	 * kotlin.plugin.spring이 필요한 이유: Kotlin 클래스는 기본이 final인데
+	 * Spring의 프록시(@Transactional, @Configuration)는 상속을 쓴다.
+	 * 이 플러그인이 스프링 애너테이션이 붙은 클래스를 open으로 열어준다.
+	 */
+	id 'org.jetbrains.kotlin.jvm' version '2.3.21' apply false
+	id 'org.jetbrains.kotlin.plugin.spring' version '2.3.21' apply false
+	id 'org.jetbrains.kotlin.plugin.jpa' version '2.3.21' apply false
 }
 
 /**

@@ -11,3 +11,5 @@ CREATE DATABASE IF NOT EXISTS account_db CHARACTER SET utf8mb4 COLLATE utf8mb4_u
 CREATE DATABASE IF NOT EXISTS transfer_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 CREATE DATABASE IF NOT EXISTS reconciliation_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 CREATE DATABASE IF NOT EXISTS notification_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+-- Phase 6.5 — 상대 은행. 우리 조직이 아니므로 DB도 따로다.
+CREATE DATABASE IF NOT EXISTS external_bank_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;

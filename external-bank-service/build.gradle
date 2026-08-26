@@ -1,0 +1,34 @@
+plugins {
+	id 'org.springframework.boot'
+	id 'org.jetbrains.kotlin.jvm'
+	// Kotlin 클래스는 기본이 final이라 Spring 프록시가 상속을 못 한다. 이게 열어준다.
+	id 'org.jetbrains.kotlin.plugin.spring'
+	// JPA 엔티티에 필요한 기본 생성자를 만들어준다.
+	id 'org.jetbrains.kotlin.plugin.jpa'
+}
+
+dependencies {
+	implementation 'org.springframework.boot:spring-boot-starter-web'
+	implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+	implementation 'org.springframework.boot:spring-boot-starter-flyway'
+	implementation 'org.springframework.boot:spring-boot-starter-validation'
+	// Jackson이 Kotlin의 data class와 널 안전성을 이해하게 한다.
+	// 없으면 널 불가 필드에 null이 들어가도 조용히 통과한다.
+	implementation 'tools.jackson.module:jackson-module-kotlin'
+	implementation 'org.jetbrains.kotlin:kotlin-reflect'
+	runtimeOnly 'org.flywaydb:flyway-mysql'
+	runtimeOnly 'com.mysql:mysql-connector-j'
+	testImplementation 'org.springframework.boot:spring-boot-webmvc-test'
+	testImplementation 'org.springframework.boot:spring-boot-testcontainers'
+	testImplementation 'org.testcontainers:testcontainers-junit-jupiter'
+	testImplementation 'org.testcontainers:testcontainers-mysql'
+}
+
+kotlin {
+	// 나머지 모듈과 같은 21. 루트의 java 툴체인과 맞춰야 한다.
+	jvmToolchain(21)
+	compilerOptions {
+		// 널 안전성이 이 언어를 쓰는 이유의 절반이다. 경고를 오류로 올린다.
+		allWarningsAsErrors = true
+	}
+}
