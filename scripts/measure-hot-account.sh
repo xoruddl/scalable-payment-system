@@ -39,17 +39,19 @@ DRAIN_TIMEOUT_TICKS="${DRAIN_TIMEOUT_TICKS:-60}"
 # 일부러 바꿔서 재는 실험이라면 EXPECT_DEFAULT_DB=0으로 끄면 된다.
 check_db_settings() {
 	[ "${EXPECT_DEFAULT_DB:-1}" = "1" ] || return 0
-	local actual expected="0|1|1"
+	# redo 용량까지 본다. 2026-08-26에 이 값 하나로 70 TPS의 p99가 11.8초 ↔ 3.6초로 갈렸다.
+	# 성능을 가르는 값이 저장소 밖에 있으면 그 측정은 재현되지 않는다.
+	local actual expected="0|1|1|1073741824"
 	actual="$(docker exec remittance-mysql mysql -uroot -proot -N -e "
 		SELECT CONCAT(@@binlog_group_commit_sync_delay, '|',
-		              @@innodb_flush_log_at_trx_commit, '|', @@sync_binlog);" 2>/dev/null)"
+		              @@innodb_flush_log_at_trx_commit, '|', @@sync_binlog, '|',
+		              @@innodb_redo_log_capacity);" 2>/dev/null)"
 	if [ "$actual" != "$expected" ]; then
-		echo "⚠️  MySQL 설정이 저장소 기준과 다르다 (delay|flush_log|sync_binlog)"
+		echo "⚠️  MySQL 설정이 저장소 기준과 다르다 (delay|flush_log|sync_binlog|redo)"
 		echo "    기대: $expected"
 		echo "    실제: $actual"
 		echo "    이 상태로 잰 값은 다른 시스템의 값이다. 되돌리고 다시 재라:"
-		echo "      docker exec remittance-mysql mysql -uroot -proot -e \\"
-		echo "        \"SET GLOBAL binlog_group_commit_sync_delay=0;\""
+		echo "      docker compose -f docker-compose.dev.yml -f docker-compose.homelab.yml up -d mysql"
 		exit 2
 	fi
 }
