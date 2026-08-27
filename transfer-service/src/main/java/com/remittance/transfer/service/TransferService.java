@@ -106,6 +106,13 @@ public class TransferService {
 	}
 
 	private void validate(CreateTransferRequest request) {
+		// 받는 쪽이 둘 다 적히면 어느 쪽이 진짜인지 알 수 없고, 둘 다 없으면 보낼 곳이 없다.
+		// 어느 쪽이든 <b>돈이 엉뚱한 데로 갈 수 있는</b> 상태라 키를 쓰기 전에 막는다.
+		if (!request.hasExactlyOneDestination()) {
+			throw new InvalidTransferRequestException(
+					"받는 쪽은 우리 계좌(toAccountId) 또는 상대 은행(toBankCode+toAccountNumber) "
+							+ "중 하나로만 적어야 합니다.");
+		}
 		if (request.fromAccountId().equals(request.toAccountId())) {
 			throw new InvalidTransferRequestException("출금 계좌와 입금 계좌가 동일할 수 없습니다.");
 		}

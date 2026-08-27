@@ -5,6 +5,9 @@ import com.remittance.account.exception.AccountNotActiveException;
 import com.remittance.account.exception.AccountNotFoundException;
 import com.remittance.account.exception.CurrencyMismatchException;
 import com.remittance.account.exception.InsufficientBalanceException;
+import com.remittance.account.external.ExternalBankClient;
+import com.remittance.account.external.ExternalCreditResult;
+import com.remittance.account.settlement.SettlementAccounts;
 import com.remittance.account.messaging.AccountEvents;
 import com.remittance.account.messaging.TransferEvents;
 import com.remittance.account.service.AccountService;
@@ -46,6 +49,8 @@ public class TransferSagaService {
 
 	private final AccountService accountService;
 	private final SagaStepExecutor sagaStepExecutor;
+	private final ExternalBankClient externalBankClient;
+	private final SettlementAccounts settlementAccounts;
 
 	/** 실패했을 때 대신 남길 이벤트. 전진 단계만 갖는다. */
 	private record Fallback(String eventType, Object body) {
@@ -58,6 +63,8 @@ public class TransferSagaService {
 				TransferEvents.DEBITED,
 				balance -> new TransferEvents.Debited(
 						event.transferId(), event.fromAccountId(), event.toAccountId(),
+						// 여기까지 실어 날라야 입금 단계가 어디로 보낼지 안다 (Phase 6.5).
+						event.toBankCode(), event.toAccountNumber(),
 						event.amount(), event.currency(), balance.total(), Timestamps.now()),
 				new SagaStepExecutor.BalanceChange(AccountEvents.BalanceChangeReason.TRANSFER_DEBIT,
 						AccountEvents.TransactionDirection.DEBIT, event.amount()),
@@ -69,18 +76,71 @@ public class TransferSagaService {
 
 	/** 출금 완료 → 입금 계좌에 넣는다. */
 	public void onDebited(TransferEvents.Debited event) {
-		runStep(TransferEvents.DEBITED, event.transferId(), event.toAccountId(),
+		if (event.isExternal()) {
+			creditExternal(event);
+			return;
+		}
+		creditInternal(event, event.toAccountId());
+	}
+
+	/**
+	 * 상대 은행으로 나가는 입금 (Phase 6.5).
+	 *
+	 * <h2>HTTP 호출이 트랜잭션 밖에 있다 ★</h2>
+	 * <b>느린 상대가 DB 트랜잭션을 붙들면 안 된다.</b> 상대 은행이 3초를 끌면 커넥션도 3초
+	 * 묶이고, 그 커넥션은 우리 <b>내부</b> 송금이 쓸 것이었다. 남의 사정으로 우리 일이 멈춘다.
+	 *
+	 * <p>그래도 <b>스레드는 묶인다</b> — 컨슈머 스레드가 응답을 기다린다. 이건 아직 안 고쳤고,
+	 * 고치려면 격벽(bulkhead)이 필요하다. Phase 6 Step 4가 여기서 진짜 근거를 얻는다.
+	 *
+	 * <h2>재시도가 안전한 이유</h2>
+	 * 호출이 멱등성 흔적({@code processed_events})보다 <b>앞에</b> 있어서, 재배달되면
+	 * 상대 은행을 다시 부른다. 그게 안전한 이유는 오직 <b>상대가 송금 ID로 멱등하기 때문</b>이다.
+	 * 우리 DB의 제약이 아니라 <b>남의 약속</b>에 기대고 있다 — 그게 서비스 경계를 넘는 멱등성이다.
+	 *
+	 * <h2>정산 계좌로 적는다</h2>
+	 * 상대가 받았다고 하면 <b>그 은행의 정산 계좌</b>에 입금한다. 상대 계좌를 우리 원장에
+	 * 적을 수는 없지만, "그 은행에 지급할 채무"는 우리 장부의 것이다.
+	 * 그래서 원장은 두 다리를 그대로 보고, <b>원장·대사 로직을 하나도 안 고쳐도 된다.</b>
+	 */
+	private void creditExternal(TransferEvents.Debited event) {
+		ExternalCreditResult result = externalBankClient.credit(
+				event.toBankCode(), event.transferId(), event.toAccountNumber(),
+				event.amount(), event.currency());
+
+		if (!result.isAccepted()) {
+			// 상대가 거절했다. 다시 보내도 결과가 같으므로 보상으로 넘어간다 —
+			// 출금은 이미 나갔으니 돌려놔야 한다.
+			log.warn("상대 은행이 거절했다 (bank={}, transferId={}, reason={})",
+					event.toBankCode(), event.transferId(), result.reason());
+			recordFailure(TransferEvents.DEBITED, event.transferId(),
+					new Fallback(TransferEvents.CREDIT_FAILED, new TransferEvents.CreditFailed(
+							event.transferId(), event.fromAccountId(), event.toAccountId(),
+							event.amount(), event.currency(),
+							"상대 은행 거절: " + result.reason(), Timestamps.now())));
+			return;
+		}
+
+		UUID settlementAccountId = settlementAccounts.of(event.toBankCode(), event.currency());
+		creditInternal(event, settlementAccountId);
+	}
+
+	/** 우리 계좌(고객 계좌 또는 정산 계좌)에 입금한다. 여기부터는 내부·외부가 같다. */
+	private void creditInternal(TransferEvents.Debited event, UUID creditAccountId) {
+		runStep(TransferEvents.DEBITED, event.transferId(), creditAccountId,
 				balance -> balance.credit(event.amount(), event.currency()),
 				TransferEvents.CREDITED,
 				balance -> new TransferEvents.Credited(
-						event.transferId(), event.fromAccountId(), event.toAccountId(),
+						// 외부 송금이면 여기 담기는 것은 <b>정산 계좌</b>다.
+						// 원장이 두 다리를 맞추는 기준이 되므로 실제로 입금된 계좌여야 한다.
+						event.transferId(), event.fromAccountId(), creditAccountId,
 						event.amount(), event.currency(), event.fromBalanceAfter(), balance.total(),
 						Timestamps.now()),
 				new SagaStepExecutor.BalanceChange(AccountEvents.BalanceChangeReason.TRANSFER_CREDIT,
 						AccountEvents.TransactionDirection.CREDIT, event.amount()),
 				// 여기서부터가 진짜 문제다. 출금은 이미 나갔는데 입금이 안 됐으므로 돈이 공중에 뜬다.
 				reason -> new Fallback(TransferEvents.CREDIT_FAILED, new TransferEvents.CreditFailed(
-						event.transferId(), event.fromAccountId(), event.toAccountId(),
+						event.transferId(), event.fromAccountId(), creditAccountId,
 						event.amount(), event.currency(), reason, Timestamps.now())));
 	}
 

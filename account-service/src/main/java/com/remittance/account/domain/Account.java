@@ -36,6 +36,16 @@ public class Account {
 	@Column(nullable = false, updatable = false)
 	private UUID ownerId;
 
+	/**
+	 * 이 계좌가 <b>어느 상대 은행의 정산 계좌</b>인가 (Phase 6.5).
+	 * 고객 계좌는 {@code null}이다 — 우리 은행 계좌라 상대가 없다.
+	 *
+	 * <p>{@link AccountType#SETTLEMENT}인 계좌만 값을 갖고, 은행당 하나뿐이다.
+	 * 그래야 "KB로 가는 돈은 어디에 쌓이나"에 답이 하나로 정해진다.
+	 */
+	@Column(length = 11, updatable = false, unique = true)
+	private String settlementBankCode;
+
 	@Column(nullable = false, length = 3, updatable = false)
 	private String currency;
 
@@ -78,11 +88,19 @@ public class Account {
 	private Instant openingBalanceCarriedAt;
 
 	@Builder
-	public Account(UUID ownerId, String currency, AccountType accountType) {
+	public Account(UUID ownerId, String currency, AccountType accountType, String settlementBankCode) {
+		if ((accountType == AccountType.SETTLEMENT) != (settlementBankCode != null)) {
+			// 짝이 안 맞으면 조용히 넘어가면 안 된다. 정산 계좌인데 은행이 없으면 돈이 갈 곳을
+			// 잃고, 고객 계좌에 은행 코드가 붙으면 남의 돈이 그리로 흘러든다.
+			throw new IllegalArgumentException(
+					"정산 계좌만 상대 은행 코드를 갖는다 (type=%s, bankCode=%s)"
+							.formatted(accountType, settlementBankCode));
+		}
 		this.accountId = UUID.randomUUID();
 		this.ownerId = ownerId;
 		this.currency = currency;
 		this.accountType = accountType;
+		this.settlementBankCode = settlementBankCode;
 		this.shardCount = 1;
 		this.status = AccountStatus.ACTIVE;
 		this.createdAt = Timestamps.now();

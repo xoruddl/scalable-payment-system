@@ -63,6 +63,19 @@ spring:
 server:
   port: 8081
 
+# 상대 은행 (Phase 6.5). 여기 없는 은행으로는 송금할 수 없다 —
+# 주소를 모르는 곳으로 보내면 돈이 어디로 갔는지 아무도 모르게 되므로 접수가 실패해야 한다.
+remittance:
+  external-bank:
+    connect-timeout: 1s
+    # ⚠️ 이 시스템에서 가장 무거운 설정이다.
+    # 이 값을 넘기면 우리는 <b>결과를 모르는 채로</b> 남는다. 짧으면 멀쩡히 처리 중인 요청을
+    # 자꾸 모르는 상태로 만들고, 길면 느린 상대가 우리 컨슈머 스레드를 그만큼 붙든다.
+    # 어느 쪽이든 대가가 있어 "안전한 기본값"이 없다 — 재보고 정해야 하는 값이다.
+    read-timeout: 3s
+    urls:
+      KB: http://localhost:8086
+
 outbox:
   relay:
     interval-ms: 500

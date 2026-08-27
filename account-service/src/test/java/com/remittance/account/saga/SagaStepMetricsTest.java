@@ -79,7 +79,7 @@ class SagaStepMetricsTest extends AbstractIntegrationTest {
 	private TransferEvents.Debited debitedEvent() {
 		Account from = accountService.createAccount(UUID.randomUUID(), "KRW", AccountType.PERSONAL);
 		Account to = accountService.createAccount(UUID.randomUUID(), "KRW", AccountType.PERSONAL);
-		return new TransferEvents.Debited(
+		return TransferEvents.Debited.internal(
 				UUID.randomUUID(), from.getAccountId(), to.getAccountId(),
 				new BigDecimal("1000.00"), "KRW", new BigDecimal("4000.00"), Instant.now());
 	}

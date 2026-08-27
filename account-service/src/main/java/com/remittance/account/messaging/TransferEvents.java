@@ -58,10 +58,23 @@ public final class TransferEvents {
 	public record Requested(
 			UUID transferId,
 			UUID fromAccountId,
+			/** 우리 은행 계좌일 때만. 상대 은행으로 나가면 {@code null}이다. */
 			UUID toAccountId,
+			/** 상대 은행 코드. 값이 있으면 <b>입금 단계가 외부 호출로 갈린다</b> (Phase 6.5). */
+			String toBankCode,
+			String toAccountNumber,
 			BigDecimal amount,
 			String currency
 	) {
+		public boolean isExternal() {
+			return toBankCode != null;
+		}
+
+		/** 우리 은행 안의 송금. 상대 은행 자리를 매번 {@code null}로 적지 않기 위해 둔다. */
+		public static Requested internal(UUID transferId, UUID fromAccountId, UUID toAccountId,
+				BigDecimal amount, String currency) {
+			return new Requested(transferId, fromAccountId, toAccountId, null, null, amount, currency);
+		}
 	}
 
 	/** {@link #DEBITED} 본문. 출금 후 잔액을 함께 실어 다음 단계가 그대로 쓸 수 있게 한다. */
@@ -70,11 +83,24 @@ public final class TransferEvents {
 			UUID transferId,
 			UUID fromAccountId,
 			UUID toAccountId,
+			/** 여기까지 실어 날라야 입금 단계가 어디로 보낼지 안다. */
+			String toBankCode,
+			String toAccountNumber,
 			BigDecimal amount,
 			String currency,
 			BigDecimal fromBalanceAfter,
 			Instant occurredAt
 	) {
+		public boolean isExternal() {
+			return toBankCode != null;
+		}
+
+		/** 우리 은행 안의 송금. */
+		public static Debited internal(UUID transferId, UUID fromAccountId, UUID toAccountId,
+				BigDecimal amount, String currency, BigDecimal fromBalanceAfter, Instant occurredAt) {
+			return new Debited(transferId, fromAccountId, toAccountId, null, null,
+					amount, currency, fromBalanceAfter, occurredAt);
+		}
 	}
 
 	/** {@link #CREDITED} 본문. 원장 기록에 필요한 양쪽 잔액이 모두 담긴다. */

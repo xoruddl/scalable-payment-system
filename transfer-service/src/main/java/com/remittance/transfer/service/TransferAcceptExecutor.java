@@ -50,6 +50,8 @@ public class TransferAcceptExecutor {
 				Transfer.builder()
 						.fromAccountId(request.fromAccountId())
 						.toAccountId(request.toAccountId())
+						.toBankCode(request.toBankCode())
+						.toAccountNumber(request.toAccountNumber())
 						.amount(request.amount())
 						.currency(request.currency())
 						.memo(request.memo())

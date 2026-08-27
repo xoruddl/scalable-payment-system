@@ -128,7 +128,7 @@ class KafkaErrorHandlingTest extends AbstractIntegrationTest {
 				.given(transferSagaService).onRequested(any());
 
 		publish(TransferEvents.REQUESTED,
-				new TransferEvents.Requested(transferId, from, to, amount, "KRW"), transferId);
+				TransferEvents.Requested.internal(transferId, from, to, amount, "KRW"), transferId);
 
 		await().atMost(Duration.ofSeconds(60)).untilAsserted(() -> {
 			assertThat(accountService.getBalance(from).total())

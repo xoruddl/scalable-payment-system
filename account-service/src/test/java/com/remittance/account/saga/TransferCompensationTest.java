@@ -62,7 +62,7 @@ class TransferCompensationTest extends AbstractIntegrationTest {
 		UUID transferId = UUID.randomUUID();
 
 		// Transfer Service가 접수 후 발행하는 이벤트. 여기서부터는 아무도 지시하지 않는다.
-		TransferEvents.Requested requested = new TransferEvents.Requested(
+		TransferEvents.Requested requested = TransferEvents.Requested.internal(
 				transferId, from.getAccountId(), to.getAccountId(), new BigDecimal("1000.00"), "KRW");
 		kafkaTemplate.send(TransferEvents.REQUESTED, transferId.toString(),
 				objectMapper.writeValueAsString(requested)).join();
