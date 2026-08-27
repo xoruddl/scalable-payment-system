@@ -48,8 +48,15 @@ public class ExternalCreditProber {
 
 	private static final Logger log = LoggerFactory.getLogger(ExternalCreditProber.class);
 
-	/** 한 번에 너무 많이 물어보면 상대를 두드리는 꼴이 된다. */
-	private static final int BATCH = 50;
+	/**
+	 * 한 번에 처리할 건수.
+	 *
+	 * <p>작게 잡는다. 이 루프는 <b>스케줄러 스레드에서 도는데 외부 호출은 느리다.</b>
+	 * 한 틱이 길어지면 같은 풀을 쓰는 다른 스케줄 작업(Outbox 릴레이)이 밀린다 —
+	 * 2026-08-27에 50으로 두었다가 릴레이가 굶어 시스템이 통째로 멈췄다.
+	 * 풀을 4로 키웠지만 <b>한 틱을 짧게 유지하는 것</b>도 함께 필요하다.
+	 */
+	private static final int BATCH = 10;
 
 	private final PendingExternalCreditRepository repository;
 	private final ExternalBankClient externalBankClient;
