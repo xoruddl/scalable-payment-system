@@ -62,6 +62,7 @@ public class ExternalCreditProber {
 	private final ExternalBankClient externalBankClient;
 	private final ExternalCreditResolver resolver;
 	private final ExternalCallBulkhead bulkhead;
+	private final ExternalCallCircuitBreaker circuitBreaker;
 	private final MeterRegistry meterRegistry;
 
 	/** 다시 묻기까지의 첫 간격. 이후 지수적으로 늘린다. */
@@ -97,9 +98,16 @@ public class ExternalCreditProber {
 
 		ExternalCreditResult result;
 		try {
-			result = externalBankClient.inquire(credit.getBankCode(), credit.getTransferId());
+			// 이미 보낸 돈의 결과 확인은 회로로 막지 않는다. 새 입금을 지키려다
+			// CREDIT_UNKNOWN 해소까지 늦추면 안 된다. 격벽과 백오프로 부하만 제한한다.
+			result = bulkhead.call(() ->
+					externalBankClient.inquire(credit.getBankCode(), credit.getTransferId()));
 		} catch (ExternalCreditUnknownException stillNoAnswer) {
 			// 조회에도 답이 없다. 여전히 모른다 — 간격만 늘리고 다음에 다시 묻는다.
+			pushBack(credit);
+			return;
+		} catch (ExternalCallBulkhead.BulkheadFullException notTried) {
+			// 우리 쪽 보호 장치가 막았다. 상대에게 묻지 않았으므로 결론은 그대로 두고 미룬다.
 			pushBack(credit);
 			return;
 		}
@@ -116,9 +124,27 @@ public class ExternalCreditProber {
 			// 상대가 "그런 거래 없다"고 확인해줬다. 이때만 다시 보내는 것이 안전하다.
 			case NOT_FOUND -> {
 				outcomes("not_found").increment();
-				resolver.onConfirmedNotReceived(credit);
+				resendConfirmedNotReceived(credit);
 			}
 		}
+	}
+
+	/** 상대가 도달하지 않았다고 확인한 건만 다시 보낸다. 결과 확정은 다음 조회에 맡긴다. */
+	private void resendConfirmedNotReceived(PendingExternalCredit credit) {
+		log.warn("조회로 확인했다 - 상대에게 도달하지 않았다. 다시 보낸다 (bank={}, transferId={})",
+				credit.getBankCode(), credit.getTransferId());
+		try {
+			bulkhead.call(() -> circuitBreaker.call(credit.getBankCode(),
+					() -> externalBankClient.credit(
+							credit.getBankCode(), credit.getTransferId(), credit.getToAccountNumber(),
+							credit.getAmount(), credit.getCurrency())));
+		} catch (ExternalCallBulkhead.BulkheadFullException
+				| ExternalCallCircuitBreaker.CircuitOpenException
+				| ExternalCreditUnknownException notDone) {
+			// 호출하지 못했거나 다시 답이 없다. 기록은 그대로 두고 다음 조회까지 간격을 늘린다.
+		}
+		// 응답을 받았어도 결론은 늘 조회로만 낸다. 즉시 다시 묻지 않도록 간격을 둔다.
+		pushBack(credit);
 	}
 
 	/**
@@ -131,19 +157,28 @@ public class ExternalCreditProber {
 	 * <p>격벽에 또 막히면 그대로 둔다. 다음 주기에 다시 시도한다.
 	 */
 	private void sendDeferred(PendingExternalCredit credit) {
-		credit.markSent();
-		repository.save(credit);
 		try {
-			ExternalCreditResult result = bulkhead.call(() -> externalBankClient.credit(
-					credit.getBankCode(), credit.getTransferId(), credit.getToAccountNumber(),
-					credit.getAmount(), credit.getCurrency()));
+			ExternalCreditResult result = bulkhead.call(() -> circuitBreaker.call(
+					credit.getBankCode(),
+					() -> {
+						// 회로와 격벽이 허가한 뒤, HTTP 직전에 보냈다고 표시한다.
+						credit.markSent();
+						repository.saveAndFlush(credit);
+					},
+					() -> externalBankClient.credit(
+							credit.getBankCode(), credit.getTransferId(), credit.getToAccountNumber(),
+							credit.getAmount(), credit.getCurrency())));
 			// 보냈고 답도 받았다. 결론은 다음 조회에 맡긴다 —
 			// <b>결론은 늘 조회로만 낸다</b>는 규칙을 하나로 유지한다.
 			if (result != null) {
 				credit.backOff(Duration.ZERO, Duration.ZERO);
 				repository.save(credit);
 			}
-		} catch (ExternalCallBulkhead.BulkheadFullException | ExternalCreditUnknownException notDone) {
+		} catch (ExternalCallBulkhead.BulkheadFullException
+				| ExternalCallCircuitBreaker.CircuitOpenException notTried) {
+			// 호출하지 않았다. sent=false를 유지해야 다음에 조회가 아니라 전송부터 한다.
+			pushBack(credit);
+		} catch (ExternalCreditUnknownException notDone) {
 			// 못 보냈거나 답이 없다. sent는 이미 올렸으므로 이제부터는 조회로만 결론짓는다.
 			pushBack(credit);
 		}

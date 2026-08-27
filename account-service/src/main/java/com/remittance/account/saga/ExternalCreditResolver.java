@@ -1,7 +1,5 @@
 package com.remittance.account.saga;
 
-import com.remittance.account.external.ExternalBankClient;
-import com.remittance.account.external.ExternalCreditUnknownException;
 import com.remittance.account.external.PendingExternalCredit;
 import com.remittance.account.external.PendingExternalCredits;
 import com.remittance.account.messaging.TransferEvents;
@@ -27,7 +25,6 @@ public class ExternalCreditResolver {
 
 	private final TransferSagaService transferSagaService;
 	private final PendingExternalCredits pendingExternalCredits;
-	private final ExternalBankClient externalBankClient;
 
 	/** 들어갔다. 정산 계좌에 적고 흐름을 원래대로 이어붙인다. */
 	public void onConfirmedAccepted(PendingExternalCredit credit) {
@@ -43,28 +40,6 @@ public class ExternalCreditResolver {
 				credit.getBankCode(), credit.getTransferId(), reason);
 		transferSagaService.onExternalCreditRejected(toDebited(credit), reason);
 		pendingExternalCredits.resolve(credit.getTransferId());
-	}
-
-	/**
-	 * 상대가 <b>"그런 거래 없다"고 확인해줬다.</b> 애초에 도달하지 않은 것이다.
-	 *
-	 * <p><b>여기서만 다시 보낸다.</b> 타임아웃 직후에 다시 보내는 것과는 다르다 —
-	 * 그때는 "안 갔다"가 추측이었고, 지금은 상대가 확인해준 사실이다.
-	 *
-	 * <p>다시 보내다 또 답이 없으면 그대로 둔다. 기록은 남아 있으므로 다음 주기에 또 묻는다.
-	 */
-	public void onConfirmedNotReceived(PendingExternalCredit credit) {
-		log.warn("조회로 확인했다 - 상대에게 도달하지 않았다. 다시 보낸다 (bank={}, transferId={})",
-				credit.getBankCode(), credit.getTransferId());
-		try {
-			externalBankClient.credit(credit.getBankCode(), credit.getTransferId(),
-					credit.getToAccountNumber(), credit.getAmount(), credit.getCurrency());
-		} catch (ExternalCreditUnknownException stillNoAnswer) {
-			// 또 모른다. 기록이 남아 있으니 다음 주기에 다시 묻는다.
-			return;
-		}
-		// 보냈으면 결과를 바로 쓰지 않고 다음 조회에 맡긴다 — 응답과 그쪽 장부가
-		// 어긋날 이유는 없지만, <b>결론은 늘 조회로만 낸다</b>는 규칙을 하나로 유지한다.
 	}
 
 	/**

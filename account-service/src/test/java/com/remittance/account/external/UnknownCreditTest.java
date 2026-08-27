@@ -9,7 +9,6 @@ import com.remittance.account.outbox.OutboxEventRepository;
 import com.remittance.account.repository.AccountRepository;
 import com.remittance.account.saga.TransferSagaService;
 import com.remittance.account.service.AccountService;
-import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -283,7 +282,6 @@ class UnknownCreditTest extends AbstractIntegrationTest {
 	}
 
 	@Test
-	@Tag("reproduction")
 	void 상대가_계속_답하지_않으면_호출을_멈추고_나머지는_미전송으로_남긴다() {
 		given(externalBankClient.credit(eq(bank), any(), any(), any(), any()))
 				.willThrow(new ExternalCreditUnknownException(
@@ -299,6 +297,10 @@ class UnknownCreditTest extends AbstractIntegrationTest {
 				.credit(eq(bank), any(), eq(THEIR_ACCOUNT), any(), any());
 		assertThat(transferIds)
 				.allSatisfy(transferId -> assertThat(pending.findById(transferId)).isPresent());
+		assertThat(transferIds.stream()
+				.map(transferId -> pending.findById(transferId).orElseThrow().isSent()))
+				.as("실제로 호출한 5건만 보낸 상태이고, 회로가 막은 5건은 미전송이어야 한다")
+				.containsExactly(true, true, true, true, true, false, false, false, false, false);
 		assertThat(transferIds.stream()
 				.flatMap(transferId -> outboxEventRepository
 						.findByAggregateIdOrderByIdAsc(transferId).stream())

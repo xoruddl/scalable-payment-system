@@ -8,6 +8,7 @@ import com.remittance.account.exception.InsufficientBalanceException;
 import com.remittance.account.external.ExternalBankClient;
 import com.remittance.account.external.ExternalCreditResult;
 import com.remittance.account.external.ExternalCallBulkhead;
+import com.remittance.account.external.ExternalCallCircuitBreaker;
 import com.remittance.account.external.ExternalCreditUnknownException;
 import com.remittance.account.external.PendingExternalCredits;
 import com.remittance.account.settlement.SettlementAccounts;
@@ -56,6 +57,7 @@ public class TransferSagaService {
 	private final SettlementAccounts settlementAccounts;
 	private final PendingExternalCredits pendingExternalCredits;
 	private final ExternalCallBulkhead bulkhead;
+	private final ExternalCallCircuitBreaker circuitBreaker;
 
 	/** 실패했을 때 대신 남길 이벤트. 전진 단계만 갖는다. */
 	private record Fallback(String eventType, Object body) {
@@ -95,8 +97,8 @@ public class TransferSagaService {
 	 * <b>느린 상대가 DB 트랜잭션을 붙들면 안 된다.</b> 상대 은행이 3초를 끌면 커넥션도 3초
 	 * 묶이고, 그 커넥션은 우리 <b>내부</b> 송금이 쓸 것이었다. 남의 사정으로 우리 일이 멈춘다.
 	 *
-	 * <p>그래도 <b>스레드는 묶인다</b> — 컨슈머 스레드가 응답을 기다린다. 이건 아직 안 고쳤고,
-	 * 고치려면 격벽(bulkhead)이 필요하다. Phase 6 Step 4가 여기서 진짜 근거를 얻는다.
+	 * <p>그래도 응답을 기다리는 동안 스레드는 묶인다. 외부 전용 리스너로 내부 송금과 분리하고,
+	 * 격벽으로 동시 호출 수를 제한하며, 회로 차단기로 계속 느린 은행을 잠시 부르지 않는다.
 	 *
 	 * <h2>재시도가 안전한 이유</h2>
 	 * 호출이 멱등성 흔적({@code processed_events})보다 <b>앞에</b> 있어서, 재배달되면
@@ -113,10 +115,12 @@ public class TransferSagaService {
 		try {
 			// 격벽. 자리가 없으면 <b>기다리지 않고</b> 거절한다 —
 			// 기다리면 스레드가 묶이는 것은 똑같아서 격벽의 의미가 사라진다.
-			result = bulkhead.call(() -> externalBankClient.credit(
-					event.toBankCode(), event.transferId(), event.toAccountNumber(),
-					event.amount(), event.currency()));
-		} catch (ExternalCallBulkhead.BulkheadFullException noRoom) {
+			result = bulkhead.call(() -> circuitBreaker.call(event.toBankCode(),
+					() -> externalBankClient.credit(
+							event.toBankCode(), event.transferId(), event.toAccountNumber(),
+							event.amount(), event.currency())));
+		} catch (ExternalCallBulkhead.BulkheadFullException
+				| ExternalCallCircuitBreaker.CircuitOpenException noRoom) {
 			// 보내지도 못했다. <b>돈은 안 나갔다</b> — 사고가 아니라 미룬 것이다.
 			// 내부 송금이 쓸 스레드를 지키려고 일부러 여기서 멈춘다.
 			pendingExternalCredits.rememberUnsent(event);
