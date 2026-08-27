@@ -98,6 +98,8 @@ function textSummary(name, data) {
 				`    내부 p99      ${metric(data, 'settle_duration{kind:internal}', 'p(99)')} ms  ← 이게 나빠지면 피해다`,
 				`    외부 p95      ${metric(data, 'settle_duration{kind:external}', 'p(95)')} ms`,
 				`    외부 p99      ${metric(data, 'settle_duration{kind:external}', 'p(99)')} ms`,
+				`    내부 성공률   ${metric(data, 'settled{kind:internal}', 'rate')}`,
+				`    외부 성공률   ${metric(data, 'settled{kind:external}', 'rate')}`,
 			);
 		}
 	}

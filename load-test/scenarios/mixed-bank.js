@@ -65,6 +65,10 @@ export const options = {
 		'settle_duration{kind:internal}': ['p(99)<5000'],
 		'settle_duration{kind:external}': ['p(99)<5000'],
 		settled: ['rate>0.99'],
+		// 성공률도 갈라 봐야 한다. 합쳐 보면 <b>내부가 다 끝났는데도</b>
+		// 외부 때문에 낮아 보여서, 피해가 갇혔는지 아닌지 구분할 수 없다.
+		'settled{kind:internal}': ['rate>0.99'],
+		'settled{kind:external}': ['rate>0'],
 	},
 };
 
