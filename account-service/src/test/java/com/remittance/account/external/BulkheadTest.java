@@ -1,6 +1,6 @@
 package com.remittance.account.external;
 
-import com.remittance.account.external.ExternalCallBulkhead.BulkheadFullException;
+import io.github.resilience4j.bulkhead.BulkheadFullException;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 
@@ -38,6 +38,17 @@ class BulkheadTest {
 
 		assertThat(bulkhead.call(() -> "보냈다")).isEqualTo("보냈다");
 		assertThat(bulkhead.call(() -> "또 보냈다")).isEqualTo("또 보냈다");
+	}
+
+	@Test
+	void 표준_Micrometer_지표로_정원과_남은_자리를_노출한다() {
+		SimpleMeterRegistry meters = new SimpleMeterRegistry();
+		new ExternalCallBulkhead(2, meters);
+
+		assertThat(meters.get("resilience4j.bulkhead.max.allowed.concurrent.calls")
+				.tag("name", "external-bank").gauge().value()).isEqualTo(2);
+		assertThat(meters.get("resilience4j.bulkhead.available.concurrent.calls")
+				.tag("name", "external-bank").gauge().value()).isEqualTo(2);
 	}
 
 	@Test

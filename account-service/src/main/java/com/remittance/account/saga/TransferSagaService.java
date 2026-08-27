@@ -16,6 +16,8 @@ import com.remittance.account.messaging.AccountEvents;
 import com.remittance.account.messaging.TransferEvents;
 import com.remittance.account.service.AccountService;
 import com.remittance.account.support.Timestamps;
+import io.github.resilience4j.bulkhead.BulkheadFullException;
+import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -119,8 +121,7 @@ public class TransferSagaService {
 					() -> externalBankClient.credit(
 							event.toBankCode(), event.transferId(), event.toAccountNumber(),
 							event.amount(), event.currency())));
-		} catch (ExternalCallBulkhead.BulkheadFullException
-				| ExternalCallCircuitBreaker.CircuitOpenException noRoom) {
+		} catch (BulkheadFullException | CallNotPermittedException noRoom) {
 			// 보내지도 못했다. <b>돈은 안 나갔다</b> — 사고가 아니라 미룬 것이다.
 			// 내부 송금이 쓸 스레드를 지키려고 일부러 여기서 멈춘다.
 			pendingExternalCredits.rememberUnsent(event);

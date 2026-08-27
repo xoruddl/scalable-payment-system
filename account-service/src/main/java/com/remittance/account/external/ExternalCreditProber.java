@@ -1,6 +1,8 @@
 package com.remittance.account.external;
 
 import com.remittance.account.saga.ExternalCreditResolver;
+import io.github.resilience4j.bulkhead.BulkheadFullException;
+import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.annotation.PostConstruct;
@@ -106,7 +108,7 @@ public class ExternalCreditProber {
 			// 조회에도 답이 없다. 여전히 모른다 — 간격만 늘리고 다음에 다시 묻는다.
 			pushBack(credit);
 			return;
-		} catch (ExternalCallBulkhead.BulkheadFullException notTried) {
+		} catch (BulkheadFullException notTried) {
 			// 우리 쪽 보호 장치가 막았다. 상대에게 묻지 않았으므로 결론은 그대로 두고 미룬다.
 			pushBack(credit);
 			return;
@@ -138,8 +140,8 @@ public class ExternalCreditProber {
 					() -> externalBankClient.credit(
 							credit.getBankCode(), credit.getTransferId(), credit.getToAccountNumber(),
 							credit.getAmount(), credit.getCurrency())));
-		} catch (ExternalCallBulkhead.BulkheadFullException
-				| ExternalCallCircuitBreaker.CircuitOpenException
+		} catch (BulkheadFullException
+				| CallNotPermittedException
 				| ExternalCreditUnknownException notDone) {
 			// 호출하지 못했거나 다시 답이 없다. 기록은 그대로 두고 다음 조회까지 간격을 늘린다.
 		}
@@ -174,8 +176,7 @@ public class ExternalCreditProber {
 				credit.backOff(Duration.ZERO, Duration.ZERO);
 				repository.save(credit);
 			}
-		} catch (ExternalCallBulkhead.BulkheadFullException
-				| ExternalCallCircuitBreaker.CircuitOpenException notTried) {
+		} catch (BulkheadFullException | CallNotPermittedException notTried) {
 			// 호출하지 않았다. sent=false를 유지해야 다음에 조회가 아니라 전송부터 한다.
 			pushBack(credit);
 		} catch (ExternalCreditUnknownException notDone) {
