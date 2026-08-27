@@ -6,9 +6,10 @@ import org.slf4j.LoggerFactory;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.http.HttpStatusCode;
-import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientException;
 
+import java.io.IOException;
 import java.math.BigDecimal;
 import java.util.Map;
 import java.util.UUID;
@@ -58,10 +59,14 @@ public class ExternalBankClient {
 					.body(new CreditRequest(accountNumber, amount, currency))
 					.retrieve()
 					.body(CreditResponse.class);
-		} catch (ResourceAccessException noAnswer) {
+		} catch (RestClientException failed) {
 			// 답이 없다. <b>처리됐는지 안 됐는지 알 수 없다.</b>
 			// 5xx와 달리 "안 됐다"고 말할 수 없으므로 다시 보내면 안 된다 — 조회해야 한다.
-			throw new ExternalCreditUnknownException(bankCode, transferId, noAnswer);
+			if (isNoAnswer(failed)) {
+				throw new ExternalCreditUnknownException(bankCode, transferId, failed);
+			}
+			// 5xx처럼 상대가 "안 했다"고 말해준 것이다. 그대로 올려 재시도에 맡긴다.
+			throw failed;
 		}
 
 		if (response == null) {
@@ -90,9 +95,41 @@ public class ExternalBankClient {
 			return response == null
 					? new ExternalCreditResult(ExternalCreditStatus.NOT_FOUND, null)
 					: new ExternalCreditResult(response.status(), response.reason());
-		} catch (ResourceAccessException noAnswer) {
-			throw new ExternalCreditUnknownException(bankCode, transferId, noAnswer);
+		} catch (RestClientException failed) {
+			if (isNoAnswer(failed)) {
+				throw new ExternalCreditUnknownException(bankCode, transferId, failed);
+			}
+			throw failed;
 		}
+	}
+
+	/**
+	 * 이 실패가 <b>"답을 못 받은 것"</b>인가.
+	 *
+	 * <h2>예외 타입 하나로 판별하면 안 된다 ★</h2>
+	 * 처음에는 {@link ResourceAccessException}만 잡았다. <b>홈서버에서 진짜로 돌려보니
+	 * 타임아웃이 그 타입으로 오지 않았다</b> —
+	 * {@code RestClientException: Error while extracting response ...}였다.
+	 * 응답 헤더는 받았는데 <b>본문을 읽다가 끊긴</b> 경우라 다른 자리에서 감싸진다.
+	 *
+	 * <p>그대로 뒀으면 "모르는 상태"가 만들어지지 않고 <b>메시지가 DLT로 죽었다.</b>
+	 * 돈은 나갔을 수 있는데 아무도 확인하지 않는, 이 Phase가 없애려던 바로 그 상태다.
+	 * 목으로 만든 테스트는 이걸 못 잡는다 — 진짜 소켓이 끊겨봐야 나온다.
+	 *
+	 * <p>그래서 타입이 아니라 <b>원인 사슬에 I/O 실패가 있는지</b>를 본다
+	 * ({@code KafkaErrorHandlingConfig}의 경합 판별과 같은 방식이다).
+	 * {@code static}인 이유는 <b>테스트에서 직접 부를 수 있게</b> 하기 위해서다.
+	 */
+	static boolean isNoAnswer(Throwable failure) {
+		for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+			if (cause instanceof IOException) {
+				return true;
+			}
+			if (cause.getCause() == cause) {
+				break;
+			}
+		}
+		return false;
 	}
 
 	private RestClient clientFor(String bankCode) {
