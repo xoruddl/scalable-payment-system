@@ -75,6 +75,10 @@ function textSummary(name, data) {
 		`    미발사        ${metric(data, 'dropped_iterations', 'count', '0')}  ← 0이 아니면 그 부하는 안 걸린 것`,
 	];
 
+	// 내부·외부를 갈라 잰 시나리오면 그 둘을 나란히 보여준다.
+	// 섞어놓고 하나로 재면 <b>외부가 느린 건지 전체가 느린 건지</b> 구분할 수 없다.
+	const byKind = data.metrics['settle_duration{kind:internal}'] !== undefined;
+
 	if (hasSettle) {
 		lines.push(
 			'',
@@ -86,6 +90,16 @@ function textSummary(name, data) {
 			`    FAILED        ${metric(data, 'settle_failed', 'count', '0')}`,
 			`    시간초과      ${metric(data, 'settle_timeout', 'count', '0')}  ← 큐에 밀려 있다는 뜻`,
 		);
+		if (byKind) {
+			lines.push(
+				'',
+				'  갈라 보기 (느린 상대가 우리 내부 송금까지 묶는가)',
+				`    내부 p95      ${metric(data, 'settle_duration{kind:internal}', 'p(95)')} ms`,
+				`    내부 p99      ${metric(data, 'settle_duration{kind:internal}', 'p(99)')} ms  ← 이게 나빠지면 피해다`,
+				`    외부 p95      ${metric(data, 'settle_duration{kind:external}', 'p(95)')} ms`,
+				`    외부 p99      ${metric(data, 'settle_duration{kind:external}', 'p(99)')} ms`,
+			);
+		}
 	}
 
 	lines.push('');
