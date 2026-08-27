@@ -1,4 +1,8 @@
-// JDK 21 툴체인이 로컬에 없으면 Gradle이 알아서 받아온다.
+pluginManagement {
+    plugins {
+        id "org.jetbrains.kotlin.plugin.lombok" version '2.3.21'
+    }
+}// JDK 21 툴체인이 로컬에 없으면 Gradle이 알아서 받아온다.
 // 개발자마다 설치된 JDK가 달라도, CI에서도 같은 버전으로 빌드된다.
 plugins {
 	id 'org.gradle.toolchains.foojay-resolver-convention' version '1.0.0'

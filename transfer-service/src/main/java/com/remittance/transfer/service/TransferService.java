@@ -226,6 +226,17 @@ public class TransferService {
 		withOptimisticRetry(event.transferId(), () -> stateUpdater.markCompensating(event.transferId()));
 	}
 
+	/**
+	 * 상대 은행이 답하지 않아 결과를 모른다 (Phase 6.5).
+	 *
+	 * <p>여기서 할 일은 <b>상태를 드러내는 것뿐</b>이다. 확인은 account-service의 조회 루프가
+	 * 하고, 결론이 나면 평소의 {@code credited}·{@code credit-failed}로 돌아온다.
+	 * 이 상태가 없으면 "단순히 느린 건"과 <b>돈이 나갔을지 모르는 건</b>이 구분되지 않는다.
+	 */
+	public void applyCreditUnknown(TransferEvents.CreditUnknown event) {
+		withOptimisticRetry(event.transferId(), () -> stateUpdater.markCreditUnknown(event.transferId()));
+	}
+
 	/** 출금이 되돌아왔다 — 이제 송금을 실패로 닫는다. */
 	public void applyDebitReversed(TransferEvents.StepFailed event) {
 		withOptimisticRetry(event.transferId(),

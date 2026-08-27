@@ -58,6 +58,7 @@ public class KafkaTopicsConfig {
 			TransferEvents.LEDGER_RECORDED,
 			TransferEvents.DEBIT_FAILED,
 			TransferEvents.CREDIT_FAILED,
+			TransferEvents.CREDIT_UNKNOWN,
 			TransferEvents.DEBIT_REVERSED);
 
 	/**

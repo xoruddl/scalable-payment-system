@@ -29,7 +29,20 @@ public enum TransferStatus {
 	COMPLETED(3),
 	/** 진행도 -1 = 정상 흐름 위에 있지 않다는 뜻. 어떤 진행도와 비교해도 앞서지 않는다. */
 	COMPENSATING(-1),
-	FAILED(-1);
+	FAILED(-1),
+
+	/**
+	 * 상대 은행에 보냈는데 <b>답이 없다</b> — 들어갔는지 모른다 (Phase 6.5).
+	 *
+	 * <p><b>실패가 아니다.</b> 실패로 처리하면 이미 나간 돈을 환불해 이중 지급이 되고,
+	 * 성공으로 처리하면 안 간 돈을 갔다고 하는 셈이다. 어느 쪽으로도 밀 수 없어서
+	 * <b>제3의 상태</b>가 필요하다.
+	 *
+	 * <p>진행도는 {@code -1}이다 — 정상 흐름 위에 있지 않아서다. 여기서 빠져나가는 길은
+	 * <b>조회로 확인하는 것</b>뿐이고, 확인되면 {@code CREDIT_COMPLETED}나 {@code COMPENSATING}으로
+	 * 간다. 그 전이는 늘 앞선 진행도를 갖는 이벤트로 오므로 {@link #isAheadOf}가 그대로 통과시킨다.
+	 */
+	CREDIT_UNKNOWN(-1);
 
 	private final int progress;
 

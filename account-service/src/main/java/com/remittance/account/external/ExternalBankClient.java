@@ -5,6 +5,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
+import org.springframework.http.HttpStatusCode;
+import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
 
 import java.math.BigDecimal;
@@ -49,11 +51,18 @@ public class ExternalBankClient {
 	 */
 	public ExternalCreditResult credit(String bankCode, UUID transferId, String accountNumber,
 			BigDecimal amount, String currency) {
-		CreditResponse response = clientFor(bankCode).post()
-				.uri("/transfers/{transferId}/credit", transferId)
-				.body(new CreditRequest(accountNumber, amount, currency))
-				.retrieve()
-				.body(CreditResponse.class);
+		CreditResponse response;
+		try {
+			response = clientFor(bankCode).post()
+					.uri("/transfers/{transferId}/credit", transferId)
+					.body(new CreditRequest(accountNumber, amount, currency))
+					.retrieve()
+					.body(CreditResponse.class);
+		} catch (ResourceAccessException noAnswer) {
+			// 답이 없다. <b>처리됐는지 안 됐는지 알 수 없다.</b>
+			// 5xx와 달리 "안 됐다"고 말할 수 없으므로 다시 보내면 안 된다 — 조회해야 한다.
+			throw new ExternalCreditUnknownException(bankCode, transferId, noAnswer);
+		}
 
 		if (response == null) {
 			throw new IllegalStateException("상대 은행이 본문 없는 응답을 줬다 (bank=%s, transferId=%s)"
@@ -63,15 +72,27 @@ public class ExternalBankClient {
 		return new ExternalCreditResult(response.status(), response.reason());
 	}
 
-	/** 타임아웃 뒤 결과를 확인한다. <b>재시도가 아니라 조회다.</b> (Step 2b에서 쓴다) */
+	/**
+	 * 결과를 <b>물어본다.</b> 재시도가 아니라 조회다 — 이 차이가 이 Phase의 전부다.
+	 *
+	 * <p>없는 거래면 404가 오고, 그건 <b>"우리 요청이 도달하지 않았다"</b>는 뜻이다.
+	 * 답이 없으면 여전히 모르는 상태이므로 예외로 나가 다음 주기에 다시 묻는다.
+	 */
 	public ExternalCreditResult inquire(String bankCode, UUID transferId) {
-		CreditResponse response = clientFor(bankCode).get()
-				.uri("/transfers/{transferId}", transferId)
-				.retrieve()
-				.body(CreditResponse.class);
-		return response == null
-				? new ExternalCreditResult(ExternalCreditStatus.NOT_FOUND, null)
-				: new ExternalCreditResult(response.status(), response.reason());
+		try {
+			CreditResponse response = clientFor(bankCode).get()
+					.uri("/transfers/{transferId}", transferId)
+					.retrieve()
+					.onStatus(HttpStatusCode::is4xxClientError, (request, res) -> {
+						// 404는 오류가 아니라 <b>답</b>이다. 예외로 바꾸면 "모른다"와 구분이 사라진다.
+					})
+					.body(CreditResponse.class);
+			return response == null
+					? new ExternalCreditResult(ExternalCreditStatus.NOT_FOUND, null)
+					: new ExternalCreditResult(response.status(), response.reason());
+		} catch (ResourceAccessException noAnswer) {
+			throw new ExternalCreditUnknownException(bankCode, transferId, noAnswer);
+		}
 	}
 
 	private RestClient clientFor(String bankCode) {

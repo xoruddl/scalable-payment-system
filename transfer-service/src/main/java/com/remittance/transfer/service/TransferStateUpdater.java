@@ -71,6 +71,24 @@ public class TransferStateUpdater {
 		transferRepository.save(transfer);
 	}
 
+	/**
+	 * 상대 은행 결과를 <b>모르는 상태</b>로 표시한다 (Phase 6.5).
+	 *
+	 * <p>종결된 송금은 건드리지 않는다 — 뒤늦게 도착한 이벤트가 <b>닫힌 송금을 다시 열면</b>
+	 * 재전송 한 번에 상태가 되돌아간다. 보상 중인 것도 그대로 둔다:
+	 * 이미 되돌리기로 결론이 났는데 "모른다"로 되돌리면 환불이 멈춘다.
+	 */
+	@Transactional
+	public void markCreditUnknown(UUID transferId) {
+		Transfer transfer = findOrThrow(transferId);
+		if (transfer.getStatus().isTerminal() || transfer.getStatus().isCompensating()) {
+			logSkip(transferId, transfer.getStatus(), TransferStatus.CREDIT_UNKNOWN);
+			return;
+		}
+		transfer.markCreditUnknown();
+		transferRepository.save(transfer);
+	}
+
 	/** 실패로 종결하고 그 사실을 이벤트로 남긴다. */
 	@Transactional
 	public void markFailed(UUID transferId, String reason) {

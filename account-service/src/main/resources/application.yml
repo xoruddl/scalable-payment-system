@@ -75,6 +75,16 @@ remittance:
     read-timeout: 3s
     urls:
       KB: http://localhost:8086
+    # 답을 못 받은 건을 다시 물어보는 주기 (Phase 6.5 Step 2b).
+    # 재시도가 아니라 조회다 — 다시 보내는 것은 "안 갔다"를 전제로 하는데 우리는 그걸 모른다.
+    inquiry:
+      interval-ms: 1000
+      # 답 없는 상대를 초당 두드려봐야 소용없다. 지수적으로 늘리되 상한을 둔다 —
+      # 무한정 미루면 풀렸는데도 한참 모른 채로 남는다.
+      base-backoff: 2s
+      max-backoff: 1m
+      # 이만큼 지나도 안 풀리면 사람이 봐야 한다. 고객 돈이 어디 있는지 모르는 상태다.
+      stuck-after: 5m
 
 outbox:
   relay:

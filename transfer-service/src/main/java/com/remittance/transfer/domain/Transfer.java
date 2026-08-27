@@ -162,6 +162,14 @@ public class Transfer {
 		this.status = TransferStatus.COMPENSATING;
 	}
 
+	/**
+	 * 상대 은행 결과를 <b>모른다</b>고 표시한다 (Phase 6.5).
+	 * 실패가 아니다 — 실패로 닫으면 이미 나간 돈을 환불해 이중 지급이 된다.
+	 */
+	public void markCreditUnknown() {
+		this.status = TransferStatus.CREDIT_UNKNOWN;
+	}
+
 	public void markFailed(String reason) {
 		this.status = TransferStatus.FAILED;
 		this.failureReason = reason;

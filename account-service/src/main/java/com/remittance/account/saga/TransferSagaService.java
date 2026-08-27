@@ -7,6 +7,8 @@ import com.remittance.account.exception.CurrencyMismatchException;
 import com.remittance.account.exception.InsufficientBalanceException;
 import com.remittance.account.external.ExternalBankClient;
 import com.remittance.account.external.ExternalCreditResult;
+import com.remittance.account.external.ExternalCreditUnknownException;
+import com.remittance.account.external.PendingExternalCredits;
 import com.remittance.account.settlement.SettlementAccounts;
 import com.remittance.account.messaging.AccountEvents;
 import com.remittance.account.messaging.TransferEvents;
@@ -51,6 +53,7 @@ public class TransferSagaService {
 	private final SagaStepExecutor sagaStepExecutor;
 	private final ExternalBankClient externalBankClient;
 	private final SettlementAccounts settlementAccounts;
+	private final PendingExternalCredits pendingExternalCredits;
 
 	/** 실패했을 때 대신 남길 이벤트. 전진 단계만 갖는다. */
 	private record Fallback(String eventType, Object body) {
@@ -104,9 +107,18 @@ public class TransferSagaService {
 	 * 그래서 원장은 두 다리를 그대로 보고, <b>원장·대사 로직을 하나도 안 고쳐도 된다.</b>
 	 */
 	private void creditExternal(TransferEvents.Debited event) {
-		ExternalCreditResult result = externalBankClient.credit(
-				event.toBankCode(), event.transferId(), event.toAccountNumber(),
-				event.amount(), event.currency());
+		ExternalCreditResult result;
+		try {
+			result = externalBankClient.credit(
+					event.toBankCode(), event.transferId(), event.toAccountNumber(),
+					event.amount(), event.currency());
+		} catch (ExternalCreditUnknownException noAnswer) {
+			// ★ 답이 없다. 여기서 <b>재시도하면 안 된다.</b>
+			// 다시 보내는 것은 "안 갔다"를 전제로 하는데 우리는 그걸 모른다.
+			// 맞는 수단은 조회다 — 기록으로 남기고 확인 루프에 넘긴다.
+			pendingExternalCredits.remember(event);
+			return;
+		}
 
 		if (!result.isAccepted()) {
 			// 상대가 거절했다. 다시 보내도 결과가 같으므로 보상으로 넘어간다 —
@@ -123,6 +135,24 @@ public class TransferSagaService {
 
 		UUID settlementAccountId = settlementAccounts.of(event.toBankCode(), event.currency());
 		creditInternal(event, settlementAccountId);
+	}
+
+	/**
+	 * 조회로 <b>상대가 받았음이 확인된</b> 건을 흐름에 되돌려 놓는다 (Step 2b).
+	 * 타임아웃 직후의 경로와 <b>같은 코드로 끝난다</b> — 확인만 늦게 됐을 뿐 결과는 같기 때문이다.
+	 */
+	public void onExternalCreditAccepted(TransferEvents.Debited event) {
+		UUID settlementAccountId = settlementAccounts.of(event.toBankCode(), event.currency());
+		creditInternal(event, settlementAccountId);
+	}
+
+	/** 조회로 <b>거절이 확인된</b> 건. 출금은 이미 나갔으니 보상으로 넘긴다. */
+	public void onExternalCreditRejected(TransferEvents.Debited event, String reason) {
+		recordFailure(TransferEvents.DEBITED, event.transferId(),
+				new Fallback(TransferEvents.CREDIT_FAILED, new TransferEvents.CreditFailed(
+						event.transferId(), event.fromAccountId(), event.toAccountId(),
+						event.amount(), event.currency(),
+						"상대 은행 거절: " + reason, Timestamps.now())));
 	}
 
 	/** 우리 계좌(고객 계좌 또는 정산 계좌)에 입금한다. 여기부터는 내부·외부가 같다. */
