@@ -54,6 +54,7 @@ public class ExternalCreditProber {
 	private final PendingExternalCreditRepository repository;
 	private final ExternalBankClient externalBankClient;
 	private final ExternalCreditResolver resolver;
+	private final ExternalCallBulkhead bulkhead;
 	private final MeterRegistry meterRegistry;
 
 	/** 다시 묻기까지의 첫 간격. 이후 지수적으로 늘린다. */
@@ -80,6 +81,13 @@ public class ExternalCreditProber {
 
 	@Transactional
 	public void inquireOne(PendingExternalCredit credit) {
+		if (!credit.isSent()) {
+			// 격벽에 막혀 <b>보내지도 못한</b> 건이다. 물어볼 것이 없다 — 보내면 된다.
+			// 조회부터 하면 반드시 NOT_FOUND가 나오므로 왕복 한 번이 그냥 낭비다.
+			sendDeferred(credit);
+			return;
+		}
+
 		ExternalCreditResult result;
 		try {
 			result = externalBankClient.inquire(credit.getBankCode(), credit.getTransferId());
@@ -103,6 +111,34 @@ public class ExternalCreditProber {
 				outcomes("not_found").increment();
 				resolver.onConfirmedNotReceived(credit);
 			}
+		}
+	}
+
+	/**
+	 * 미뤄뒀던 것을 이제 보낸다.
+	 *
+	 * <p>보내는 순간 <b>"안 보냈다"가 끝난다</b> — 답을 받든 못 받든 돈은 나갔을 수 있으므로
+	 * {@code sent}를 먼저 올린다. 순서가 반대면 응답을 기다리다 죽었을 때
+	 * <b>안 보낸 걸로 남아 한 번 더 보내게</b> 된다.
+	 *
+	 * <p>격벽에 또 막히면 그대로 둔다. 다음 주기에 다시 시도한다.
+	 */
+	private void sendDeferred(PendingExternalCredit credit) {
+		credit.markSent();
+		repository.save(credit);
+		try {
+			ExternalCreditResult result = bulkhead.call(() -> externalBankClient.credit(
+					credit.getBankCode(), credit.getTransferId(), credit.getToAccountNumber(),
+					credit.getAmount(), credit.getCurrency()));
+			// 보냈고 답도 받았다. 결론은 다음 조회에 맡긴다 —
+			// <b>결론은 늘 조회로만 낸다</b>는 규칙을 하나로 유지한다.
+			if (result != null) {
+				credit.backOff(Duration.ZERO, Duration.ZERO);
+				repository.save(credit);
+			}
+		} catch (ExternalCallBulkhead.BulkheadFullException | ExternalCreditUnknownException notDone) {
+			// 못 보냈거나 답이 없다. sent는 이미 올렸으므로 이제부터는 조회로만 결론짓는다.
+			pushBack(credit);
 		}
 	}
 

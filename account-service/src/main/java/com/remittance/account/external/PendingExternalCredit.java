@@ -53,6 +53,21 @@ public class PendingExternalCredit {
 	@Column(nullable = false, updatable = false)
 	private BigDecimal fromBalanceAfter;
 
+	/**
+	 * <b>상대에게 보내기는 했나.</b>
+	 *
+	 * <p>둘은 전혀 다른 상태다.
+	 * <ul>
+	 *   <li>{@code true} — 보냈는데 답이 없다. <b>돈이 나갔을 수 있다.</b> 조회로 확인한다</li>
+	 *   <li>{@code false} — 격벽에 막혀 <b>보내지도 못했다.</b> 돈은 안 나갔다. 그냥 보내면 된다</li>
+	 * </ul>
+	 *
+	 * <p>섞으면 안 된다. 안 보낸 건을 "모른다"고 알리면 <b>없는 사고를 보고하는 것</b>이고,
+	 * 보낸 건을 "안 보냈다"고 보면 <b>이중 지급</b>이 된다.
+	 */
+	@Column(nullable = false)
+	private boolean sent;
+
 	/** 몇 번 물어봤나. 오래 안 풀리는 건을 가려내는 데 쓴다. */
 	@Column(nullable = false)
 	private int inquiries;
@@ -65,7 +80,8 @@ public class PendingExternalCredit {
 	private Instant createdAt;
 
 	public PendingExternalCredit(UUID transferId, String bankCode, String toAccountNumber,
-			UUID fromAccountId, BigDecimal amount, String currency, BigDecimal fromBalanceAfter) {
+			UUID fromAccountId, BigDecimal amount, String currency, BigDecimal fromBalanceAfter,
+			boolean sent) {
 		this.transferId = transferId;
 		this.bankCode = bankCode;
 		this.toAccountNumber = toAccountNumber;
@@ -73,6 +89,7 @@ public class PendingExternalCredit {
 		this.amount = amount;
 		this.currency = currency;
 		this.fromBalanceAfter = fromBalanceAfter;
+		this.sent = sent;
 		this.inquiries = 0;
 		this.createdAt = Timestamps.now();
 		this.nextInquiryAt = this.createdAt;
@@ -88,6 +105,11 @@ public class PendingExternalCredit {
 		this.inquiries++;
 		long millis = Math.min(base.toMillis() << Math.min(inquiries, 10), max.toMillis());
 		this.nextInquiryAt = Timestamps.now().plusMillis(millis);
+	}
+
+	/** 보냈다고 표시한다. 이제부터는 조회로만 결론을 낸다. */
+	public void markSent() {
+		this.sent = true;
 	}
 
 	/** 만들어진 뒤 이만큼 지나도 안 풀렸는가. 사람이 봐야 하는 건을 가린다. */

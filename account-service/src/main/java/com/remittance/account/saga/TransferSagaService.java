@@ -7,6 +7,7 @@ import com.remittance.account.exception.CurrencyMismatchException;
 import com.remittance.account.exception.InsufficientBalanceException;
 import com.remittance.account.external.ExternalBankClient;
 import com.remittance.account.external.ExternalCreditResult;
+import com.remittance.account.external.ExternalCallBulkhead;
 import com.remittance.account.external.ExternalCreditUnknownException;
 import com.remittance.account.external.PendingExternalCredits;
 import com.remittance.account.settlement.SettlementAccounts;
@@ -54,6 +55,7 @@ public class TransferSagaService {
 	private final ExternalBankClient externalBankClient;
 	private final SettlementAccounts settlementAccounts;
 	private final PendingExternalCredits pendingExternalCredits;
+	private final ExternalCallBulkhead bulkhead;
 
 	/** 실패했을 때 대신 남길 이벤트. 전진 단계만 갖는다. */
 	private record Fallback(String eventType, Object body) {
@@ -109,14 +111,21 @@ public class TransferSagaService {
 	private void creditExternal(TransferEvents.Debited event) {
 		ExternalCreditResult result;
 		try {
-			result = externalBankClient.credit(
+			// 격벽. 자리가 없으면 <b>기다리지 않고</b> 거절한다 —
+			// 기다리면 스레드가 묶이는 것은 똑같아서 격벽의 의미가 사라진다.
+			result = bulkhead.call(() -> externalBankClient.credit(
 					event.toBankCode(), event.transferId(), event.toAccountNumber(),
-					event.amount(), event.currency());
+					event.amount(), event.currency()));
+		} catch (ExternalCallBulkhead.BulkheadFullException noRoom) {
+			// 보내지도 못했다. <b>돈은 안 나갔다</b> — 사고가 아니라 미룬 것이다.
+			// 내부 송금이 쓸 스레드를 지키려고 일부러 여기서 멈춘다.
+			pendingExternalCredits.rememberUnsent(event);
+			return;
 		} catch (ExternalCreditUnknownException noAnswer) {
 			// ★ 답이 없다. 여기서 <b>재시도하면 안 된다.</b>
 			// 다시 보내는 것은 "안 갔다"를 전제로 하는데 우리는 그걸 모른다.
 			// 맞는 수단은 조회다 — 기록으로 남기고 확인 루프에 넘긴다.
-			pendingExternalCredits.remember(event);
+			pendingExternalCredits.rememberUnknown(event);
 			return;
 		}
 

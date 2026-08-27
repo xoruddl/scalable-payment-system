@@ -56,6 +56,9 @@ class UnknownCreditTest extends AbstractIntegrationTest {
 	private ExternalCreditProber prober;
 
 	@Autowired
+	private ExternalCallBulkhead bulkhead;
+
+	@Autowired
 	private PendingExternalCreditRepository pending;
 
 	@Autowired
@@ -92,6 +95,15 @@ class UnknownCreditTest extends AbstractIntegrationTest {
 	 * <p><b>이 테스트의 건만</b> 본다. 컨테이너 DB를 여러 테스트가 공유하므로
 	 * {@code findAll()}로 돌리면 남의 행까지 확인하려 든다 — 실제로 그렇게 깨졌다.
 	 */
+	private static boolean awaitQuietly(java.util.concurrent.CountDownLatch latch) {
+		try {
+			return latch.await(10, java.util.concurrent.TimeUnit.SECONDS);
+		} catch (InterruptedException e) {
+			Thread.currentThread().interrupt();
+			return false;
+		}
+	}
+
 	private void runProber(UUID transferId) {
 		prober.inquireOne(pending.findById(transferId).orElseThrow());
 	}
@@ -173,6 +185,77 @@ class UnknownCreditTest extends AbstractIntegrationTest {
 		assertThat(pending.findById(transferId))
 				.as("보냈다고 결론이 난 것은 아니다. 결론은 늘 조회로만 낸다")
 				.isPresent();
+	}
+
+	@Test
+	void 격벽에_막히면_보내지_않은_것으로_기록하고_알리지_않는다() {
+		// 격벽 정원을 다 채워둔다.
+		java.util.concurrent.CountDownLatch hold = new java.util.concurrent.CountDownLatch(1);
+		java.util.concurrent.CountDownLatch occupied = new java.util.concurrent.CountDownLatch(2);
+		try (java.util.concurrent.ExecutorService pool =
+				java.util.concurrent.Executors.newFixedThreadPool(2)) {
+			for (int i = 0; i < 2; i++) {
+				pool.submit(() -> bulkhead.call(() -> {
+					occupied.countDown();
+					try {
+						hold.await(10, java.util.concurrent.TimeUnit.SECONDS);
+					} catch (InterruptedException e) {
+						Thread.currentThread().interrupt();
+					}
+					return null;
+				}));
+			}
+			assertThat(awaitQuietly(occupied)).isTrue();
+
+			UUID transferId = UUID.randomUUID();
+			transferSagaService.onDebited(debited(transferId, fundedAccount(100_000)));
+
+			PendingExternalCredit saved = pending.findById(transferId).orElseThrow();
+			assertThat(saved.isSent())
+					.as("보내지도 못했다 — 돈은 안 나갔다")
+					.isFalse();
+			assertThat(outboxEventRepository.findByAggregateIdOrderByIdAsc(transferId))
+					.as("안 보낸 건을 '모른다'고 알리면 없는 사고를 보고하는 것이다")
+					.isEmpty();
+			verify(externalBankClient, never()).credit(any(), eq(transferId), any(), any(), any());
+			hold.countDown();
+		}
+	}
+
+	@Test
+	void 미전송_건은_조회하지_않고_보낸다() {
+		java.util.concurrent.CountDownLatch hold = new java.util.concurrent.CountDownLatch(1);
+		java.util.concurrent.CountDownLatch occupied = new java.util.concurrent.CountDownLatch(2);
+		UUID transferId = UUID.randomUUID();
+		try (java.util.concurrent.ExecutorService pool =
+				java.util.concurrent.Executors.newFixedThreadPool(2)) {
+			for (int i = 0; i < 2; i++) {
+				pool.submit(() -> bulkhead.call(() -> {
+					occupied.countDown();
+					try {
+						hold.await(10, java.util.concurrent.TimeUnit.SECONDS);
+					} catch (InterruptedException e) {
+						Thread.currentThread().interrupt();
+					}
+					return null;
+				}));
+			}
+			assertThat(awaitQuietly(occupied)).isTrue();
+			transferSagaService.onDebited(debited(transferId, fundedAccount(100_000)));
+			hold.countDown();
+		}
+		Mockito.clearInvocations(externalBankClient);
+		given(externalBankClient.credit(eq(bank), eq(transferId), any(), any(), any()))
+				.willReturn(new ExternalCreditResult(ExternalCreditStatus.ACCEPTED, null));
+
+		runProber(transferId);
+
+		// 조회부터 하면 반드시 NOT_FOUND가 나온다 — 왕복 한 번이 그냥 낭비다.
+		verify(externalBankClient, never()).inquire(any(), eq(transferId));
+		verify(externalBankClient).credit(eq(bank), eq(transferId), any(), any(), any());
+		assertThat(pending.findById(transferId).orElseThrow().isSent())
+				.as("보냈으면 이제부터는 조회로만 결론짓는다 — 아니면 이중 지급이 된다")
+				.isTrue();
 	}
 
 	@Test

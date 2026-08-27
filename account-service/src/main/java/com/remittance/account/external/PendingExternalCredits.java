@@ -37,25 +37,46 @@ public class PendingExternalCredits {
 	private final MeterRegistry meterRegistry;
 
 	/**
-	 * 이 건은 <b>모르는 상태</b>다 — 기록하고 알린다.
-	 *
-	 * <p>같은 이벤트가 재배달되면 여기 또 들어올 수 있다. 이미 있으면 덮어쓰지 않는다 —
-	 * 덮어쓰면 {@code nextInquiryAt}이 되돌아가 확인이 처음부터 다시 시작된다.
+	 * 보냈는데 <b>답을 못 받았다</b> — 기록하고 알린다.
 	 */
 	@Transactional
-	public void remember(TransferEvents.Debited event) {
-		if (repository.existsById(event.transferId())) {
-			log.debug("이미 확인 대기 중인 건이다 (transferId={})", event.transferId());
+	public void rememberUnknown(TransferEvents.Debited event) {
+		if (!save(event, true)) {
 			return;
 		}
-		repository.save(new PendingExternalCredit(
-				event.transferId(), event.toBankCode(), event.toAccountNumber(),
-				event.fromAccountId(), event.amount(), event.currency(), event.fromBalanceAfter()));
-
+		// 보냈는데 답이 없다 = 돈이 나갔을 수 있다. 이건 밖으로 알려야 한다.
 		announceUnknown(event);
 		log.warn("상대 은행이 답하지 않아 결과를 모른다 - 조회로 확인한다 "
 				+ "(bank={}, transferId={}, amount={})",
 				event.toBankCode(), event.transferId(), event.amount());
+	}
+
+	/**
+	 * 격벽에 막혀 <b>보내지도 못했다.</b> 기록만 하고 <b>알리지 않는다</b> —
+	 * 돈은 안 나갔으므로 "모르는 상태"가 아니다.
+	 * 안 보낸 건을 사고로 알리면 <b>없는 사고를 보고하는 것</b>이 된다.
+	 */
+	@Transactional
+	public void rememberUnsent(TransferEvents.Debited event) {
+		if (save(event, false)) {
+			log.info("외부 호출 자리가 없어 미뤘다 - 내부 송금을 막지 않기 위해서다 "
+					+ "(bank={}, transferId={})", event.toBankCode(), event.transferId());
+		}
+	}
+
+	/** @return 새로 만들었으면 {@code true}. 이미 있으면 건드리지 않는다. */
+	private boolean save(TransferEvents.Debited event, boolean sent) {
+		if (repository.existsById(event.transferId())) {
+			// 덮어쓰면 nextInquiryAt이 되돌아가 확인이 처음부터 다시 시작된다.
+			// 무엇보다 sent=true를 false로 되돌리면 이미 나간 돈을 다시 보내게 된다.
+			log.debug("이미 대기 중인 건이다 (transferId={})", event.transferId());
+			return false;
+		}
+		repository.save(new PendingExternalCredit(
+				event.transferId(), event.toBankCode(), event.toAccountNumber(),
+				event.fromAccountId(), event.amount(), event.currency(),
+				event.fromBalanceAfter(), sent));
+		return true;
 	}
 
 	/** 확인이 끝났다. 더 물어볼 이유가 없다. */
@@ -86,7 +107,7 @@ public class PendingExternalCredits {
 	@PostConstruct
 	void 미해소_건수를_지표로_낸다() {
 		Gauge.builder("remittance.external.credit.unknown", repository, PendingExternalCreditRepository::count)
-				.description("상대 은행이 답하지 않아 결과를 모르는 입금 건수")
+				.description("상대 은행 결과를 아직 결론짓지 못한 입금 건수 (미전송 포함)")
 				.register(meterRegistry);
 	}
 }
