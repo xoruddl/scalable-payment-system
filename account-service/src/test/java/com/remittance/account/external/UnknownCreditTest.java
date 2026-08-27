@@ -9,6 +9,7 @@ import com.remittance.account.outbox.OutboxEventRepository;
 import com.remittance.account.repository.AccountRepository;
 import com.remittance.account.saga.TransferSagaService;
 import com.remittance.account.service.AccountService;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -17,7 +18,9 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
+import java.util.stream.IntStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -25,6 +28,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.willThrow;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
 /**
@@ -276,5 +280,30 @@ class UnknownCreditTest extends AbstractIntegrationTest {
 				.as("몇 번 물어봤는지가 오래 안 풀리는 건을 가리는 근거다")
 				.isEqualTo(1);
 		verify(externalBankClient, never()).credit(any(), any(), any(), any(), any());
+	}
+
+	@Test
+	@Tag("reproduction")
+	void 상대가_계속_답하지_않으면_호출을_멈추고_나머지는_미전송으로_남긴다() {
+		given(externalBankClient.credit(eq(bank), any(), any(), any(), any()))
+				.willThrow(new ExternalCreditUnknownException(
+						bank, UUID.randomUUID(), new RuntimeException("timeout")));
+		UUID from = fundedAccount(500_000);
+		List<UUID> transferIds = IntStream.range(0, 10)
+				.mapToObj(ignored -> UUID.randomUUID())
+				.toList();
+
+		transferIds.forEach(transferId -> transferSagaService.onDebited(debited(transferId, from)));
+
+		verify(externalBankClient, times(5))
+				.credit(eq(bank), any(), eq(THEIR_ACCOUNT), any(), any());
+		assertThat(transferIds)
+				.allSatisfy(transferId -> assertThat(pending.findById(transferId)).isPresent());
+		assertThat(transferIds.stream()
+				.flatMap(transferId -> outboxEventRepository
+						.findByAggregateIdOrderByIdAsc(transferId).stream())
+				.filter(event -> TransferEvents.CREDIT_UNKNOWN.equals(event.getEventType())))
+				.as("처음 5건만 보냈다가 답을 못 받았다. 차단된 5건은 보내지 않았으므로 모르는 상태가 아니다")
+				.hasSize(5);
 	}
 }
