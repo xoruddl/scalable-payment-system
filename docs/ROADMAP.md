@@ -550,15 +550,20 @@ GET  /transfers/{transferId}           거래 조회 — 타임아웃 뒤에 결
 
 ### 상대 은행 서비스 (Kotlin)
 
-- [ ] `external-bank-service` 모듈 (포트 8086, `external_bank_db`)
-- [ ] `transferId` 멱등 입금 + 거래 조회 API
-- [ ] 위 네 스위치를 런타임에 바꿀 수 있게 — **같은 jar로 A/B를 재기 위해서**
-      (`account.lock.strategy`, `SHARDS`와 같은 규칙)
-- [ ] **이벤트 계약은 기존과 똑같이 JSON.** 언어가 달라도 계약만 맞으면 된다는 것을 확인
-- [ ] `MetricsDistributionConfig`·`KafkaErrorHandlingConfig`의 **여섯 번째 복사본** (Kotlin으로)
-- [ ] 함께 손봐야 하는 곳: `scripts/homelab-services.sh`의 `SERVICES`,
-      `docker/prometheus/prometheus.yml`(+homelab) 스크랩 타깃,
-      그리고 **"다섯 서비스"가 박혀 있는 문서·주석 10곳**
+- [x] `external-bank-service` 모듈 (포트 8086, `external_bank_db`) ✅ `c0a6251`
+- [x] `transferId` 멱등 입금 + 거래 조회 API ✅
+- [x] 네 스위치를 런타임에 바꿀 수 있게 (`POST /faults`) ✅
+- [x] **홈서버에서 진짜 HTTP·진짜 타임아웃으로 확인** ✅ — `timeoutRate=1`로 보내니
+      curl은 28(타임아웃)로 끊겼는데 **DB에는 입금이 남아 있었다.**
+      5xx는 0건(재시도 안전), 거절은 다시 보내도 REJECTED
+- [x] `MetricsDistributionConfig`의 **여섯 번째 복사본** (Kotlin으로) ✅ —
+      이 서비스만 버킷 상한이 60초다. 일부러 30초를 매달아 두는 상대라 그 구간을 봐야 한다.
+      `KafkaErrorHandlingConfig`는 **필요 없다** — 이 서비스는 Kafka를 안 쓴다(HTTP만)
+- [x] 배선 ✅ `37fb412` — `homelab-services.sh`(`SERVICES`·`bootJar`),
+      Prometheus 타깃, `01-databases.sql`.
+      ⚠️ **파일 하나를 바인드 마운트하면 내용을 고쳐도 반영되지 않는다.**
+      git이 파일을 새로 쓰면 컨테이너는 옛 inode를 붙들고 있고, `/-/reload`도 소용없다 —
+      컨테이너를 다시 만들어야 했다
 
 ### 측정에 생기는 변화
 
