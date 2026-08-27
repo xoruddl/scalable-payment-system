@@ -49,7 +49,8 @@ Phase 6.5 🔄 상대 은행 (Kotlin, HTTP)  ← 지금 여기
              스케줄러 풀 1 ⚠️ 조회 루프가 Outbox 릴레이를 굶겨 전부 멈췄던 것을 고침
              리스너 분리 ✅   내부 p99 2,587ms · 성공률 1.00 — 상대가 죽어도 우리 일은 멀쩡
              회로 차단기 ✅    5회 연속 실패 뒤 은행별 OPEN. 조회 GET은 계속 허용한다
-                              → 다음: 직접 만든 격벽·회로 차단기를 Resilience4j로 교체
+             Resilience4j ✅   직접 만든 상태 머신·Semaphore를 표준 구현으로 교체 (D-002)
+                              → 다음: 홈서버에서 같은 장애 시나리오 재측정
 Phase 4       미착수 — Gateway·Config
 Phase 6.6~13  미착수 — 컨테이너·K8s는 그 뒤
 ```
@@ -68,7 +69,7 @@ Phase 6.6~13  미착수 — 컨테이너·K8s는 그 뒤
 
 **측정 환경**: 홈서버(집 안이면 `ssh home1`, 집 밖이면 `ssh home2`).
 **노트북에서 잰 값은 성능 숫자로 쓰지 않습니다** (`HOMELAB.md`).
-**빌드 상태**: 🟢 `./gradlew test` 통과 (테스트 530건)
+**빌드 상태**: 🟢 `./gradlew test` 통과 (테스트 532건)
 **스키마**: 🟢 Flyway가 만듭니다 (`*/src/main/resources/db/migration`). `ddl-auto`는 `validate`뿐 —
 **엔티티에 컬럼을 더하면 마이그레이션 파일도 함께 써야 기동됩니다** (원장은 MongoDB라 아직 예외).
 **관측**: 🟢 `docker compose up -d prometheus grafana` → http://localhost:3000
@@ -4442,6 +4443,51 @@ CLOSED, 실패하면 다시 OPEN입니다. 회로는 은행별이라 한 상대�
 
 다음 Step은 직접 만든 `Semaphore` 격벽과 이 상태 머신을 Resilience4j로 교체하는 것입니다.
 동작 계약은 지금 만든 테스트가 그대로 지킵니다.
+
+---
+
+## 직접 만든 장애 격리를 Resilience4j로 교체했다
+
+**커밋**: `ccb3175` · **결정**: `DECISIONS.md` D-002
+
+직접 만든 `Semaphore` 격벽과 은행별 CLOSED → OPEN → HALF_OPEN 상태 머신을
+Resilience4j 2.4.0의 `Bulkhead`와 `CircuitBreaker`로 교체했습니다. Spring Boot 4용 자동 설정에
+기대지 않고 필요한 코어 모듈과 Micrometer 연동만 직접 조립했습니다.
+
+### 동작 계약은 바꾸지 않았다
+
+- 격벽은 정원 8을 넘으면 기다리지 않고 즉시 거절한다 (`maxWaitDuration=0`)
+- 회로는 은행별이며 최근 5건이 전부 실패했을 때 열린다. count window 5 + 실패율 100%라
+  중간 성공 한 건이 연속 실패를 끊는다
+- OPEN 30초 뒤 HALF_OPEN 시험은 한 건만 허용한다
+- 조회 GET은 회로를 우회하고 격벽·백오프만 적용한다
+- 차단된 호출은 `sent=false`, 허가된 호출만 HTTP 직전에 `sent=true`로 저장한다
+- HTTP 전 DB 실패와 알 수 없는 은행 주소는 상대 은행 실패율에 넣지 않는다
+
+마지막 두 계약 때문에 애너테이션만 붙이지 않았습니다. 회로 허가를 얻은 뒤 `sent=true`를
+영속화하고, 그 로컬 작업이 실패하면 허가를 반환해야 해서 Resilience4j의 저수준 permission API를
+작은 어댑터 안에서 사용합니다.
+
+### 검증
+
+- 회로 차단기 9건 + 격벽 5건: 상태 전이, 은행 격리, 단일 HALF_OPEN 시험, 즉시 거절,
+  허가 반환, 표준 Micrometer 지표
+- 통합 테스트: 10건 연속 타임아웃에서 HTTP 5회, `sent=true` 5건, 미전송 5건 유지
+- 최초 전송 경로에서 회로를 잠시 우회하자 같은 테스트가 `TooManyActualInvocations`로 red,
+  원복 후 green
+- `./gradlew test`: **532건 전체 통과**, 2분 58초
+
+### 겪은 것
+
+- 테스트용 시계 생성자를 추가하자 Spring이 기본 생성자를 찾다가 컨텍스트가 실패했습니다.
+  운영 생성자를 `@Autowired`로 명시해 해결했습니다.
+- Resilience4j의 OPEN 종료 판단은 `Clock`을 봅니다. 시스템 시각 보정으로 30초가 흔들리지 않도록
+  기동 시각에 `System.nanoTime()` 경과량을 더하는 단조 증가 `Clock`을 넣었습니다.
+- 표준 지표 이름은 자체 `remittance.external.*`에서 `resilience4j.circuitbreaker.*`와
+  `resilience4j.bulkhead.*`로 바뀌었습니다. Phase 9 대시보드는 이 이름을 기준으로 만듭니다.
+
+다음 Step은 홈서버에서 직접 구현 때와 같은 느린 상대·연속 실패 시나리오를 재측정하는 것입니다.
+라이브러리 교체는 기능 회귀만 확인했고, 성능이 같다는 주장은 아직 하지 않습니다.
 
 ---
 

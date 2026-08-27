@@ -175,6 +175,101 @@ unique를 떼고 테스트했을 때 **컨테이너가 새로 떴기 때문에**
 - 원장(ledger)은 MongoDB라 이 작업에서 빠집니다. 같은 문제(`MongoIndexInitializer`가
   기동할 때 인덱스를 만든다)가 남아 있고, **Mongock**으로 Phase 7에 옮깁니다.
 
+### D-002 · 직접 만든 격벽·회로 차단기를 Resilience4j로 (Phase 6.5)
+
+**면접 한 줄**: "느린 상대가 내부 송금 p99를 3,071 → 58,790ms로 악화시키는 것을 재현한 뒤
+`Semaphore` 격벽과 은행별 회로 차단기를 직접 만들었습니다. 필요한 계약을 테스트로 고정한 뒤
+Resilience4j로 교체해 표준 상태 머신과 Micrometer 지표를 얻었습니다. 대신 라이브러리 동작이
+블랙박스가 되고, 송금의 `sent` 경계를 지키기 위한 저수준 어댑터는 남습니다."
+
+**바꾼 것**: 직접 만든 `Semaphore` + CLOSED/OPEN/HALF_OPEN 상태 머신 →
+`Resilience4j 2.4.0` Bulkhead/CircuitBreaker/Micrometer  ·  **커밋**: `ccb3175`
+
+#### ① 어떤 문제가 있었나
+
+상대 은행이 2초 느려지자 아무 관계 없는 내부 송금 종결 p99가 **3,071 → 58,790ms**,
+종결 성공률이 **1.00 → 0.53**으로 떨어졌습니다. 외부 6건/s × 2초 = 12 스레드-초/초인데
+리스너 스레드는 6개라 외부 호출만으로 전부 점유했기 때문입니다.
+
+리스너 분리·격벽·회로 차단기로 장애 전파는 막았지만 최종 코드가 직접 만든 동시성·상태 머신과
+자체 지표에 기대고 있었습니다. 상태 전이 경합, HALF_OPEN 허가 반환, 지표 누락을 앞으로도 우리가
+검증하고 유지해야 하는 형태였습니다.
+
+#### ② 자체 구현이 가르쳐준 것
+
+- **격벽 거절은 실패가 아니라 미전송입니다.** 기다리면 스레드를 지킨다는 목적이 사라지므로
+  정원이 차면 즉시 거절하고 `sent=false`로 남겨야 합니다.
+- **회로는 은행별이어야 합니다.** KB 장애가 정상인 SH 송금까지 막으면 장애 격리가 아닙니다.
+- **POST와 GET의 목적이 다릅니다.** 새 입금 POST는 차단하지만, 이미 보낸 돈을 확인하는 GET은
+  회로를 우회해야 `CREDIT_UNKNOWN`을 해소할 수 있습니다.
+- `sent=true`는 회로 허가 뒤, HTTP 직전에 영속화해야 합니다. 더 빠르면 안 보낸 돈을 보냈다고
+  기록하고, 더 늦으면 응답 대기 중 프로세스가 죽을 때 이중 전송할 수 있습니다.
+
+이 계약을 먼저 알아냈기 때문에 라이브러리의 기본 데코레이터를 그대로 붙이지 않고,
+어디서 허가를 얻고 반환해야 하는지 결정할 수 있었습니다.
+
+#### ③ 어떤 대안을 봤나
+
+| 후보 | 판단 |
+|---|---|
+| **Resilience4j 코어 모듈** | ← 채택. 필요한 패턴만 골라 쓰고, 은행별 registry와 [표준 Micrometer 지표](https://resilience4j.readme.io/docs/micrometer)를 제공 |
+| Spring Cloud CircuitBreaker | 구현체 교체 추상화가 장점이지만 구현체를 바꿀 계획이 없고, `sent` 경계에 필요한 저수준 허가 제어가 가려짐 |
+| 직접 구현 유지 | 도메인 계약은 가장 잘 보이지만 상태 머신·동시성·지표의 장기 유지 책임이 계속 우리에게 남음 |
+| Resilience4j Spring Boot 스타터 | Spring Boot 4 지원이 아직 명확하지 않고 AOP 자동 설정이 필요 없음. 코어 세 모듈만 직접 조립 |
+
+Resilience4j는 semaphore 방식과 thread-pool 방식을 모두 제공하지만, 이미 Kafka 리스너 풀을
+분리했습니다. 별도 실행기와 큐를 하나 더 만드는 thread-pool bulkhead 대신 호출 스레드 수만
+제한하는 [semaphore bulkhead](https://resilience4j.readme.io/docs/bulkhead)를 골랐습니다.
+
+#### ④ 왜 이걸 골랐나
+
+필요한 것은 재시도나 타임리미터 묶음이 아니라 **격벽과 회로 차단기 두 개**입니다.
+Resilience4j는 모듈 단위라 필요한 것만 넣을 수 있고, `CircuitBreakerRegistry`로 은행별 회로를
+동적으로 만들며, Micrometer registry에 새 회로도 자동 등록합니다.
+
+직접 구현의 "5회 연속 실패"는 count-based window 5 + minimum calls 5 + failure rate 100%로
+옮겼습니다. 최근 5건에 성공이 하나라도 있으면 100%가 아니므로 열리지 않고, 그 성공이 window에서
+밀려난 다섯 번째 연속 실패에서 열립니다. OPEN 30초와 HALF_OPEN 한 건도 설정으로 그대로 보입니다.
+
+버전은 당시 최신 안정 릴리스인 [2.4.0](https://github.com/resilience4j/resilience4j/releases/tag/v2.4.0)을
+명시했습니다. Spring Boot BOM이 관리하지 않아 세 모듈의 버전을 함께 고정했습니다.
+
+#### ⑤ 무엇을 포기했나  ★
+
+- 직접 구현보다 **내부 상태 전이가 블랙박스**입니다. 설정 조합이 곧 동작이라,
+  `slidingWindowSize`와 `failureRateThreshold`의 관계를 모르면 "연속 실패"가 조용히 바뀝니다.
+- `sent` 영속화가 회로 허가와 HTTP 사이에 있어야 하므로 **저수준 permission API 어댑터는
+  남습니다.** 애너테이션 한 줄짜리 구성은 포기했습니다.
+- 의존성 세 개와 버전 관리가 생겼습니다. 특히 Boot 4용 스타터 자동 설정을 쓰지 않아 registry와
+  Micrometer 바인딩도 코드에서 직접 합니다.
+- 지표 이름이 자체 `remittance.external.*`에서 `resilience4j.*`로 바뀌었습니다. 기존 대시보드가
+  있었다면 함께 마이그레이션해야 합니다(현재는 Phase 9 대시보드 전이라 비용이 작습니다).
+- 회로 이름에 은행 코드가 들어가므로 은행 코드가 무제한이면 시계열 cardinality가 늘어납니다.
+  지금은 설정에 등록된 유한한 은행만 호출할 수 있다는 전제가 있습니다.
+
+#### ⑥ 어떻게 확인했나
+
+| 무엇 | 어떻게 | 결과 |
+|---|---|---|
+| 격벽 계약 | 정원 초과 동시 호출, 예외 후 허가 반환 | 즉시 `BulkheadFullException`, 다음 호출 정상 |
+| 회로 계약 | 실패·성공·은행 격리·가상 시간·동시 HALF_OPEN 시험 | 5회 연속 실패, 30초 OPEN, 시험 한 건 유지 |
+| 송금 경계 | 10건 연속 타임아웃 통합 테스트 | HTTP 5회, `sent=true` 5건, 미전송 5건 |
+| 테스트 유효성 | 최초 전송 경로에서 회로를 잠시 우회 | `TooManyActualInvocations`로 red, 원복 후 green |
+| 관측 | 표준 Micrometer meter 이름·태그 검증 | 회로 거절, 상태, 격벽 정원·남은 허가 노출 |
+| 전체 회귀 | `./gradlew test` | **532건 green**, 2분 58초 |
+
+성능은 아직 비교하지 않았습니다. 다음 Step에서 직접 구현 때와 같은 홈서버 장애 시나리오로
+재측정하기 전까지 **"Resilience4j가 더 빠르다"고 말하지 않습니다.**
+
+#### 겪은 것
+
+- 테스트용 시계 생성자를 추가하자 Spring이 생성자를 고르지 못해 기본 생성자를 찾았습니다.
+  운영 생성자를 `@Autowired`로 명시했습니다.
+- Resilience4j OPEN 상태는 `Clock`으로 종료 시각을 계산합니다. NTP 같은 벽시계 보정으로
+  30초가 흔들리지 않도록 기동 시각에 `System.nanoTime()` 경과량을 더하는 단조 시계를 넣었습니다.
+- 대기시간 경계는 정확히 같은 시각이 아니라 **지난 뒤** 허용됐습니다. 가상 시간을 1ms 더
+  전진시켜 실제 OPEN → HALF_OPEN 전이를 sleep 없이 검증했습니다.
+
 <details>
 <summary><b>기록 양식</b> — 면접 질문 순서 그대로 (펼치기)</summary>
 
@@ -223,8 +318,9 @@ unique를 떼고 테스트했을 때 **컨테이너가 새로 떴기 때문에**
 | 2 | 폴링 Outbox 릴레이 | **Debezium (CDC)** | Phase 6 | **Phase 5 baseline** |
 | 3 | `SET NX PX` + Lua | **Redisson** | Phase 6 | **Phase 6 핫 계좌 실험** |
 | ~~4~~ | ~~`ddl-auto: update`~~ | **Flyway** ✅ | ~~Phase 7 전~~ → **Phase 6에서 완료** | → **D-001** |
-| 5 | 맨 `@Scheduled` | **ShedLock** | Phase 8 **전** | HPA를 켜는 순간 |
-| 6 | Choreography Saga | **Temporal / Camunda 8** | Phase 12 | 흐름이 안 보임, 타임아웃 없음 |
+| ~~5~~ | ~~직접 만든 격벽·회로 차단기~~ | **Resilience4j** ✅ | **Phase 6.5에서 완료** | → **D-002** |
+| 6 | 맨 `@Scheduled` | **ShedLock** | Phase 8 **전** | HPA를 켜는 순간 |
+| 7 | Choreography Saga | **Temporal / Camunda 8** | Phase 12 | 흐름이 안 보임, 타임아웃 없음 |
 
 > **2·3번은 순서가 바뀌었습니다.** 전에는 "Phase 5에서 Redisson, Phase 10에서 Debezium"이었는데,
 > **측정을 앞으로 당기면서(Phase 5) 둘 다 "숫자로 병목을 확인한 뒤"인 Phase 6으로** 모였습니다.
