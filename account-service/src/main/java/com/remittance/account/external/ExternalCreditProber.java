@@ -85,7 +85,36 @@ public class ExternalCreditProber {
 				.findByNextInquiryAtBeforeOrderByNextInquiryAtAsc(
 						com.remittance.account.support.Timestamps.now(), Limit.of(BATCH));
 		for (PendingExternalCredit credit : pending) {
-			inquireOne(credit);
+			try {
+				inquireOne(credit);
+			} catch (RuntimeException unexpected) {
+				skipAfterFailure(credit, unexpected);
+			}
+		}
+	}
+
+	/**
+	 * 예상 못 한 실패다 — <b>답이 없는 것도, 결론도 아닌</b> 것이 여기로 온다.
+	 * 상대의 5xx가 대표적이고({@code isNoAnswer}가 false로 거른다), 주소를 모르는 은행도 그렇다.
+	 *
+	 * <h2>한 건이 줄 전체를 막는다 ★</h2>
+	 * 그냥 두면 두 가지가 같이 나빠진다. 예외가 루프 밖으로 나가 이 tick의 <b>남은 건들이
+	 * 통째로 건너뛰어지고</b>, 실패한 건은 {@code nextInquiryAt}이 그대로라 다음 tick에도
+	 * <b>맨 앞에 다시 선다</b>(조회는 그 시각 오름차순이다). 같은 실패가 반복되면
+	 * 뒤에 선 건들은 영영 조회되지 않는다 — <b>모르는 돈이 한 건 때문에 계속 모르는 채로</b> 남는다.
+	 *
+	 * <p>그래서 이 건만 뒤로 밀고 다음으로 간다. 결론은 내지 않는다 — 무엇이 일어났는지
+	 * 모르는 상태 그대로 다음 주기에 다시 묻는다.
+	 */
+	private void skipAfterFailure(PendingExternalCredit credit, RuntimeException failure) {
+		errors().increment();
+		log.warn("상대 은행 확인이 예상 못 한 실패로 끝났다 - 이 건만 미루고 다음으로 간다 "
+				+ "(bank={}, transferId={})", credit.getBankCode(), credit.getTransferId(), failure);
+		try {
+			pushBack(credit);
+		} catch (RuntimeException pushBackFailed) {
+			// 미루는 것조차 실패했다. 여기서 루프를 세우면 처음 문제로 돌아가므로 다음 건으로 간다.
+			log.error("미루기도 실패했다 (transferId={})", credit.getTransferId(), pushBackFailed);
 		}
 	}
 
@@ -202,12 +231,23 @@ public class ExternalCreditProber {
 		outcomes("accepted");
 		outcomes("rejected");
 		outcomes("not_found");
+		errors();
 	}
 
 	private Counter outcomes(String outcome) {
 		return Counter.builder("remittance.external.credit.inquiry")
 				.description("상대 은행 조회로 결론이 난 건수")
 				.tag("outcome", outcome)
+				.register(meterRegistry);
+	}
+
+	/**
+	 * 결론이 아니라 <b>건너뛴</b> 건수라 위 카운터와 섞지 않는다.
+	 * 이 값이 오르는데 결론 카운터가 그대로면 확인 루프가 헛돌고 있다는 뜻이다.
+	 */
+	private Counter errors() {
+		return Counter.builder("remittance.external.credit.inquiry.error")
+				.description("예상 못 한 실패로 결론 없이 건너뛴 건수")
 				.register(meterRegistry);
 	}
 }
