@@ -38,8 +38,20 @@ public class Transfer {
 	@Column(nullable = false, updatable = false)
 	private UUID fromAccountId;
 
-	@Column(nullable = false, updatable = false)
+	/** 우리 은행 계좌일 때만 채워진다. 상대 은행으로 나가면 {@code null}이다. */
+	@Column(updatable = false)
 	private UUID toAccountId;
+
+	/**
+	 * 상대 은행 코드. {@code null}이면 우리 은행 안의 송금이다 (Phase 6.5).
+	 * 값이 있으면 {@link #toAccountId}는 비어 있고 {@link #toAccountNumber}가 받는 쪽이다.
+	 */
+	@Column(length = 11, updatable = false)
+	private String toBankCode;
+
+	/** 상대 은행의 계좌번호. <b>우리가 발급한 적이 없어 UUID가 아니다.</b> */
+	@Column(length = 34, updatable = false)
+	private String toAccountNumber;
 
 	@Column(nullable = false, precision = 19, scale = 2, updatable = false)
 	private BigDecimal amount;
@@ -98,17 +110,24 @@ public class Transfer {
 	private static final int AMOUNT_SCALE = 2;
 
 	@Builder
-	public Transfer(UUID fromAccountId, UUID toAccountId, BigDecimal amount, String currency, String memo,
-			String idempotencyKey) {
+	public Transfer(UUID fromAccountId, UUID toAccountId, String toBankCode, String toAccountNumber,
+			BigDecimal amount, String currency, String memo, String idempotencyKey) {
 		this.transferId = UUID.randomUUID();
 		this.fromAccountId = fromAccountId;
 		this.toAccountId = toAccountId;
+		this.toBankCode = toBankCode;
+		this.toAccountNumber = toAccountNumber;
 		this.amount = normalizeAmount(amount);
 		this.currency = currency;
 		this.memo = memo;
 		this.idempotencyKey = idempotencyKey;
 		this.status = TransferStatus.PENDING;
 		this.requestedAt = Timestamps.now();
+	}
+
+	/** 상대 은행으로 나가는 송금인가. 받는 쪽을 어떻게 처리할지가 여기서 갈린다. */
+	public boolean isExternal() {
+		return toBankCode != null;
 	}
 
 	/**
@@ -141,6 +160,14 @@ public class Transfer {
 
 	public void markCompensating() {
 		this.status = TransferStatus.COMPENSATING;
+	}
+
+	/**
+	 * 상대 은행 결과를 <b>모른다</b>고 표시한다 (Phase 6.5).
+	 * 실패가 아니다 — 실패로 닫으면 이미 나간 돈을 환불해 이중 지급이 된다.
+	 */
+	public void markCreditUnknown() {
+		this.status = TransferStatus.CREDIT_UNKNOWN;
 	}
 
 	public void markFailed(String reason) {

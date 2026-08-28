@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 #
-# 홈서버에서 다섯 서비스를 띄우고 내린다.
+# 홈서버에서 여섯 서비스를 띄우고 내린다.
 #
 #   ./scripts/homelab-services.sh build     # 컨테이너 안에서 jar를 굽는다
-#   ./scripts/homelab-services.sh start     # JRE 컨테이너로 다섯 개를 띄운다
+#   ./scripts/homelab-services.sh start     # JRE 컨테이너로 여섯 개를 띄운다
 #   ./scripts/homelab-services.sh status    # 떠 있는 것이 지금 커밋인지까지 확인한다
 #   ./scripts/homelab-services.sh stop
 #   ./scripts/homelab-services.sh restart
@@ -20,7 +20,7 @@
 #
 # 왜 힙을 손으로 잡는가
 #   이 머신은 CPU는 남고 메모리가 빠듯하다(15GB). JVM 기본 최대 힙은 사용 가능한 메모리의
-#   1/4이라, 다섯 개가 각자 3GB 넘게 잡으려 든다. 합치면 스왑으로 떨어지고,
+#   1/4이라, 여섯 개가 각자 3GB 넘게 잡으려 든다. 합치면 스왑으로 떨어지고,
 #   **성능을 재려는 머신에서 스왑은 측정 실패다.**
 
 set -euo pipefail
@@ -41,6 +41,8 @@ SERVICES=(
 	"ledger:8083:512m:900m"
 	"reconciliation:8084:512m:900m"
 	"notification:8085:512m:900m"
+	# Phase 6.5 — 상대 은행(Kotlin). 일부러 느리게 답하는 일이 있어 스레드를 넉넉히 쓴다.
+	"external-bank:8086:512m:900m"
 )
 
 # 부하 생성기를 이 머신에서 함께 돌릴 때만 쓴다(예: CPUSET=0-9).
@@ -73,7 +75,8 @@ cmd_build() {
 		"$JDK_IMAGE" \
 		./gradlew --no-daemon "-PgitCommit=$commit" "-PgitBranch=$branch" \
 		:account-service:bootJar :transfer-service:bootJar :ledger-service:bootJar \
-		:reconciliation-service:bootJar :notification-service:bootJar
+		:reconciliation-service:bootJar :notification-service:bootJar \
+		:external-bank-service:bootJar
 	echo "▶ 빌드된 jar"
 	ls -lh ./*-service/build/libs/*.jar | awk '{print "   ", $9, $5}'
 }
@@ -113,7 +116,7 @@ cmd_start() {
 			IFS=: read -r _ port _ _ <<<"$entry"
 			curl -s -m 1 "http://localhost:$port/actuator/health" 2>/dev/null | grep -q '"status":"UP"' && up=$((up + 1))
 		done
-		[ "$up" -eq "${#SERVICES[@]}" ] && { echo "   다섯 개 전부 UP"; break; }
+		[ "$up" -eq "${#SERVICES[@]}" ] && { echo "   ${#SERVICES[@]}개 전부 UP"; break; }
 		sleep 2
 	done
 	cmd_status
@@ -124,7 +127,7 @@ cmd_stop() {
 		IFS=: read -r name _ _ _ <<<"$entry"
 		docker rm -f "$(container_name "$name")" >/dev/null 2>&1 || true
 	done
-	echo "▶ 다섯 서비스를 내렸다"
+	echo "▶ 여섯 서비스를 내렸다"
 }
 
 # 떠 있는 것이 "내가 방금 만든 것"인지 확인한다.

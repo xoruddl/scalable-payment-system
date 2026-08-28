@@ -56,10 +56,25 @@ public class TransferEventConsumer {
 		transferSagaService.onRequested(objectMapper.readValue(payload, TransferEvents.Requested.class));
 	}
 
+	/**
+	 * 입금 — <b>우리 은행 계좌로 가는 것만</b> 처리한다 (Phase 6.5).
+	 *
+	 * <p>상대 은행으로 가는 것은 {@link ExternalCreditConsumer}가 <b>별도 컨슈머 그룹</b>으로
+	 * 받는다. 같은 리스너에서 둘 다 처리했더니 <b>느린 상대가 우리 내부 송금까지 묶었다</b> —
+	 * 상대가 2초 느려지자 내부 송금 종결 p99가 3,071 → 58,790ms가 됐다.
+	 *
+	 * <p>격벽으로 11,579ms까지 줄였지만 <b>같은 스레드 풀을 나눠 쓰는 한 거기까지</b>였다.
+	 * 나눠 쓰지 않으면 애초에 뺏기지 않는다.
+	 */
 	@KafkaListener(id = TransferEvents.DEBITED, topics = TransferEvents.DEBITED, groupId = "${spring.kafka.consumer.group-id}",
 			concurrency = CONCURRENCY)
 	public void onDebited(String payload) {
-		transferSagaService.onDebited(objectMapper.readValue(payload, TransferEvents.Debited.class));
+		TransferEvents.Debited event = objectMapper.readValue(payload, TransferEvents.Debited.class);
+		if (event.isExternal()) {
+			// 남의 몫이다. 여기서 건드리면 분리한 의미가 없다.
+			return;
+		}
+		transferSagaService.onDebited(event);
 	}
 
 	/**

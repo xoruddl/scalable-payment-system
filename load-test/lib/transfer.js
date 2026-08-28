@@ -26,11 +26,25 @@ export const settleTimeout = new Counter('settle_timeout');
  * 최초 송금을 그대로 돌려주는 재요청 경로로 빠져서, TPS가 비현실적으로 높게 나온다.
  */
 export function requestTransfer(fromAccountId, toAccountId, tags = {}) {
+	return post(fromAccountId, { toAccountId }, tags);
+}
+
+/**
+ * <b>상대 은행으로</b> 보낸다 (Phase 6.5).
+ *
+ * 계좌번호는 매번 다르게 준다. 상대 은행은 계좌를 검증하지 않지만,
+ * 같은 번호로만 보내면 <b>실제와 다른 쏠림</b>이 생겨 그쪽 DB에서 엉뚱한 경합이 날 수 있다.
+ */
+export function requestExternalTransfer(fromAccountId, bankCode, tags = {}) {
+	return post(fromAccountId, { toBankCode: bankCode, toAccountNumber: uuid().slice(0, 18) }, tags);
+}
+
+function post(fromAccountId, destination, tags) {
 	const res = http.post(
 		`${TRANSFER_URL}/transfers`,
 		JSON.stringify({
 			fromAccountId,
-			toAccountId,
+			...destination,
 			amount: TRANSFER_AMOUNT,
 			currency: CURRENCY,
 		}),
@@ -55,8 +69,17 @@ export function requestTransfer(fromAccountId, toAccountId, tags = {}) {
  * 안 넘기면 예전처럼 하나로 합쳐 잰다.
  */
 export function requestAndAwaitSettle(fromAccountId, toAccountId, tags = {}) {
+	return awaitSettle(() => requestTransfer(fromAccountId, toAccountId, tags), tags);
+}
+
+/** 상대 은행으로 보내고 종결까지 기다린다. */
+export function requestExternalAndAwaitSettle(fromAccountId, bankCode, tags = {}) {
+	return awaitSettle(() => requestExternalTransfer(fromAccountId, bankCode, tags), tags);
+}
+
+function awaitSettle(send, tags) {
 	const startedAt = Date.now();
-	const accepted = requestTransfer(fromAccountId, toAccountId, tags);
+	const accepted = send();
 	if (accepted.status !== 202) {
 		settled.add(false, tags);
 		return;

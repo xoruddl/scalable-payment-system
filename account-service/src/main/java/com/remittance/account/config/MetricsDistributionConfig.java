@@ -37,8 +37,9 @@ import java.util.Map;
  * 충돌해 <b>요청마다</b> {@code InvalidConfigurationException}이 터진 적이 있다.
  * 기동은 멀쩡했고 헬스체크만 500을 냈다.
  *
- * <p>다섯 서비스가 같은 정책을 각자 정의한다. 공유 모듈을 두지 않기로 했으므로
- * <b>바꿀 때는 다섯 곳을 함께 확인</b>해야 한다 (이벤트 계약·에러 핸들링과 같은 규칙).
+ * <p><b>여섯 서비스가 같은 정책을 각자 정의한다</b> (상대 은행은 Kotlin으로).
+ * 공유 모듈을 두지 않기로 했으므로 <b>바꿀 때는 여섯 곳을 함께 확인</b>해야 한다
+ * (이벤트 계약·에러 핸들링과 같은 규칙).
  */
 @Configuration
 public class MetricsDistributionConfig {

@@ -54,7 +54,7 @@ class TransferAcceptExecutorTest extends AbstractIntegrationTest {
 	private IdempotencyService spiedIdempotencyService;
 
 	private CreateTransferRequest request() {
-		return new CreateTransferRequest(UUID.randomUUID(), UUID.randomUUID(),
+		return CreateTransferRequest.internal(UUID.randomUUID(), UUID.randomUUID(),
 				new BigDecimal("1000"), "KRW", "한 트랜잭션 검증");
 	}
 

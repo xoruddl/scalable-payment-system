@@ -100,7 +100,7 @@ class TransferServiceTest {
 		stubAcceptReturnsNewTransfer();
 		String key = "key-" + UUID.randomUUID();
 		CreateTransferRequest request =
-				new CreateTransferRequest(fromAccountId, toAccountId, amount, "KRW", null);
+				CreateTransferRequest.internal(fromAccountId, toAccountId, amount, "KRW", null);
 
 		Transfer result = transferService().requestTransfer(key, request);
 
@@ -116,7 +116,7 @@ class TransferServiceTest {
 	@Test
 	void 출금_입금_계좌가_같으면_멱등성_키를_소모하지_않고_즉시_예외() {
 		CreateTransferRequest request =
-				new CreateTransferRequest(fromAccountId, fromAccountId, amount, "KRW", null);
+				CreateTransferRequest.internal(fromAccountId, fromAccountId, amount, "KRW", null);
 
 		assertThatThrownBy(() -> transferService().requestTransfer("key-1", request))
 				.isInstanceOf(InvalidTransferRequestException.class);

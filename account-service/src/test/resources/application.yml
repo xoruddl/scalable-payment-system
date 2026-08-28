@@ -27,3 +27,14 @@ outbox:
     # 발행 자체를 검증하는 테스트만 켠다.
     enabled: false
     interval-ms: 200
+
+remittance:
+  external-bank:
+    urls:
+      KB: http://localhost:19999
+    inquiry:
+      # 조회 루프가 배경에서 돌면 검증이 흔들린다. 확인하는 테스트만 직접 부른다.
+      interval-ms: 3600000
+      base-backoff: 10ms
+      max-backoff: 50ms
+      stuck-after: 1s

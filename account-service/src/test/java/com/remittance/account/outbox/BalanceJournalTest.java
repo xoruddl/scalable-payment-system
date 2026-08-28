@@ -100,7 +100,7 @@ class BalanceJournalTest extends AbstractIntegrationTest {
 		UUID transferId = UUID.randomUUID();
 
 		transferSagaService.onRequested(
-				new TransferEvents.Requested(transferId, from, to, amount, "KRW"));
+				TransferEvents.Requested.internal(transferId, from, to, amount, "KRW"));
 
 		assertThat(journalOf(from))
 				.last()
@@ -119,7 +119,7 @@ class BalanceJournalTest extends AbstractIntegrationTest {
 		UUID to = account("KRW");
 		UUID transferId = UUID.randomUUID();
 
-		transferSagaService.onDebited(new TransferEvents.Debited(
+		transferSagaService.onDebited(TransferEvents.Debited.internal(
 				transferId, from, to, amount, "KRW", new BigDecimal("4000.00"), Instant.now()));
 
 		assertThat(journalOf(to))
@@ -140,7 +140,7 @@ class BalanceJournalTest extends AbstractIntegrationTest {
 		UUID to = account("USD");
 		UUID transferId = UUID.randomUUID();
 
-		transferSagaService.onRequested(new TransferEvents.Requested(transferId, from, to, amount, "KRW"));
+		transferSagaService.onRequested(TransferEvents.Requested.internal(transferId, from, to, amount, "KRW"));
 		transferSagaService.onCreditFailed(new TransferEvents.CreditFailed(
 				transferId, from, to, amount, "KRW", "통화가 일치하지 않습니다", Instant.now()));
 

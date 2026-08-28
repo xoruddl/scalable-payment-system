@@ -57,6 +57,7 @@ public class KafkaTopicsConfig {
 			TransferEvents.CREDITED,
 			TransferEvents.DEBIT_FAILED,
 			TransferEvents.CREDIT_FAILED,
+			TransferEvents.CREDIT_UNKNOWN,
 			TransferEvents.DEBIT_REVERSED);
 
 	/** {@code credit-failed}는 이 서비스가 발행하고 다시 소비한다 — 보상을 재시도 가능하게 만들기 위해서다. */

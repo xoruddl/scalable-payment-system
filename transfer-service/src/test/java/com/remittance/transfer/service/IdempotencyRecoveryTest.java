@@ -66,7 +66,7 @@ class IdempotencyRecoveryTest extends AbstractIntegrationTest {
 	private final UUID toAccountId = UUID.randomUUID();
 
 	private CreateTransferRequest request() {
-		return new CreateTransferRequest(fromAccountId, toAccountId, new BigDecimal("1000.00"), "KRW", null);
+		return CreateTransferRequest.internal(fromAccountId, toAccountId, new BigDecimal("1000.00"), "KRW", null);
 	}
 
 	private String newKey() {

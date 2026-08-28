@@ -32,6 +32,7 @@ flowchart TB
         N["<b>notification</b> :8085<br/>알림<br/>MySQL"]
     end
 
+    E["<b>external-bank</b> :8086<br/>상대 은행 모사<br/>Kotlin + MySQL"]
     K{{"Kafka"}}
 
     Client -->|POST /transfers| T
@@ -39,6 +40,7 @@ flowchart TB
     A <-->|이벤트| K
     L <-->|이벤트| K
     K -->|이벤트| N
+    A <-->|"HTTP 입금·조회"| E
     R -.->|"주기적 조회<br/>(읽기 전용)"| T
     R -.-> A
     R -.-> L
@@ -51,11 +53,13 @@ flowchart TB
 | `ledger-service` | 8083 | 모든 잔액 변경의 **분개장** | Spring WebFlux | MongoDB `ledger_db` |
 | `reconciliation-service` | 8084 | 세 저장소를 **대조**해 어긋난 것 찾기 | Spring MVC + JPA | MySQL `reconciliation_db` |
 | `notification-service` | 8085 | 송금 종결을 **알림**으로 | Spring MVC + JPA | MySQL `notification_db` |
+| `external-bank-service` | 8086 | 우리가 제어할 수 없는 **상대 은행** 모사 | Kotlin + Spring MVC + JPA | MySQL `external_bank_db` |
 | `gateway` | 8080 | *(Phase 4에서 구현)* | — | — |
 | `config-server` | 8888 | *(Phase 4에서 구현)* | — | — |
 
-**서비스끼리 동기 호출을 하지 않습니다.** 유일한 예외가 `reconciliation`인데, 그건 흐름에
-끼어드는 게 아니라 **밖에서 들여다보기만** 하는 역할이라 그렇습니다.
+**우리 서비스끼리는 동기 호출을 하지 않습니다.** 예외는 둘입니다. `reconciliation`은 흐름에
+끼어들지 않고 밖에서 읽기만 하며, `account`는 서비스 경계 밖의 상대 은행을 HTTP로 부릅니다.
+상대 은행 호출은 타임아웃 뒤 결과를 모를 수 있어 재시도가 아니라 조회로 결론짓습니다.
 
 ### 왜 이렇게 나눴나
 
@@ -135,6 +139,23 @@ sequenceDiagram
 **(다) 입금이 끝나도 아직 `COMPLETED`가 아닙니다.**
 `transfer.ledger-recorded`가 와야 완료입니다. 입금 시점에 완료로 찍으면
 "송금은 성공인데 원장에는 없는" 상태가 생기고, 그건 나중에 찾아내기가 훨씬 어렵습니다.
+
+### 받는 계좌가 상대 은행이면
+
+`transfer.debited`까지는 같습니다. 그 뒤 account가 상대 은행에 HTTP로 입금을 요청합니다.
+
+| 결과 | 뜻 | 다음 행동 |
+|---|---|---|
+| ACCEPTED | 상대가 받았다 | 상대 은행 정산 계좌에 적고 기존 원장 흐름으로 복귀 |
+| REJECTED | 상대가 거절했다 | `transfer.credit-failed`로 보상 |
+| 타임아웃 | **보냈지만 결과를 모른다** | `CREDIT_UNKNOWN`으로 기록하고 GET 조회 |
+| 격벽·회로 차단 | **보내지 않았다** | 미전송으로 보관하고 나중에 전송 |
+
+새 입금 POST는 외부 전용 Kafka 리스너가 처리하고, Resilience4j semaphore bulkhead가 전체
+동시 호출 수를 제한합니다. 은행별 circuit breaker는 최근 5건이 모두 실패하면 30초 동안
+열리고, 이후 한 건만 HALF_OPEN 시험 호출로 보내 복구를 확인합니다. 단, 이미 보낸 돈의
+**조회 GET은 회로로 막지 않습니다** — 새 요청을 보호하려다 결과를 모르는 돈의 해소까지
+늦추면 안 되기 때문입니다. 표준 상태·호출·거절·동시성 지표는 Micrometer로 노출합니다.
 
 ---
 
@@ -458,7 +479,7 @@ DLT로 빠지면 잔액과 원장이 벌어지고, 송금이 종결되지 못한
 | 토픽 | 발행 | 소비 | 파티션 키 |
 |---|---|---|---|
 | `transfer.requested` | transfer | account | transferId |
-| `transfer.debited` | account | **account**(입금), transfer | transferId |
+| `transfer.debited` | account | **account**(내부·외부 별도 그룹), transfer | transferId |
 | `transfer.credited` | account | transfer | transferId |
 | `account.balance-changed` | account | ledger | **accountId** |
 | `transfer.ledger-recorded` | ledger | transfer | transferId |
@@ -467,6 +488,7 @@ DLT로 빠지면 잔액과 원장이 벌어지고, 송금이 종결되지 못한
 | `transfer.debit-failed` | account | transfer | transferId |
 | `transfer.credit-failed` | account | **account**(환불), transfer | transferId |
 | `transfer.debit-reversed` | account | transfer | transferId |
+| `transfer.credit-unknown` | account | transfer | transferId |
 
 **파티션 키가 왜 둘로 갈리나:** Saga 이벤트는 **한 송금**의 단계들이 순서대로 처리되어야 하므로
 `transferId`입니다. 분개 이벤트는 **한 계좌**의 잔액 변경이 순서대로 소비되어야 잔액 추이가

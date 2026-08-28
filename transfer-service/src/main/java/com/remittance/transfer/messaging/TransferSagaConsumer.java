@@ -72,6 +72,12 @@ public class TransferSagaConsumer {
 		transferService.applyCreditFailed(objectMapper.readValue(payload, TransferEvents.StepFailed.class));
 	}
 
+	@KafkaListener(id = TransferEvents.CREDIT_UNKNOWN, topics = TransferEvents.CREDIT_UNKNOWN, groupId = "${spring.kafka.consumer.group-id}",
+			concurrency = CONCURRENCY)
+	public void onCreditUnknown(String payload) {
+		transferService.applyCreditUnknown(objectMapper.readValue(payload, TransferEvents.CreditUnknown.class));
+	}
+
 	@KafkaListener(id = TransferEvents.DEBIT_REVERSED, topics = TransferEvents.DEBIT_REVERSED, groupId = "${spring.kafka.consumer.group-id}",
 			concurrency = CONCURRENCY)
 	public void onDebitReversed(String payload) {

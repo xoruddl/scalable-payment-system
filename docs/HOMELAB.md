@@ -103,7 +103,7 @@ Phase 7에서 서비스마다 제대로 된 Dockerfile을 쓸 때까지의 임�
 ssh home1 'cd ~/remittance && ./scripts/homelab-services.sh status'
 ```
 
-다섯 서비스의 `/actuator/info`가 HEAD와 같은지 확인합니다.
+여섯 서비스의 `/actuator/info`가 HEAD와 같은지 확인합니다.
 **2026-08-22 baseline 1차를 낡은 jar로 재고 전부 버린 적이 있습니다.** 그때 `/actuator/info`는
 정직하게 옛 커밋을 답하고 있었는데 물어보지 않았을 뿐입니다.
 

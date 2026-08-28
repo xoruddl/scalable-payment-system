@@ -14,6 +14,9 @@ public record TransferEventPayload(
 		TransferStatus status,
 		UUID fromAccountId,
 		UUID toAccountId,
+		/** 상대 은행으로 나가면 여기 값이 있다. account-service의 입금 단계가 이걸 보고 갈린다. */
+		String toBankCode,
+		String toAccountNumber,
 		BigDecimal amount,
 		String currency,
 		String failureReason,
@@ -25,6 +28,8 @@ public record TransferEventPayload(
 				transfer.getStatus(),
 				transfer.getFromAccountId(),
 				transfer.getToAccountId(),
+				transfer.getToBankCode(),
+				transfer.getToAccountNumber(),
 				transfer.getAmount(),
 				transfer.getCurrency(),
 				transfer.getFailureReason(),

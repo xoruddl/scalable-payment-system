@@ -106,6 +106,13 @@ public class TransferService {
 	}
 
 	private void validate(CreateTransferRequest request) {
+		// 받는 쪽이 둘 다 적히면 어느 쪽이 진짜인지 알 수 없고, 둘 다 없으면 보낼 곳이 없다.
+		// 어느 쪽이든 <b>돈이 엉뚱한 데로 갈 수 있는</b> 상태라 키를 쓰기 전에 막는다.
+		if (!request.hasExactlyOneDestination()) {
+			throw new InvalidTransferRequestException(
+					"받는 쪽은 우리 계좌(toAccountId) 또는 상대 은행(toBankCode+toAccountNumber) "
+							+ "중 하나로만 적어야 합니다.");
+		}
 		if (request.fromAccountId().equals(request.toAccountId())) {
 			throw new InvalidTransferRequestException("출금 계좌와 입금 계좌가 동일할 수 없습니다.");
 		}
@@ -217,6 +224,17 @@ public class TransferService {
 	 */
 	public void applyCreditFailed(TransferEvents.StepFailed event) {
 		withOptimisticRetry(event.transferId(), () -> stateUpdater.markCompensating(event.transferId()));
+	}
+
+	/**
+	 * 상대 은행이 답하지 않아 결과를 모른다 (Phase 6.5).
+	 *
+	 * <p>여기서 할 일은 <b>상태를 드러내는 것뿐</b>이다. 확인은 account-service의 조회 루프가
+	 * 하고, 결론이 나면 평소의 {@code credited}·{@code credit-failed}로 돌아온다.
+	 * 이 상태가 없으면 "단순히 느린 건"과 <b>돈이 나갔을지 모르는 건</b>이 구분되지 않는다.
+	 */
+	public void applyCreditUnknown(TransferEvents.CreditUnknown event) {
+		withOptimisticRetry(event.transferId(), () -> stateUpdater.markCreditUnknown(event.transferId()));
 	}
 
 	/** 출금이 되돌아왔다 — 이제 송금을 실패로 닫는다. */
