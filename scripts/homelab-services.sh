@@ -31,18 +31,24 @@ JRE_IMAGE="${JRE_IMAGE:-eclipse-temurin:21-jre}"
 JDK_IMAGE="${JDK_IMAGE:-eclipse-temurin:21-jdk}"
 GRADLE_CACHE="${GRADLE_CACHE:-remittance-gradle-cache}"
 
-# 서비스 이름:포트:최대 힙:컨테이너 메모리 한도
+# <b>Gradle 모듈 이름</b>:포트:최대 힙:컨테이너 메모리 한도
 #
-# account와 transfer가 부하를 가장 많이 받는다(잔액 변경과 접수). 나머지 셋은 가볍다.
+# ⚠️ 예전에는 앞 칸이 "account" 같은 짧은 이름이었고 스크립트가 뒤에 `-service`를 붙였다.
+# Phase 4에서 `gateway`가 들어오면서 그 가정이 깨졌다(모듈 이름에 `-service`가 없다).
+# 그래서 <b>모듈 이름을 그대로</b> 적는다 — 컨테이너 이름과 jar 경로가 모듈에서 바로 나온다.
+#
+# account와 transfer가 부하를 가장 많이 받는다(잔액 변경과 접수). 나머지는 가볍다.
 # 컨테이너 한도는 힙보다 넉넉해야 한다 — 메타스페이스·스레드 스택·다이렉트 버퍼가 힙 바깥이다.
 SERVICES=(
-	"account:8081:1g:1500m"
-	"transfer:8082:1g:1500m"
-	"ledger:8083:512m:900m"
-	"reconciliation:8084:512m:900m"
-	"notification:8085:512m:900m"
+	"account-service:8081:1g:1500m"
+	"transfer-service:8082:1g:1500m"
+	"ledger-service:8083:512m:900m"
+	"reconciliation-service:8084:512m:900m"
+	"notification-service:8085:512m:900m"
 	# Phase 6.5 — 상대 은행(Kotlin). 일부러 느리게 답하는 일이 있어 스레드를 넉넉히 쓴다.
-	"external-bank:8086:512m:900m"
+	"external-bank-service:8086:512m:900m"
+	# Phase 4 — 단일 진입점. 요청을 뒤로 흘려보내기만 하므로 가볍다.
+	"gateway:8080:512m:900m"
 )
 
 # 부하 생성기를 이 머신에서 함께 돌릴 때만 쓴다(예: CPUSET=0-9).
@@ -57,8 +63,8 @@ CPUSET="${CPUSET:-}"
 # 코드를 고쳐가며 재면 빌드가 달라져 무엇 때문에 숫자가 바뀌었는지 말할 수 없다.
 SERVICE_ENV="${SERVICE_ENV:-}"
 
-container_name() { echo "remittance-$1-service"; }
-jar_path() { echo "/app/$1-service/build/libs/$1-service-0.0.1-SNAPSHOT.jar"; }
+container_name() { echo "remittance-$1"; }
+jar_path() { echo "/app/$1/build/libs/$1-0.0.1-SNAPSHOT.jar"; }
 
 cmd_build() {
 	echo "▶ 컨테이너 안에서 빌드한다 (호스트에 JDK가 없어도 된다)"
@@ -76,9 +82,9 @@ cmd_build() {
 		./gradlew --no-daemon "-PgitCommit=$commit" "-PgitBranch=$branch" \
 		:account-service:bootJar :transfer-service:bootJar :ledger-service:bootJar \
 		:reconciliation-service:bootJar :notification-service:bootJar \
-		:external-bank-service:bootJar
+		:external-bank-service:bootJar :gateway:bootJar
 	echo "▶ 빌드된 jar"
-	ls -lh ./*-service/build/libs/*.jar | awk '{print "   ", $9, $5}'
+	ls -lh ./*-service/build/libs/*.jar ./gateway/build/libs/*.jar | awk '{print "   ", $9, $5}'
 }
 
 cmd_start() {
@@ -127,7 +133,7 @@ cmd_stop() {
 		IFS=: read -r name _ _ _ <<<"$entry"
 		docker rm -f "$(container_name "$name")" >/dev/null 2>&1 || true
 	done
-	echo "▶ 여섯 서비스를 내렸다"
+	echo "▶ ${#SERVICES[@]}개를 내렸다"
 }
 
 # 떠 있는 것이 "내가 방금 만든 것"인지 확인한다.
