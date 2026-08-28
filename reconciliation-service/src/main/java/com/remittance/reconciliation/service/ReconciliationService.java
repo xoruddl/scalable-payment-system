@@ -53,6 +53,7 @@ public class ReconciliationService {
 			int accountsChecked = reconcileBalances(run.getId(), findings);
 			findUnsettledTransfers(run.getId(), findings);
 			findStrandedKeys(run.getId(), findings);
+			findUnknownExternalCredits(run.getId(), findings);
 
 			findingRepository.saveAll(findings);
 			run.complete(accountsChecked, findings.size(), Instant.now());
@@ -126,6 +127,37 @@ public class ReconciliationService {
 				.type(FindingType.UNSETTLED_TRANSFER)
 				.subject(transfer.transferId().toString())
 				.detail("%s 상태로 %s부터 멈춰 있다".formatted(transfer.status(), transfer.requestedAt()))
+				.detectedAt(Instant.now())
+				.build()));
+	}
+
+	/**
+	 * 상대 은행에 <b>보냈는데</b> 오래 결론이 안 난 건들 (Phase 6.5).
+	 *
+	 * <h2>왜 대사가 또 보나 — 이미 로그도 지표도 있는데</h2>
+	 * 확인 루프는 오래된 건에 {@code ERROR} 로그를 남기고, 게이지는 <b>지금 몇 건인지</b>를 낸다.
+	 * 둘 다 <b>어느 건인지는 말해주지 않는다.</b> 로그는 그 프로세스가 살아 있는 동안만 흐르고,
+	 * 게이지는 숫자 하나다. 사람이 상대 은행에 연락하려면 <b>송금 ID와 금액</b>이 필요하고,
+	 * 그건 회차별로 남는 대사 결과가 할 일이다.
+	 *
+	 * <p><b>같은 송금이 {@code UNSETTLED_TRANSFER}로도 잡힐 수 있다.</b> 임계값이 다르므로
+	 * (2분 vs 5분) 먼저 "흐름이 끊겼다"로 잡히고, 계속 안 풀리면 여기서 "상대 은행 건이고
+	 * 돈이 나갔을 수 있다"가 더해진다. <b>같은 사실의 중복이 아니라 다른 사실</b>이다 —
+	 * 앞은 송금이 종결되지 않았다는 것이고, 뒤는 그 이유가 남의 시스템에 있다는 것이다.
+	 */
+	private void findUnknownExternalCredits(Long runId, List<ReconciliationFinding> findings) {
+		List<AccountClient.UnknownExternalCredit> unknown =
+				accountClient.unknownExternalCredits(properties.externalCreditUnknownAfter());
+		if (unknown == null) {
+			return;
+		}
+		unknown.forEach(credit -> findings.add(ReconciliationFinding.builder()
+				.runId(runId)
+				.type(FindingType.UNKNOWN_EXTERNAL_CREDIT)
+				.subject(credit.transferId().toString())
+				.detail("%s에 %s %s를 보냈는데 %s부터 결과를 모른다 (조회 %d회)".formatted(
+						credit.bankCode(), credit.amount().toPlainString(), credit.currency(),
+						credit.createdAt(), credit.inquiries()))
 				.detectedAt(Instant.now())
 				.build()));
 	}

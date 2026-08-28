@@ -15,6 +15,14 @@ public interface PendingExternalCreditRepository extends JpaRepository<PendingEx
 	/** <b>보냈는데 결과를 모르는</b> 건수. 돈이 나갔을 수 있다. */
 	long countBySentTrue();
 
+	/**
+	 * 보낸 뒤 <b>오래 결론이 안 난</b> 건들. 대사가 사람에게 알릴 목록이다.
+	 *
+	 * <p>{@code sent=true}만 본다 — 안 보낸 건은 돈이 나가지 않았으므로 사람을 부를 일이 아니다.
+	 */
+	List<PendingExternalCredit> findBySentTrueAndCreatedAtBeforeOrderByCreatedAtAsc(
+			Instant createdBefore, Limit limit);
+
 	/** <b>보내지도 못해</b> 미뤄둔 건수. 돈은 안 나갔다. */
 	long countBySentFalse();
 }

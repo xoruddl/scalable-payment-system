@@ -1,16 +1,20 @@
 package com.remittance.account.service;
 
 import com.remittance.account.domain.Account;
+import com.remittance.account.external.PendingExternalCreditRepository;
 import com.remittance.account.repository.AccountBalanceShardRepository;
 import com.remittance.account.repository.AccountRepository;
+import com.remittance.account.support.Timestamps;
 import com.remittance.account.web.dto.AccountBalancePage;
 import com.remittance.account.web.dto.AccountBalanceView;
+import com.remittance.account.web.dto.UnknownExternalCreditView;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Limit;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -24,6 +28,7 @@ public class ReconciliationQueryService {
 
 	private final AccountRepository accountRepository;
 	private final AccountBalanceShardRepository shardRepository;
+	private final PendingExternalCreditRepository pendingExternalCreditRepository;
 
 	@Transactional(readOnly = true)
 	public AccountBalancePage balances(Long cursor, int size) {
@@ -50,5 +55,22 @@ public class ReconciliationQueryService {
 				.toList();
 
 		return new AccountBalancePage(views, hasNext ? nextCursor : null, hasNext);
+	}
+
+	/**
+	 * 상대 은행에 보냈는데 <b>오래 결론이 안 난</b> 건들 (Phase 6.5).
+	 *
+	 * <p>확인 루프가 스스로 못 푸는 건이 있다. 상대가 계속 답을 못 주면 조회는 영원히 돌고,
+	 * 그동안 <b>고객 돈이 어디 있는지 아무도 모른다.</b> 그건 기계가 아니라 사람이 처리할 일이다.
+	 *
+	 * <p><b>{@code sent=true}만 본다.</b> 회로나 격벽에 막혀 못 보낸 건은 돈이 나가지 않았으므로
+	 * 사람을 부를 일이 아니다 — 그건 상대가 살아나면 저절로 빠진다.
+	 */
+	@Transactional(readOnly = true)
+	public List<UnknownExternalCreditView> unknownExternalCredits(Duration olderThan, int limit) {
+		return pendingExternalCreditRepository
+				.findBySentTrueAndCreatedAtBeforeOrderByCreatedAtAsc(
+						Timestamps.now().minus(olderThan), Limit.of(limit))
+				.stream().map(UnknownExternalCreditView::from).toList();
 	}
 }

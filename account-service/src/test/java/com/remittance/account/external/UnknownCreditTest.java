@@ -9,6 +9,8 @@ import com.remittance.account.outbox.OutboxEventRepository;
 import com.remittance.account.repository.AccountRepository;
 import com.remittance.account.saga.TransferSagaService;
 import com.remittance.account.service.AccountService;
+import com.remittance.account.service.ReconciliationQueryService;
+import com.remittance.account.web.dto.UnknownExternalCreditView;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -16,6 +18,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 import java.math.BigDecimal;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
@@ -72,6 +75,9 @@ class UnknownCreditTest extends AbstractIntegrationTest {
 
 	@Autowired
 	private OutboxEventRepository outboxEventRepository;
+
+	@Autowired
+	private ReconciliationQueryService reconciliationQueryService;
 
 	@MockitoBean
 	private ExternalBankClient externalBankClient;
@@ -307,5 +313,39 @@ class UnknownCreditTest extends AbstractIntegrationTest {
 				.filter(event -> TransferEvents.CREDIT_UNKNOWN.equals(event.getEventType())))
 				.as("처음 5건만 보냈다가 답을 못 받았다. 차단된 5건은 보내지 않았으므로 모르는 상태가 아니다")
 				.hasSize(5);
+	}
+
+	/**
+	 * 대사가 읽어갈 목록 — <b>사람을 부를 건만</b> 들어가야 한다 (Phase 6.5).
+	 *
+	 * <p>못 보낸 건까지 넣으면 회로가 잘 동작할 때마다 사람을 부르게 되고,
+	 * 아직 스스로 풀릴 시간이 남은 건까지 넣으면 <b>진짜 신호가 묻힌다.</b>
+	 */
+	@Test
+	void 보낸_뒤_오래_모르는_건만_사람에게_알린다() {
+		UUID 보냈는데_모른다 = savedPending(true);
+		UUID 못_보냈다 = savedPending(false);
+
+		assertThat(reportedAfter(Duration.ZERO))
+				.as("보낸 건만 사람이 볼 목록에 오른다 - 안 보낸 건은 돈이 나가지 않았다")
+				.contains(보냈는데_모른다)
+				.doesNotContain(못_보냈다);
+
+		assertThat(reportedAfter(Duration.ofHours(1)))
+				.as("확인 루프가 스스로 풀 시간이 남아 있으면 아직 부르지 않는다")
+				.doesNotContain(보냈는데_모른다);
+	}
+
+	private UUID savedPending(boolean sent) {
+		UUID transferId = UUID.randomUUID();
+		pending.save(new PendingExternalCredit(transferId, bank, THEIR_ACCOUNT, UUID.randomUUID(),
+				BigDecimal.valueOf(50_000), "KRW", BigDecimal.ZERO, sent));
+		return transferId;
+	}
+
+	private List<UUID> reportedAfter(Duration olderThan) {
+		return reconciliationQueryService.unknownExternalCredits(olderThan, 100).stream()
+				.map(UnknownExternalCreditView::transferId)
+				.toList();
 	}
 }

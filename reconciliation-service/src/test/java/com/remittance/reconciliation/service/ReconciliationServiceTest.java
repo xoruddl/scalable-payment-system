@@ -207,6 +207,32 @@ class ReconciliationServiceTest extends AbstractIntegrationTest {
 	}
 
 	/**
+	 * Phase 6.5 — <b>우리도 상대도 모르는 돈</b>은 기계가 더 나아갈 수 없는 유일한 종류다.
+	 *
+	 * <p>재시도하면 이중 입금이고 실패로 처리하면 돈이 사라진다. 그래서 사람이 상대 은행에
+	 * 연락해야 하고, 연락하려면 <b>송금 ID와 금액</b>이 필요하다 — 게이지의 숫자 하나로는 못 한다.
+	 */
+	@Test
+	void 상대_은행_결과를_오래_모르는_건은_사람이_보게_남긴다() {
+		UUID transferId = UUID.randomUUID();
+		accountsReturn();
+		given(ledgerClient.balancesOf(any())).willReturn(Map.of());
+		noUnsettledWork();
+		given(accountClient.unknownExternalCredits(any())).willReturn(List.of(
+				new AccountClient.UnknownExternalCredit(transferId, "KB", new BigDecimal("10000.00"),
+						"KRW", 37, Instant.now())));
+
+		assertThat(findingsOf(reconciliationService.runOnce()))
+				.singleElement()
+				.satisfies(finding -> {
+					assertThat(finding.getType()).isEqualTo(FindingType.UNKNOWN_EXTERNAL_CREDIT);
+					assertThat(finding.getSubject()).isEqualTo(transferId.toString());
+					// 어느 은행에 얼마를 물어봐야 하는지가 없으면 연락을 못 한다.
+					assertThat(finding.getDetail()).contains("KB", "10000.00", "37회");
+				});
+	}
+
+	/**
 	 * 대사가 못 돌았는데 "발견 0건"으로 남으면, 보는 사람은 <b>깨끗하다고 오해한다.</b>
 	 * 배치가 죽은 걸 정상으로 읽는 게 어긋남 자체보다 위험하다.
 	 */
