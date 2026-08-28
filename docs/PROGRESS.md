@@ -64,8 +64,10 @@ Phase 6.5 🔄 상대 은행 (Kotlin, HTTP)  ← 지금 여기
 출시          ✅ 2026-08-28 — PR #2로 Phase 5·6·6.5를 한 번에 냈다 (main `0cbb74f`).
              태그 셋을 각 Phase 끝점에 달았다: `phase-5-complete`(`6c10aec`) ·
              `phase-6-complete`(`6b278c2`) · `phase-6-5-complete`(`5c79d54`)
-Phase 4       미착수 — Gateway·Config. **출시 다음은 여기다**(로드맵 순서가 6 → 4 → 6.5 → 7이고
-             Phase 4 절에 "컨테이너화 전에 서비스 구성을 확정"이라고 적혀 있다)
+Phase 4       🔄 진행 중 — Gateway·Config. **PR을 항목마다 잘게 낸다**(6개 예정)
+             1/6 springdoc ✅  여섯 서비스가 자기 계약을 낸다. 공개/내부를 그룹으로 갈랐다
+             2/6 Config Server · 3/6 Gateway 라우팅 · 4/6 인증 필터 ·
+             5/6 Rate Limiting · 6/6 재측정 + fail-open/closed 결정
 Phase 6.6     ❌ 취소 (2026-08-28) — 한도 서비스는 만들지 않는다. 근거는 ROADMAP 맨 위 표
 Phase 7~13    미착수 — 컨테이너·K8s는 Phase 4 다음
 ```
@@ -4871,6 +4873,74 @@ PR **#2**가 CI 세 잡(`lint-workflows` 13s · `unit` 1m33s · `build` 5m30s)�
 > **PR 크기가 스스로를 증명했습니다.** CodeRabbit이
 > *"Review skipped: 197 files exceed the limit of 100"*으로 리뷰를 건너뛰었습니다.
 > 세 Phase를 묶은 대가이고, **Phase 4부터는 끝나는 즉시 냅니다.**
+
+---
+
+## 문서를 손으로 쓰지 않는다 — 그리고 내부 문을 공개 문서에서 걷어냈다 ★
+
+**Phase 4 (1/6)** · `feature/phase-4-springdoc`
+
+399줄짜리 `docs/openapi.yaml`을 지우고, 여섯 서비스가 각자 `/v3/api-docs`로 자기 계약을
+내게 했습니다. **손으로 쓴 문서는 이미 코드와 어긋나 있었습니다** — 틀린 문서는 없느니만
+못합니다. 읽는 사람이 그걸 믿고 호출하기 때문입니다.
+
+### 이 작업의 진짜 내용은 "가르는 것"이었다
+
+문서를 생성하는 것 자체는 의존성 한 줄입니다. **위험한 건 그다음입니다.**
+
+```
+/accounts                                    고객이 부른다
+/internal/reconciliation/balances            대사가 부른다
+/internal/accounts/{id}/balance (PATCH)      잔액을 고친다 ★
+```
+
+한 문서에 섞어두면 Gateway가 그대로 노출할 때 **남의 잔액을 고치는 문이 공개 API로** 나갑니다.
+그래서 그룹을 둘로 나눴습니다.
+
+| 경로 | 무엇 | 누가 보나 |
+|---|---|---|
+| `/v3/api-docs/public` | `/internal/*`을 뺀 전부 | **Gateway가 모아서 낸다** |
+| `/v3/api-docs/internal` | `/internal/*`만 | 우리만 |
+| `/v3/api-docs` | 전부 | 서비스에 직접 물었을 때 |
+
+**거르는 규칙을 경로 규약에 걸었습니다.** 새 `/internal` 경로를 만들면 공개 그룹에서 빠지는 것이
+자동입니다 — 사람이 매번 기억해야 하는 규칙은 언젠가 잊힙니다.
+
+### 서비스마다 그룹을 나눈 건 아니다
+
+`reconciliation-service`는 **일부러 안 나눴습니다.** `/reconciliations`는 경로에 `internal`이
+없지만 전부 운영용이라 고객에게 열 것이 하나도 없습니다. **노출을 막는 것은 문서 그룹이 아니라
+라우팅이 할 일**이고, 여기서 공개 그룹을 만들면 *"공개할 것이 있다"*는 잘못된 신호가 됩니다.
+
+`external-bank-service`도 안 나눴습니다. 이건 **남의 시스템을 흉내 낸 것**이라 문서의 독자가
+고객이 아니라 우리 자신입니다.
+
+### 겪은 것
+
+- **springdoc은 2.x와 3.x가 같은 날 함께 릴리스됩니다.** 2.x가 Boot 3용이고 Boot 4에는
+  **3.x**를 써야 하는데, 최신 숫자만 보면 2.9.0을 고르게 됩니다.
+  루트 `build.gradle`에 `springdocVersion = '3.1.0'`으로 고정하고 그 이유를 주석에 적었습니다.
+  > Maven Central 검색 API는 **2.8.6까지만** 보여줬습니다. GitHub 릴리스를 봐야 3.x가 나옵니다.
+- **Jackson이 둘 공존합니다.** 우리 앱은 Jackson 3(`tools.jackson`)인데 springdoc이 끌고 오는
+  swagger-core는 Jackson 2(`com.fasterxml.jackson`)입니다. 패키지가 달라 충돌하지는 않지만,
+  **의존성 트리에 Jackson 2가 다시 들어온다**는 건 알고 있어야 합니다.
+- **Boot 4에서 `TestRestTemplate`이 옮겨갔습니다.** `spring-boot-test`에 없고
+  `spring-boot-resttestclient`(패키지도 `org.springframework.boot.resttestclient`)에 있으며,
+  `starter-test`가 끌어오지 않습니다. 의존성을 늘리지 않으려고 **MockMvc**로 갔습니다 —
+  이 저장소의 다른 웹 테스트와도 같은 방식입니다.
+
+### 확인
+
+| 무엇 | 결과 |
+|---|---|
+| 뜬 서비스가 자기 계약을 말하는가 | `/v3/api-docs`에 `/accounts` · `/accounts/{accountId}` |
+| **낡지 않았는가** | 오늘 추가한 `/internal/reconciliation/unknown-external-credits`가 들어 있다 |
+| **공개 문서에 내부 문이 없는가** ★ | `/v3/api-docs/public`에 `/internal/`이 **하나도 없다** |
+| 내부 문서는 내부만 | `/v3/api-docs/internal`에 `/accounts`가 없다 |
+| 회귀 | `./gradlew test` 전체 green (2분 22초) |
+
+두 번째 확인이 중요합니다. **"생성은 되는데 낡은 것"과 구분하려면** 최근 추가한 경로가
+따라오는지를 봐야 합니다 — 그게 손으로 쓴 문서가 실패한 지점이기 때문입니다.
 
 ---
 
