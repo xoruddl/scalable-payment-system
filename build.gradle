@@ -50,6 +50,14 @@ def gitValue = { String property, List<String> args ->
 ext {
 	gitCommit = gitValue('gitCommit', ['git', 'rev-parse', '--short=12', 'HEAD'])
 	gitBranch = gitValue('gitBranch', ['git', 'rev-parse', '--abbrev-ref', 'HEAD'])
+
+	/*
+	 * springdoc은 Boot의 BOM이 관리하지 않으므로 버전을 직접 고정한다.
+	 *
+	 * ⚠️ 2.x는 Boot 3용이다. Boot 4(Spring Framework 7 · Jackson 3)에는 3.x를 써야 한다 —
+	 * 두 줄기가 같은 날 함께 릴리스되므로 최신 숫자만 보고 2.9.0을 고르면 조용히 어긋난다.
+	 */
+	springdocVersion = '3.1.0'
 }
 
 allprojects {

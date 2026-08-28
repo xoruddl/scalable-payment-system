@@ -493,7 +493,10 @@ transfer HikariCP **pending 193** / 획득 대기 p99 **4.9초**.
 > **왜 Phase 7 전인가** — 서비스가 하나 더 늘면 Dockerfile도 하나 더 필요합니다.
 > **컨테이너화 전에 서비스 구성을 확정**해두는 편이 낫습니다.
 
-- [ ] **🔁 손으로 쓴 `openapi.yaml` → springdoc-openapi** (Gateway가 쓸 계약이므로 먼저 정리)
+- [x] **🔁 손으로 쓴 `openapi.yaml` → springdoc-openapi** ✅ — 여섯 서비스가 각자
+      `/v3/api-docs`로 자기 계약을 낸다. **공개(`/public`)와 내부(`/internal`)를 그룹으로 갈랐다** —
+      Gateway가 공개 그룹만 모으므로 대사·운영용 문이 바깥으로 새지 않는다.
+      399줄짜리 손으로 쓴 스펙은 지웠다
 - [ ] Spring Cloud Gateway로 단일 진입점 구성 (라우팅, 인증 필터)
 - [ ] Spring Cloud Config Server로 중앙 설정 관리 (Git 기반 config repo)
 - [ ] Netty 기반 리액티브 게이트웨이 특성 활용 (비동기 논블로킹)
