@@ -6,6 +6,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.http.HttpHeaders;
 import org.springframework.boot.webtestclient.autoconfigure.AutoConfigureWebTestClient;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -51,15 +52,32 @@ class GatewayRoutingTest {
 		ledgerBackend.stop(0);
 	}
 
+	private static final String SECRET = "routing-test-secret-that-is-32-bytes-long!";
+
 	@DynamicPropertySource
 	static void 라우트를_가짜_뒤쪽으로_돌린다(DynamicPropertyRegistry registry) {
 		registry.add("ACCOUNT_URI", () -> "http://localhost:" + accountBackend.getAddress().getPort());
 		registry.add("LEDGER_URI", () -> "http://localhost:" + ledgerBackend.getAddress().getPort());
+		registry.add("remittance.auth.secret", () -> SECRET);
+	}
+
+	/**
+	 * 라우팅을 보려면 <b>인증을 먼저 통과해야 한다</b> (Phase 4의 3/5에서 붙었다).
+	 * 토큰을 안 붙이면 라우트가 맞는지와 무관하게 401이라, 여기서 보려는 것을 못 본다.
+	 */
+	private String 유효한_토큰() {
+		try {
+			return JwtAuthFilterTest.토큰("routing-test-user", java.time.Duration.ofMinutes(10), SECRET);
+		} catch (Exception e) {
+			throw new IllegalStateException("테스트 토큰을 못 만들었다", e);
+		}
 	}
 
 	@Test
 	void 계좌_조회는_account로_간다() {
-		client.get().uri("/accounts/{id}/balance", "a-1").exchange()
+		client.get().uri("/accounts/{id}/balance", "a-1")
+				.header(HttpHeaders.AUTHORIZATION, "Bearer " + 유효한_토큰())
+				.exchange()
 				.expectStatus().isOk()
 				.expectBody(String.class).isEqualTo("account");
 	}
@@ -68,10 +86,19 @@ class GatewayRoutingTest {
 	void 송금은_transfer로_간다() {
 		// 이 테스트에서는 transfer 뒤쪽을 세우지 않았다. 라우트가 있으면 <b>연결 실패</b>가 나고,
 		// 라우트가 아예 없으면 404가 난다. 둘을 구분하는 것이 여기서 보려는 것이다.
-		client.get().uri("/transfers/{id}", "t-1").exchange()
+		client.get().uri("/transfers/{id}", "t-1")
+				.header(HttpHeaders.AUTHORIZATION, "Bearer " + 유효한_토큰())
+				.exchange()
 				.expectStatus().value(status -> assertThat(status)
 						.as("라우트가 없으면 404다 — 여기서는 뒤쪽이 없어서 실패해야 한다")
 						.isNotEqualTo(404));
+	}
+
+	/** 인증이 라우팅보다 먼저 선다 — 토큰이 없으면 어디로 갈지 따지기 전에 막힌다. */
+	@Test
+	void 토큰이_없으면_라우팅까지_가지도_않는다() {
+		client.get().uri("/accounts/{id}/balance", "a-1").exchange()
+				.expectStatus().isUnauthorized();
 	}
 
 	/**
@@ -80,7 +107,9 @@ class GatewayRoutingTest {
 	 */
 	@Test
 	void 겹치는_경로는_더_구체적인_쪽이_이긴다() {
-		client.get().uri("/accounts/{id}/transactions", "a-1").exchange()
+		client.get().uri("/accounts/{id}/transactions", "a-1")
+				.header(HttpHeaders.AUTHORIZATION, "Bearer " + 유효한_토큰())
+				.exchange()
 				.expectStatus().isOk()
 				.expectBody(String.class)
 				.isEqualTo("ledger");
@@ -98,7 +127,9 @@ class GatewayRoutingTest {
 	void 내부_경로는_라우트가_없어_뒤쪽에_닿지_않는다() {
 		내부로_들어온_요청.clear();
 
-		client.get().uri("/internal/reconciliation/balances").exchange()
+		client.get().uri("/internal/reconciliation/balances")
+				.header(HttpHeaders.AUTHORIZATION, "Bearer " + 유효한_토큰())
+				.exchange()
 				.expectStatus().isNotFound();
 
 		assertThat(내부로_들어온_요청)
