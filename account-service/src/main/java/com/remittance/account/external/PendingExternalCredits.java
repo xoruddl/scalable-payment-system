@@ -98,16 +98,32 @@ public class PendingExternalCredits {
 	}
 
 	/**
-	 * 확인을 못 한 건이 몇 개나 쌓여 있나.
+	 * 확인을 못 한 건이 몇 개나 쌓여 있나. <b>둘로 갈라서 낸다.</b>
 	 *
-	 * <p><b>이 값이 0에서 뜨면 그래프에서 튄다.</b> 돈이 나갔을 수도 있는 건이 늘어나는 중이라는
-	 * 뜻이라, 지연이나 처리량보다 먼저 봐야 하는 숫자다. 0일 때도 시계열이 있어야
-	 * "0건"과 "수집이 안 됨"이 구분된다.
+	 * <p>한 표에 두 가지가 함께 사는데, 하나로 세면 <b>사고의 크기를 부풀려 보고한다.</b>
+	 * 2026-08-28 재측정에서 회로가 열렸을 때 이 값이 320이었는데
+	 * <b>진짜로 모르는 건은 1건</b>이었고 나머지 319건은 아예 보내지도 않은 것이었다.
+	 * 차단된 건은 돈이 나갈 수가 없으므로 <b>사고가 아니라 밀린 일</b>이다.
+	 *
+	 * <table>
+	 *   <tr><th>지표</th><th>뜻</th><th>봐야 하는 이유</th></tr>
+	 *   <tr><td>{@code ...credit.unknown}</td><td>보냈는데 모른다</td>
+	 *       <td><b>돈이 나갔을 수 있다.</b> 0에서 뜨면 지연·처리량보다 먼저 본다</td></tr>
+	 *   <tr><td>{@code ...credit.unsent}</td><td>보내지도 못했다</td>
+	 *       <td>회로·격벽이 일하고 있다는 뜻. 상대가 살아나면 빠져야 한다</td></tr>
+	 * </table>
+	 *
+	 * <p>0일 때도 시계열이 있어야 "0건"과 "수집이 안 됨"이 구분된다.
 	 */
 	@PostConstruct
 	void 미해소_건수를_지표로_낸다() {
-		Gauge.builder("remittance.external.credit.unknown", repository, PendingExternalCreditRepository::count)
-				.description("상대 은행 결과를 아직 결론짓지 못한 입금 건수 (미전송 포함)")
+		Gauge.builder("remittance.external.credit.unknown", repository,
+						PendingExternalCreditRepository::countBySentTrue)
+				.description("보냈는데 상대 은행의 결과를 모르는 입금 건수 (돈이 나갔을 수 있다)")
+				.register(meterRegistry);
+		Gauge.builder("remittance.external.credit.unsent", repository,
+						PendingExternalCreditRepository::countBySentFalse)
+				.description("회로·격벽에 막혀 아직 보내지 못한 입금 건수 (돈은 안 나갔다)")
 				.register(meterRegistry);
 	}
 }
