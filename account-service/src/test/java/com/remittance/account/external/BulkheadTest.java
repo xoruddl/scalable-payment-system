@@ -51,6 +51,47 @@ class BulkheadTest {
 				.tag("name", "external-bank").gauge().value()).isEqualTo(2);
 	}
 
+	/**
+	 * 격벽이 일하고 있는지는 <b>순간값이 아니라 거절 수</b>로 판정해왔다 —
+	 * 2026-08-27 실측의 "거절 1,662 &gt; 통과 1,273"이 정원을 늘린 근거였다.
+	 * Resilience4j의 표준 지표는 게이지 둘뿐이라 이 카운터는 우리가 세야 한다.
+	 */
+	@Test
+	void 통과와_거절을_카운터로_센다() throws Exception {
+		SimpleMeterRegistry meters = new SimpleMeterRegistry();
+		ExternalCallBulkhead bulkhead = new ExternalCallBulkhead(1, meters);
+
+		// 한 번도 안 불렀어도 0으로 보여야 한다 — 없는 것과 0은 다르다.
+		assertThat(admitted(meters)).isZero();
+		assertThat(rejected(meters)).isZero();
+
+		CountDownLatch occupied = new CountDownLatch(1);
+		CountDownLatch release = new CountDownLatch(1);
+		try (ExecutorService pool = Executors.newSingleThreadExecutor()) {
+			pool.submit(() -> bulkhead.call(() -> {
+				occupied.countDown();
+				await(release);
+				return null;
+			}));
+			assertThat(occupied.await(5, TimeUnit.SECONDS)).isTrue();
+
+			assertThatThrownBy(() -> bulkhead.call(() -> "들어가면 안 된다"))
+					.isInstanceOf(BulkheadFullException.class);
+			release.countDown();
+		}
+
+		assertThat(admitted(meters)).as("보낸 것").isEqualTo(1);
+		assertThat(rejected(meters)).as("정원이 차서 못 보낸 것").isEqualTo(1);
+	}
+
+	private static double admitted(SimpleMeterRegistry meters) {
+		return meters.get("remittance.external.bulkhead.admitted").counter().count();
+	}
+
+	private static double rejected(SimpleMeterRegistry meters) {
+		return meters.get("remittance.external.bulkhead.rejected").counter().count();
+	}
+
 	@Test
 	void 정원이_차면_기다리지_않고_즉시_거절한다() throws Exception {
 		ExternalCallBulkhead bulkhead = bulkhead(1);
