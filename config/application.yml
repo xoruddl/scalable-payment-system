@@ -1,0 +1,23 @@
+# 여섯 서비스가 공유하는 설정 (Phase 4).
+#
+# Config Server가 이 파일을 `application` 이름으로 낸다 — 서비스 이름이 무엇이든 함께 받는다.
+# 서비스 하나에만 해당하는 값은 여기 두지 않는다. `{서비스이름}.yml`을 옆에 만들면 된다.
+#
+# ⚠️ 기본 설정(file: URI)에서는 <b>커밋하지 않은 변경도 그대로 나간다.</b>
+# Git 백엔드가 로컬 저장소를 만나면 clone하지 않고 작업 트리를 읽기 때문이다.
+# "커밋된 것만" 내고 싶으면 CONFIG_REPO_URI에 원격 주소를 준다.
+
+# 모든 서비스가 같은 방식으로 헬스체크·메트릭을 노출한다.
+# 여섯 곳에 같은 블록을 복사해두면 하나만 빠뜨려도 그 서비스가 조용히 안 보인다 —
+# Prometheus는 스크래핑에 실패한 대상을 화면에서 지우는 게 아니라 그냥 값이 없을 뿐이라
+# "괜찮은 것"과 구분되지 않는다.
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: always
+      probes:
+        enabled: true

@@ -499,6 +499,9 @@ transfer HikariCP **pending 193** / 획득 대기 p99 **4.9초**.
       399줄짜리 손으로 쓴 스펙은 지웠다
 - [ ] Spring Cloud Gateway로 단일 진입점 구성 (라우팅, 인증 필터)
 - [ ] Spring Cloud Config Server로 중앙 설정 관리 (Git 기반 config repo)
+      — 🔄 **서버는 떴다**(2/6). `config/` 디렉터리를 읽어 실제로 설정을 낸다.
+      **별도 저장소로 빼지 않았다** — `build-info`가 "지금 떠 있는 게 어느 커밋인가"에 답하는데
+      설정이 다른 저장소에 있으면 그 답이 반쪽이 된다. 여섯 서비스가 받아 쓰는 것은 다음 PR
 - [ ] Netty 기반 리액티브 게이트웨이 특성 활용 (비동기 논블로킹)
 
 ## Phase 6.5. 상대 은행(external bank) — **Kotlin으로 만든다** ✅ **완료 (2026-08-28)**

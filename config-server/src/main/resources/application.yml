@@ -1,11 +1,26 @@
 spring:
   application:
     name: config-server
+  cloud:
+    config:
+      server:
+        git:
+          # 이 저장소 자신을 읽는다. 별도 저장소로 빼지 않은 이유는 앱 클래스 주석에 있다.
+          #
+          # 기본값이 실행 디렉터리인 이유: 노트북에서는 저장소 루트에서 gradle로 띄우고,
+          # 홈서버에서는 ~/remittance에서 스크립트가 띄운다. 둘 다 저장소 루트다.
+          uri: ${CONFIG_REPO_URI:file://${user.dir}}
+          search-paths: config
+          # ⚠️ label은 브랜치지만, <b>지금 설정(file: URI)에서는 거의 뜻이 없다.</b>
+          # Git 백엔드는 file: URI를 만나면 clone하지 않고 <b>작업 트리를 그대로 읽는다</b> —
+          # 커밋하지 않은 변경도 그대로 나간다(테스트로 못 박아뒀다).
+          # "그 브랜치에 커밋된 것"을 내려면 CONFIG_REPO_URI에 <b>원격 주소</b>를 준다.
+          default-label: ${CONFIG_REPO_LABEL:develop}
+          # 매 요청마다 clone하지 않도록 받아둔 것을 재사용한다.
+          basedir: ${CONFIG_REPO_BASEDIR:${java.io.tmpdir}/remittance-config-repo}
 
 server:
   port: 8888
-
-# Phase 4에서 @EnableConfigServer 및 Git 기반 config repo 연동 설정 추가 예정
 
 # Actuator: 헬스체크·메트릭 노출.
 # health 상세는 K8s probe(Phase 7), prometheus는 메트릭 수집(Phase 9)에서 쓴다.
