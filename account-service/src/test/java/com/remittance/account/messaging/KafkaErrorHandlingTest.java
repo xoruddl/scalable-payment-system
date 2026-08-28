@@ -7,6 +7,8 @@ import com.remittance.account.exception.ConcurrentUpdateException;
 import com.remittance.account.repository.AccountRepository;
 import com.remittance.account.saga.TransferSagaService;
 import com.remittance.account.service.AccountService;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.search.MeterNotFoundException;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -79,6 +81,23 @@ class KafkaErrorHandlingTest extends AbstractIntegrationTest {
 	@Autowired
 	private DeadLetterProbe deadLetterProbe;
 
+	@Autowired
+	private MeterRegistry meterRegistry;
+
+	/**
+	 * DLT로 보낸 건수 (Phase 5 Step 2).
+	 *
+	 * <p>아직 한 건도 없으면 미터 자체가 없다 — 카운터는 처음 증가할 때 만들어진다.
+	 * 그때 예외 대신 0을 돌려줘야 "전 대비 +1"을 셀 수 있다.
+	 */
+	private double dltCount(String topic) {
+		try {
+			return meterRegistry.get("remittance.kafka.dlt.published").tag("topic", topic).counter().count();
+		} catch (MeterNotFoundException notYet) {
+			return 0;
+		}
+	}
+
 	@MockitoSpyBean
 	private TransferSagaService transferSagaService;
 
@@ -109,10 +128,10 @@ class KafkaErrorHandlingTest extends AbstractIntegrationTest {
 				.given(transferSagaService).onRequested(any());
 
 		publish(TransferEvents.REQUESTED,
-				new TransferEvents.Requested(transferId, from, to, amount, "KRW"), transferId);
+				TransferEvents.Requested.internal(transferId, from, to, amount, "KRW"), transferId);
 
 		await().atMost(Duration.ofSeconds(60)).untilAsserted(() -> {
-			assertThat(accountRepository.findByAccountId(from).orElseThrow().getBalance())
+			assertThat(accountService.getBalance(from).total())
 					.as("한 번 실패했다고 포기하면 출금이 영영 일어나지 않는다")
 					.isEqualByComparingTo("4000.00");
 		});
@@ -128,6 +147,7 @@ class KafkaErrorHandlingTest extends AbstractIntegrationTest {
 	 */
 	@Test
 	void 끝내_실패한_이벤트는_버려지지_않고_DLT로_간다() {
+		double dltBefore = dltCount(TransferEvents.CREDIT_FAILED);
 		UUID from = fundedAccount();
 		UUID transferId = UUID.randomUUID();
 		// 환불받아야 할 계좌가 닫혀 있어 보상이 성공할 수 없다
@@ -145,5 +165,9 @@ class KafkaErrorHandlingTest extends AbstractIntegrationTest {
 						.anySatisfy(payload -> assertThat(payload).contains(transferId.toString())));
 		verify(transferSagaService, times(1))
 				.onCreditFailed(argThat(event -> event.transferId().equals(transferId)));
+		assertThat(dltCount(TransferEvents.CREDIT_FAILED))
+				.as("DLT에 남는 것만으로는 아무도 모른다 - 2026-08-22 e2e에서 로그 한 줄 없이 "
+						+ "적재되는 것을 확인했다. 그래프에서 튀어야 사람에게 닿는다")
+				.isEqualTo(dltBefore + 1);
 	}
 }

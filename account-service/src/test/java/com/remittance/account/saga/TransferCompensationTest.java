@@ -62,7 +62,7 @@ class TransferCompensationTest extends AbstractIntegrationTest {
 		UUID transferId = UUID.randomUUID();
 
 		// Transfer Service가 접수 후 발행하는 이벤트. 여기서부터는 아무도 지시하지 않는다.
-		TransferEvents.Requested requested = new TransferEvents.Requested(
+		TransferEvents.Requested requested = TransferEvents.Requested.internal(
 				transferId, from.getAccountId(), to.getAccountId(), new BigDecimal("1000.00"), "KRW");
 		kafkaTemplate.send(TransferEvents.REQUESTED, transferId.toString(),
 				objectMapper.writeValueAsString(requested)).join();
@@ -73,7 +73,7 @@ class TransferCompensationTest extends AbstractIntegrationTest {
 					.as("출금 → 입금실패 → 환불의 세 이벤트가 스스로 이어져야 한다")
 					.containsExactly(TransferEvents.DEBITED, TransferEvents.CREDIT_FAILED,
 							TransferEvents.DEBIT_REVERSED);
-			assertThat(accountRepository.findByAccountId(from.getAccountId()).orElseThrow().getBalance())
+			assertThat(accountService.getBalance(from.getAccountId()).total())
 					.as("보상이 끝나면 출금 전 잔액으로 돌아와 있어야 한다")
 					.isEqualByComparingTo("5000.00");
 		});

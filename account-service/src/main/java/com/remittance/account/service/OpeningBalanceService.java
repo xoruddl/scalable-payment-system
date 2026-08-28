@@ -60,7 +60,7 @@ public class OpeningBalanceService {
 			BigDecimal ledgerBalance) {
 		// 잔액을 바꾸진 않지만 잔액을 읽고 판단하므로, 다른 변경과 같은 문으로 들어가야 한다.
 		// 락 밖에서 하면 판단하는 사이에 잔액이 움직여 엉뚱한 금액을 심을 수 있다.
-		OpeningBalanceResult result = accountService.guarded(accountId,
+		OpeningBalanceResult result = accountService.guardedWhole(accountId,
 				() -> openingBalanceExecutor.execute(accountId, observedBalance, ledgerBalance));
 		if (result.outcome() == OpeningBalanceResult.Outcome.SEEDED) {
 			log.info("개시 잔액을 이월했다 (accountId={}, 금액={})", accountId, result.amount().toPlainString());

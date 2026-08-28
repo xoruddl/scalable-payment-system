@@ -2,11 +2,15 @@ package com.remittance.account.web;
 
 import com.remittance.account.service.ReconciliationQueryService;
 import com.remittance.account.web.dto.AccountBalancePage;
+import com.remittance.account.web.dto.UnknownExternalCreditView;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+
+import java.time.Duration;
+import java.util.List;
 
 /**
  * 대사 서비스가 읽어가는 전용 API. Gateway로 노출되지 않는다.
@@ -29,5 +33,14 @@ public class InternalReconciliationController {
 			@RequestParam(required = false) Long cursor,
 			@RequestParam(defaultValue = "" + DEFAULT_PAGE_SIZE) int size) {
 		return reconciliationQueryService.balances(cursor, Math.min(size, MAX_PAGE_SIZE));
+	}
+
+	/** 상대 은행에 보냈는데 오래 결론이 안 난 건들 (Phase 6.5). */
+	@GetMapping("/unknown-external-credits")
+	public List<UnknownExternalCreditView> unknownExternalCredits(
+			@RequestParam long olderThanSeconds,
+			@RequestParam(defaultValue = "" + DEFAULT_PAGE_SIZE) int size) {
+		return reconciliationQueryService.unknownExternalCredits(
+				Duration.ofSeconds(olderThanSeconds), Math.min(size, MAX_PAGE_SIZE));
 	}
 }

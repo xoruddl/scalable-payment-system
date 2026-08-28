@@ -66,6 +66,57 @@ services:
       timeout: 10s
       retries: 10
 
+  # Phase 5 Step 2: 부하를 걸었을 때 "어디가" 막히는지 보는 수단.
+  #
+  # k6는 클라이언트에서 본 숫자(접수 지연·종결 지연)만 준다. Outbox가 적체됐는지,
+  # 락을 기다리는지, 커넥션 풀이 말랐는지는 서버 쪽 메트릭만 안다.
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    container_name: remittance-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - remittance-prometheus-data:/prometheus
+    # 서비스가 아직 호스트에서 뜨므로(컨테이너화는 Phase 7) 컨테이너가 호스트를 거꾸로 긁는다.
+    # Docker Desktop에는 host.docker.internal이 기본으로 있지만 Linux에는 없어서 여기서 만든다.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      # baseline과 재측정을 비교하려면 지난 측정이 남아 있어야 한다.
+      - --storage.tsdb.retention.time=15d
+      # 대시보드를 고치다 설정을 바꿨을 때 재기동 없이 반영하기 위함.
+      - --web.enable-lifecycle
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://localhost:9090/-/healthy || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  grafana:
+    image: grafana/grafana:11.5.1
+    container_name: remittance-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      # 로컬 관측용이라 로그인을 막지 않는다. 열자마자 그래프가 보여야 쓰게 된다.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      GF_USERS_DEFAULT_THEME: dark
+    volumes:
+      # 데이터소스와 대시보드를 코드로 둔다 — 손으로 클릭해 만들면 다음 사람이 재현할 수 없다.
+      - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./docker/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - remittance-grafana-data:/var/lib/grafana
+    depends_on:
+      prometheus:
+        condition: service_healthy
+
 volumes:
   remittance-mysql-data:
   remittance-mongo-data:
+  remittance-prometheus-data:
+  remittance-grafana-data:

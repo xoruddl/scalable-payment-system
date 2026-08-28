@@ -29,7 +29,12 @@ import java.util.stream.Stream;
 @Configuration
 public class KafkaTopicsConfig {
 
-	private static final int PARTITIONS = 3;
+	/**
+	 * <b>컨슈머 스레드 수의 상한</b>이다 — 스레드는 파티션 수를 넘을 수 없다.
+	 * 3 → 6으로 올렸다. 근거와 주의사항은 account-service의 같은 파일에 적어두었다
+	 * (네 서비스가 같은 값을 선언해야 한다 — 어긋나면 큰 쪽이 이긴다).
+	 */
+	private static final int PARTITIONS = 6;
 	/** 로컬은 단일 브로커라 1. 운영이라면 최소 3이어야 한다. */
 	private static final int REPLICAS = 1;
 

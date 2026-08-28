@@ -33,8 +33,21 @@ import java.util.stream.Stream;
 @Configuration
 public class KafkaTopicsConfig {
 
-	/** 컨슈머 인스턴스를 3개까지 늘려 병렬 처리할 수 있다는 뜻. */
-	private static final int PARTITIONS = 3;
+	/**
+	 * <b>컨슈머 스레드 수의 상한</b>이다 — 스레드를 아무리 늘려도 파티션 수를 넘을 수 없다.
+	 *
+	 * <p>3 → 6으로 올린 이유 (Phase 6, 2026-08-24 실측). 60 TPS에서 account 컨슈머만
+	 * lag가 계속 자랐고(75 → 633), 상한이 그대로 계산됐다:
+	 * <b>입금 리스너 한 건 52.5ms × 스레드 3개 = 초당 57건.</b> 필요한 건 60건/s였다.
+	 *
+	 * <p>그때 JVM CPU는 3~4%, HikariCP 대기는 0이었다. <b>자원이 남는데 스레드가 3개라
+	 * 못 쓰고 있었다</b>는 뜻이고, 그 3은 파티션 수가 정한 값이었다.
+	 *
+	 * <p>⚠️ <b>늘리면 키 → 파티션 배정이 바뀐다.</b> 같은 송금의 이벤트가 예전 파티션과
+	 * 새 파티션으로 갈릴 수 있으므로 <b>토픽이 빈 상태에서</b> 올려야 한다.
+	 * 줄이는 것은 아예 안 된다 — Kafka가 막는다.
+	 */
+	private static final int PARTITIONS = 6;
 	/** 로컬은 단일 브로커라 1. 운영이라면 최소 3이어야 한다. */
 	private static final int REPLICAS = 1;
 
@@ -44,6 +57,7 @@ public class KafkaTopicsConfig {
 			TransferEvents.CREDITED,
 			TransferEvents.DEBIT_FAILED,
 			TransferEvents.CREDIT_FAILED,
+			TransferEvents.CREDIT_UNKNOWN,
 			TransferEvents.DEBIT_REVERSED);
 
 	/** {@code credit-failed}는 이 서비스가 발행하고 다시 소비한다 — 보상을 재시도 가능하게 만들기 위해서다. */

@@ -12,6 +12,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
@@ -26,6 +27,11 @@ import java.util.UUID;
  * <pre>
  *   ① 자리 잡기(PENDING 저장)  ─▶  ② 발송  ─▶  ③ SENT로 표시
  * </pre>
+ *
+ * <p><b>한 소식이 만드는 알림들은 ①과 ③을 함께 한다</b> (Phase 6, 2026-08-26).
+ * 완료된 송금은 둘에게 알리는데, 전에는 각각 저장하고 각각 표시해 <b>커밋을 네 번</b> 썼다.
+ * 커밋 하나가 평균 47.8ms짜리 공유 관문을 지나므로 그 값이 싸지 않다.
+ * <b>단계를 합치는 게 아니라 같은 단계의 두 건을 묶는 것</b>이라 아래 보장은 그대로다.
  *
  * <p>이 순서여야 어디서 죽든 안전하다.
  * <ul>
@@ -50,10 +56,11 @@ public class NotificationService {
 
 	/** 완료된 송금은 <b>두 사람</b>에게 알린다 — 보낸 사람과 받은 사람은 서로 다른 소식을 받는다. */
 	public void onCompleted(TransferEvents.TransferSettled event) {
-		deliver(event.transferId(), NotificationType.TRANSFER_SENT, event.fromAccountId(),
-				"%s %s을(를) 보냈습니다.".formatted(format(event.amount()), event.currency()));
-		deliver(event.transferId(), NotificationType.TRANSFER_RECEIVED, event.toAccountId(),
-				"%s %s이(가) 입금되었습니다.".formatted(format(event.amount()), event.currency()));
+		deliver(List.of(
+				new NotificationDraft(event.transferId(), NotificationType.TRANSFER_SENT, event.fromAccountId(),
+						"%s %s을(를) 보냈습니다.".formatted(format(event.amount()), event.currency())),
+				new NotificationDraft(event.transferId(), NotificationType.TRANSFER_RECEIVED, event.toAccountId(),
+						"%s %s이(가) 입금되었습니다.".formatted(format(event.amount()), event.currency()))));
 	}
 
 	/**
@@ -61,21 +68,34 @@ public class NotificationService {
 	 * 알리면 있지도 않았던 거래를 알려주는 꼴이 된다.
 	 */
 	public void onFailed(TransferEvents.TransferSettled event) {
-		deliver(event.transferId(), NotificationType.TRANSFER_FAILED, event.fromAccountId(),
+		deliver(List.of(new NotificationDraft(event.transferId(), NotificationType.TRANSFER_FAILED,
+				event.fromAccountId(),
 				"%s %s 송금이 실패했습니다. (%s)".formatted(format(event.amount()), event.currency(),
-						event.failureReason() == null ? "사유 미상" : event.failureReason()));
+						event.failureReason() == null ? "사유 미상" : event.failureReason()))));
 	}
 
-	private void deliver(UUID transferId, NotificationType type, UUID recipientAccountId, String message) {
-		Notification notification = notificationRecorder.claim(transferId, type, recipientAccountId, message);
-		if (notification.isSent()) {
-			log.debug("이미 보낸 알림이라 건너뛴다 (transferId={}, type={})", transferId, type);
-			return;
-		}
+	private void deliver(List<NotificationDraft> drafts) {
+		List<Notification> claimed = notificationRecorder.claimAll(drafts);
 
-		// 여기서 실패하면 예외가 그대로 올라가 오프셋이 커밋되지 않는다 → 재배달로 다시 시도된다.
-		notificationSender.send(notification);
-		notificationRecorder.markSent(notification.getId());
+		List<Long> justSent = new ArrayList<>(claimed.size());
+		try {
+			for (Notification notification : claimed) {
+				if (notification.isSent()) {
+					log.debug("이미 보낸 알림이라 건너뛴다 (transferId={}, type={})",
+							notification.getTransferId(), notification.getType());
+					continue;
+				}
+				// 여기서 실패하면 예외가 그대로 올라가 오프셋이 커밋되지 않는다 → 재배달로 다시 시도된다.
+				notificationSender.send(notification);
+				justSent.add(notification.getId());
+			}
+		} finally {
+			// <b>finally여야 한다.</b> 둘째 발송이 실패했다고 첫째까지 PENDING으로 남기면,
+			// 재배달 때 이미 나간 알림이 한 번 더 나간다. 나간 것은 나갔다고 적고 나서 예외를 올린다.
+			if (!justSent.isEmpty()) {
+				notificationRecorder.markSentAll(justSent);
+			}
+		}
 	}
 
 	@Transactional(readOnly = true)

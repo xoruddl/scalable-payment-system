@@ -5,9 +5,17 @@ plugins {
 dependencies {
 	implementation 'org.springframework.boot:spring-boot-starter-web'
 	implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+	// 스키마는 ddl-auto가 아니라 db/migration의 SQL이 만든다 (DECISIONS.md 교체 4번).
+	implementation 'org.springframework.boot:spring-boot-starter-flyway'
+	// MySQL 8은 별도 모듈이 있어야 Flyway가 방언을 인식한다. 없으면 기동 시 "Unsupported Database"로 죽는다.
+	runtimeOnly 'org.flywaydb:flyway-mysql'
 	implementation 'org.springframework.boot:spring-boot-starter-data-redis'
 	implementation 'org.springframework.boot:spring-boot-starter-kafka'
 	implementation 'org.springframework.boot:spring-boot-starter-validation'
+	// Boot 4용 스타터 자동 설정에 기대지 않고, 필요한 코어 모듈만 직접 조립한다 (DECISIONS.md D-002).
+	implementation 'io.github.resilience4j:resilience4j-circuitbreaker:2.4.0'
+	implementation 'io.github.resilience4j:resilience4j-bulkhead:2.4.0'
+	implementation 'io.github.resilience4j:resilience4j-micrometer:2.4.0'
 	runtimeOnly 'com.mysql:mysql-connector-j'
 	testImplementation 'org.springframework.boot:spring-boot-webmvc-test'
 	testImplementation 'org.springframework.boot:spring-boot-testcontainers'

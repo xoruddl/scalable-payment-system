@@ -1,0 +1,13 @@
+# 데이터소스를 손으로 클릭해 만들면 다음 사람은 그 클릭을 재현해야 한다.
+# 저장소에 두어 `docker compose up`만으로 같은 화면이 서게 한다.
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    uid: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    jsonData:
+      timeInterval: 5s

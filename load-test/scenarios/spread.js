@@ -1,4 +1,4 @@
-import { TREND_STATS, loadStages, proberDuration, seedCount } from '../lib/config.js';
+import { FIXED_RATE, TREND_STATS, fixedRateStages, fixedStartRate, proberDuration, seedCount } from '../lib/config.js';
 import { pick, seedAccounts } from '../lib/seed.js';
 import { requestAndAwaitSettle, requestTransfer } from '../lib/transfer.js';
 import { summaryFor } from '../lib/summary.js';
@@ -25,11 +25,13 @@ export const options = {
 		load: {
 			executor: 'ramping-arrival-rate',
 			exec: 'fireAndForget',
-			startRate: 10,
+			// RATE를 주면 시작도 그 값이라 램프 없이 <b>진짜 고정</b>이 된다 (lib/config.js).
+			startRate: fixedStartRate(10),
 			timeUnit: '1s',
 			preAllocatedVUs: 50,
 			maxVUs: 600,
-			stages: loadStages([
+			// 기본은 천장을 찾는 계단. RATE를 주면 그 도착률로 2분만 돈다 (lib/config.js 참고).
+			stages: fixedRateStages([
 				{ target: 50, duration: '1m' },
 				{ target: 100, duration: '1m' },
 				{ target: 200, duration: '1m' },
@@ -43,13 +45,16 @@ export const options = {
 			exec: 'probe',
 			rate: 1,
 			timeUnit: '1s',
-			duration: proberDuration('4m'),
+			duration: FIXED_RATE > 0 ? '2m' : proberDuration('4m'),
 			preAllocatedVUs: 20,
 			maxVUs: 100,
 		},
 	},
 	thresholds: {
 		// 접수는 INSERT 두 번이라 빨라야 한다.
+		// 이 두 줄은 통과 기준이 아니라 <b>부분지표를 만들기 위한 것</b>이다.
+		// k6는 threshold에 적힌 부분지표만 만든다 — 안 적으면 요약에서 '—'로 나온다.
+		'http_reqs{name:accept}': ['count>0'],
 		'http_req_duration{name:accept}': ['p(95)<200'],
 		// 진짜 지표. 이게 무너지는 지점이 천장이다.
 		settle_duration: ['p(95)<5000'],

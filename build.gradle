@@ -2,6 +2,19 @@ plugins {
 	id 'java'
 	id 'org.springframework.boot' version '4.1.0' apply false
 	id 'io.spring.dependency-management' version '1.1.7' apply false
+	/*
+	 * Phase 6.5의 상대 은행만 Kotlin이다 (external-bank-service).
+	 *
+	 * 플러그인 버전은 여기 적어야 한다. Boot의 의존성 관리는 Kotlin <b>라이브러리</b> 버전만
+	 * 맞춰주고, Gradle 플러그인 버전까지 정해주지는 않는다.
+	 *
+	 * kotlin.plugin.spring이 필요한 이유: Kotlin 클래스는 기본이 final인데
+	 * Spring의 프록시(@Transactional, @Configuration)는 상속을 쓴다.
+	 * 이 플러그인이 스프링 애너테이션이 붙은 클래스를 open으로 열어준다.
+	 */
+	id 'org.jetbrains.kotlin.jvm' version '2.3.21' apply false
+	id 'org.jetbrains.kotlin.plugin.spring' version '2.3.21' apply false
+	id 'org.jetbrains.kotlin.plugin.jpa' version '2.3.21' apply false
 }
 
 /**
@@ -10,18 +23,33 @@ plugins {
  * git이 없거나 저장소 밖에서 빌드하는 경우(소스 tarball 등)에도 빌드가 깨지면 안 되므로
  * 실패하면 조용히 'unknown'으로 떨어진다 — 버전 정보 때문에 빌드를 못 하는 건 본말전도다.
  */
-def gitValue = { List<String> args ->
+def gitValue = { String property, List<String> args ->
+	/*
+	 * 밖에서 넘겨준 값이 있으면 그걸 먼저 쓴다.
+	 *
+	 * 빌드가 항상 git이 있는 곳에서 도는 게 아니다. 컨테이너 안에서 빌드하면
+	 * (홈서버처럼 호스트에 JDK를 안 깔았을 때, 그리고 Phase 7의 이미지 빌드에서)
+	 * git 바이너리가 없어 커밋이 조용히 'unknown'으로 떨어진다.
+	 * 그러면 /actuator/info가 "지금 떠 있는 게 어느 커밋이냐"에 답을 못 하고,
+	 * build-info를 심어둔 이유 자체가 사라진다.
+	 *
+	 *   ./gradlew -PgitCommit=$(git rev-parse --short=12 HEAD) ...
+	 */
+	if (project.hasProperty(property)) {
+		return project.property(property)
+	}
 	try {
 		def out = providers.exec { commandLine(args) }.standardOutput.asText.get().trim()
 		return out.isEmpty() ? 'unknown' : out
 	} catch (Exception ignored) {
+		// git이 없어도 빌드는 되어야 한다. 버전 정보 때문에 빌드를 못 하는 건 본말전도다.
 		return 'unknown'
 	}
 }
 
 ext {
-	gitCommit = gitValue(['git', 'rev-parse', '--short=12', 'HEAD'])
-	gitBranch = gitValue(['git', 'rev-parse', '--abbrev-ref', 'HEAD'])
+	gitCommit = gitValue('gitCommit', ['git', 'rev-parse', '--short=12', 'HEAD'])
+	gitBranch = gitValue('gitBranch', ['git', 'rev-parse', '--abbrev-ref', 'HEAD'])
 }
 
 allprojects {

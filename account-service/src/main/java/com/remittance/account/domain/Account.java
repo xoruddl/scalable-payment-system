@@ -2,7 +2,6 @@ package com.remittance.account.domain;
 
 import com.remittance.account.exception.AccountNotActiveException;
 import com.remittance.account.exception.CurrencyMismatchException;
-import com.remittance.account.exception.InsufficientBalanceException;
 import com.remittance.account.support.Timestamps;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -18,7 +17,6 @@ import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
-import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.UUID;
 
@@ -38,6 +36,16 @@ public class Account {
 	@Column(nullable = false, updatable = false)
 	private UUID ownerId;
 
+	/**
+	 * 이 계좌가 <b>어느 상대 은행의 정산 계좌</b>인가 (Phase 6.5).
+	 * 고객 계좌는 {@code null}이다 — 우리 은행 계좌라 상대가 없다.
+	 *
+	 * <p>{@link AccountType#SETTLEMENT}인 계좌만 값을 갖고, 은행당 하나뿐이다.
+	 * 그래야 "KB로 가는 돈은 어디에 쌓이나"에 답이 하나로 정해진다.
+	 */
+	@Column(length = 11, updatable = false, unique = true)
+	private String settlementBankCode;
+
 	@Column(nullable = false, length = 3, updatable = false)
 	private String currency;
 
@@ -45,8 +53,17 @@ public class Account {
 	@Column(nullable = false, length = 20, updatable = false)
 	private AccountType accountType;
 
-	@Column(nullable = false, precision = 19, scale = 2)
-	private BigDecimal balance;
+	/**
+	 * 이 계좌의 잔액을 몇 조각으로 쪼갰나 (Phase 6 Step 1). 1이면 안 쪼갠 것이다.
+	 *
+	 * <p><b>잔액 자체는 여기 없다.</b> {@link AccountBalanceShard}에 있고, 계좌의 잔액은
+	 * 그 조각들의 합이다. 한 행에 두면 그 계좌의 입금이 전부 그 행에 줄을 서기 때문이다.
+	 *
+	 * <p>기본이 1인 이유 — 계좌 대부분은 경합이 없다. 경합 없는 계좌를 쪼개면
+	 * 조회할 때마다 합산만 늘어 손해다. <b>쪼개는 것은 붐비는 계좌에만 하는 처방</b>이다.
+	 */
+	@Column(nullable = false)
+	private short shardCount;
 
 	@Enumerated(EnumType.STRING)
 	@Column(nullable = false, length = 20)
@@ -71,29 +88,41 @@ public class Account {
 	private Instant openingBalanceCarriedAt;
 
 	@Builder
-	public Account(UUID ownerId, String currency, AccountType accountType) {
+	public Account(UUID ownerId, String currency, AccountType accountType, String settlementBankCode) {
+		if ((accountType == AccountType.SETTLEMENT) != (settlementBankCode != null)) {
+			// 짝이 안 맞으면 조용히 넘어가면 안 된다. 정산 계좌인데 은행이 없으면 돈이 갈 곳을
+			// 잃고, 고객 계좌에 은행 코드가 붙으면 남의 돈이 그리로 흘러든다.
+			throw new IllegalArgumentException(
+					"정산 계좌만 상대 은행 코드를 갖는다 (type=%s, bankCode=%s)"
+							.formatted(accountType, settlementBankCode));
+		}
 		this.accountId = UUID.randomUUID();
 		this.ownerId = ownerId;
 		this.currency = currency;
 		this.accountType = accountType;
-		this.balance = BigDecimal.ZERO;
+		this.settlementBankCode = settlementBankCode;
+		this.shardCount = 1;
 		this.status = AccountStatus.ACTIVE;
 		this.createdAt = Timestamps.now();
 		this.updatedAt = Timestamps.now();
 	}
 
-	public void debit(BigDecimal amount, String currency) {
+	/**
+	 * 이 계좌로 돈을 움직여도 되는가. 잔액이 조각으로 나가면서 <b>계좌에 남은 규칙은 이것뿐</b>이다.
+	 * 잔액이 모자란지는 조각들의 합을 봐야 알 수 있어 {@link AccountBalance}가 판단한다.
+	 */
+	public void assertUsable(String currency) {
 		validateActiveAndCurrency(currency);
-		if (this.balance.compareTo(amount) < 0) {
-			throw new InsufficientBalanceException(this.accountId);
-		}
-		this.balance = this.balance.subtract(amount);
-		this.updatedAt = Timestamps.now();
 	}
 
-	public void credit(BigDecimal amount, String currency) {
-		validateActiveAndCurrency(currency);
-		this.balance = this.balance.add(amount);
+	/** 쪼갤 조각 수를 바꾼다. 줄이는 것은 남는 조각의 돈을 옮겨야 해서 아직 지원하지 않는다. */
+	public void widenShards(short shardCount) {
+		if (shardCount < this.shardCount) {
+			throw new IllegalArgumentException(
+					"조각은 줄일 수 없다 (지금 %d → %d). 남는 조각의 돈을 옮기는 절차가 없다."
+							.formatted(this.shardCount, shardCount));
+		}
+		this.shardCount = shardCount;
 		this.updatedAt = Timestamps.now();
 	}
 

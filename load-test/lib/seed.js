@@ -47,6 +47,28 @@ export function seedAccounts(count, { funded = true } = {}) {
 	return accounts;
 }
 
+/**
+ * 계좌 하나를 <b>N조각으로 쓰게</b> 한다 (Phase 6 잔액 샤딩).
+ *
+ * 입금이 한 계좌로 몰릴 때 그 계좌의 잔액 행 하나가 상한이 된다. 조각을 늘리면
+ * 입금이 서로 다른 행·서로 다른 락으로 갈린다. 1이면 아무 일도 하지 않는다 —
+ * <b>같은 스크립트로 쪼갠 것과 안 쪼갠 것을 나란히 재기 위해서다.</b>
+ */
+export function shard(accountId, shardCount) {
+	if (!shardCount || shardCount <= 1) {
+		return 1;
+	}
+	const res = http.post(
+		`${ACCOUNT_URL}/internal/accounts/${accountId}/shards`,
+		JSON.stringify({ shardCount }),
+		{ headers: JSON_HEADERS, tags: { name: 'seed:shard' } },
+	);
+	if (res.status !== 200) {
+		throw new Error(`샤딩 실패 (${res.status}): ${res.body}`);
+	}
+	return res.json('shardCount');
+}
+
 export function pick(list) {
 	return list[Math.floor(Math.random() * list.length)];
 }

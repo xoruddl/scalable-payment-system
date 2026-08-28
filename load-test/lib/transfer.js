@@ -25,18 +25,32 @@ export const settleTimeout = new Counter('settle_timeout');
  * `Idempotency-Key`는 <b>매번 새로 만들어야</b> 한다. 재사용하면 두 번째부터는 새 송금이 아니라
  * 최초 송금을 그대로 돌려주는 재요청 경로로 빠져서, TPS가 비현실적으로 높게 나온다.
  */
-export function requestTransfer(fromAccountId, toAccountId) {
+export function requestTransfer(fromAccountId, toAccountId, tags = {}) {
+	return post(fromAccountId, { toAccountId }, tags);
+}
+
+/**
+ * <b>상대 은행으로</b> 보낸다 (Phase 6.5).
+ *
+ * 계좌번호는 매번 다르게 준다. 상대 은행은 계좌를 검증하지 않지만,
+ * 같은 번호로만 보내면 <b>실제와 다른 쏠림</b>이 생겨 그쪽 DB에서 엉뚱한 경합이 날 수 있다.
+ */
+export function requestExternalTransfer(fromAccountId, bankCode, tags = {}) {
+	return post(fromAccountId, { toBankCode: bankCode, toAccountNumber: uuid().slice(0, 18) }, tags);
+}
+
+function post(fromAccountId, destination, tags) {
 	const res = http.post(
 		`${TRANSFER_URL}/transfers`,
 		JSON.stringify({
 			fromAccountId,
-			toAccountId,
+			...destination,
 			amount: TRANSFER_AMOUNT,
 			currency: CURRENCY,
 		}),
 		{
 			headers: { ...JSON_HEADERS, 'Idempotency-Key': uuid() },
-			tags: { name: 'accept' },
+			tags: { name: 'accept', ...tags },
 		},
 	);
 	check(res, { '202로 접수됨': (r) => r.status === 202 });
@@ -49,12 +63,25 @@ export function requestTransfer(fromAccountId, toAccountId) {
  * <b>부하를 거는 모든 요청에 대해 이걸 하면 안 된다.</b> 폴링 자체가 부하가 되어,
  * 요청을 늘릴수록 조회도 같이 늘어나 무엇을 재는지 알 수 없게 된다.
  * 그래서 이 함수는 <b>낮은 고정 비율로 도는 관측용 시나리오(prober)에서만</b> 쓴다.
+ *
+ * <p>{@code tags}는 <b>단계별로 나눠 재기 위한 것</b>이다(`capacity.js`). 도착률을 계단으로
+ * 올리며 SLO가 어느 단계에서 깨지는지 보려면, 지표가 단계별로 갈라져 있어야 한다.
+ * 안 넘기면 예전처럼 하나로 합쳐 잰다.
  */
-export function requestAndAwaitSettle(fromAccountId, toAccountId) {
+export function requestAndAwaitSettle(fromAccountId, toAccountId, tags = {}) {
+	return awaitSettle(() => requestTransfer(fromAccountId, toAccountId, tags), tags);
+}
+
+/** 상대 은행으로 보내고 종결까지 기다린다. */
+export function requestExternalAndAwaitSettle(fromAccountId, bankCode, tags = {}) {
+	return awaitSettle(() => requestExternalTransfer(fromAccountId, bankCode, tags), tags);
+}
+
+function awaitSettle(send, tags) {
 	const startedAt = Date.now();
-	const accepted = requestTransfer(fromAccountId, toAccountId);
+	const accepted = send();
 	if (accepted.status !== 202) {
-		settled.add(false);
+		settled.add(false, tags);
 		return;
 	}
 
@@ -64,7 +91,7 @@ export function requestAndAwaitSettle(fromAccountId, toAccountId) {
 	while (Date.now() < deadline) {
 		sleep(0.5);
 		const res = http.get(`${TRANSFER_URL}/transfers/${transferId}`, {
-			tags: { name: 'poll-status' },
+			tags: { name: 'poll-status', ...tags },
 		});
 		if (res.status !== 200) {
 			continue;
@@ -72,8 +99,8 @@ export function requestAndAwaitSettle(fromAccountId, toAccountId) {
 
 		const status = res.json('status');
 		if (status === 'COMPLETED' || status === 'FAILED') {
-			settleDuration.add(Date.now() - startedAt);
-			settled.add(status === 'COMPLETED');
+			settleDuration.add(Date.now() - startedAt, tags);
+			settled.add(status === 'COMPLETED', tags);
 			if (status === 'COMPLETED') {
 				settleCompleted.add(1);
 			} else {
@@ -85,5 +112,5 @@ export function requestAndAwaitSettle(fromAccountId, toAccountId) {
 
 	// 끝내 종결되지 않았다. 큐 어딘가에 밀려 있다는 뜻이고, 이게 진짜 천장의 신호다.
 	settleTimeout.add(1);
-	settled.add(false);
+	settled.add(false, tags);
 }

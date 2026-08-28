@@ -66,7 +66,7 @@ class AccountConcurrencyReproductionTest extends com.remittance.account.Abstract
 		assertThat(failures)
 				.as("동시 출금 %d건이 실패 없이 모두 처리되어야 한다", threadCount)
 				.isEmpty();
-		assertThat(accountService.getBalance(accountId).getBalance())
+		assertThat(accountService.getBalance(accountId).total())
 				.as("10000 - (100 × %d) = 8000 이어야 한다", threadCount)
 				.isEqualByComparingTo("8000");
 	}

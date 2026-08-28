@@ -47,6 +47,14 @@ public final class TransferEvents {
 	 * (Step 0 재현 테스트 #4가 바로 그 문제였다). 브로커에 남겨두면 실패해도 다시 배달된다.
 	 */
 	public static final String CREDIT_FAILED = "transfer.credit-failed";
+
+	/**
+	 * 상대 은행에 보냈는데 <b>답이 없다</b> — 들어갔는지 모른다 (Phase 6.5).
+	 *
+	 * <p>실패가 아니다. 실패로 처리하면 <b>이미 나간 돈을 환불</b>해 이중 지급이 되고,
+	 * 성공으로 처리하면 안 간 돈을 갔다고 하는 셈이다. 그래서 <b>제3의 상태</b>가 필요하다.
+	 */
+	public static final String CREDIT_UNKNOWN = "transfer.credit-unknown";
 	/** Account가 발행: 출금을 되돌렸음 → Transfer가 송금을 FAILED로 종결한다 */
 	public static final String DEBIT_REVERSED = "transfer.debit-reversed";
 
@@ -58,10 +66,23 @@ public final class TransferEvents {
 	public record Requested(
 			UUID transferId,
 			UUID fromAccountId,
+			/** 우리 은행 계좌일 때만. 상대 은행으로 나가면 {@code null}이다. */
 			UUID toAccountId,
+			/** 상대 은행 코드. 값이 있으면 <b>입금 단계가 외부 호출로 갈린다</b> (Phase 6.5). */
+			String toBankCode,
+			String toAccountNumber,
 			BigDecimal amount,
 			String currency
 	) {
+		public boolean isExternal() {
+			return toBankCode != null;
+		}
+
+		/** 우리 은행 안의 송금. 상대 은행 자리를 매번 {@code null}로 적지 않기 위해 둔다. */
+		public static Requested internal(UUID transferId, UUID fromAccountId, UUID toAccountId,
+				BigDecimal amount, String currency) {
+			return new Requested(transferId, fromAccountId, toAccountId, null, null, amount, currency);
+		}
 	}
 
 	/** {@link #DEBITED} 본문. 출금 후 잔액을 함께 실어 다음 단계가 그대로 쓸 수 있게 한다. */
@@ -70,11 +91,24 @@ public final class TransferEvents {
 			UUID transferId,
 			UUID fromAccountId,
 			UUID toAccountId,
+			/** 여기까지 실어 날라야 입금 단계가 어디로 보낼지 안다. */
+			String toBankCode,
+			String toAccountNumber,
 			BigDecimal amount,
 			String currency,
 			BigDecimal fromBalanceAfter,
 			Instant occurredAt
 	) {
+		public boolean isExternal() {
+			return toBankCode != null;
+		}
+
+		/** 우리 은행 안의 송금. */
+		public static Debited internal(UUID transferId, UUID fromAccountId, UUID toAccountId,
+				BigDecimal amount, String currency, BigDecimal fromBalanceAfter, Instant occurredAt) {
+			return new Debited(transferId, fromAccountId, toAccountId, null, null,
+					amount, currency, fromBalanceAfter, occurredAt);
+		}
 	}
 
 	/** {@link #CREDITED} 본문. 원장 기록에 필요한 양쪽 잔액이 모두 담긴다. */
@@ -87,6 +121,24 @@ public final class TransferEvents {
 			String currency,
 			BigDecimal fromBalanceAfter,
 			BigDecimal toBalanceAfter,
+			Instant occurredAt
+	) {
+	}
+
+	/**
+	 * {@link #CREDIT_UNKNOWN} 본문.
+	 *
+	 * <p>금액을 함께 싣는 이유는 이 상태가 <b>사람이 봐야 하는 것</b>이기 때문이다.
+	 * "얼마가 어디로 갔는지 모른다"까지 한 줄에 있어야 알림이 쓸모가 있다.
+	 */
+	@JsonIgnoreProperties(ignoreUnknown = true)
+	public record CreditUnknown(
+			UUID transferId,
+			UUID fromAccountId,
+			String toBankCode,
+			String toAccountNumber,
+			BigDecimal amount,
+			String currency,
 			Instant occurredAt
 	) {
 	}

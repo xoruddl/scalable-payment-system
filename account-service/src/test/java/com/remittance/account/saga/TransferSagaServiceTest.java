@@ -59,7 +59,7 @@ class TransferSagaServiceTest extends AbstractIntegrationTest {
 	}
 
 	private BigDecimal balanceOf(UUID accountId) {
-		return accountRepository.findByAccountId(accountId).orElseThrow().getBalance();
+		return accountService.getBalance(accountId).total();
 	}
 
 	private List<OutboxEvent> eventsOf(UUID transferId) {
@@ -73,7 +73,7 @@ class TransferSagaServiceTest extends AbstractIntegrationTest {
 		UUID transferId = UUID.randomUUID();
 
 		transferSagaService.onRequested(
-				new TransferEvents.Requested(transferId, from, to, amount, "KRW"));
+				TransferEvents.Requested.internal(transferId, from, to, amount, "KRW"));
 
 		assertThat(balanceOf(from)).isEqualByComparingTo("4000.00");
 		assertThat(eventsOf(transferId))
@@ -94,7 +94,7 @@ class TransferSagaServiceTest extends AbstractIntegrationTest {
 		UUID to = fundedAccount(1_000);
 		UUID transferId = UUID.randomUUID();
 
-		transferSagaService.onDebited(new TransferEvents.Debited(
+		transferSagaService.onDebited(TransferEvents.Debited.internal(
 				transferId, from, to, amount, "KRW", new BigDecimal("4000.00"), Instant.now()));
 
 		assertThat(balanceOf(to)).isEqualByComparingTo("2000.00");
@@ -119,7 +119,7 @@ class TransferSagaServiceTest extends AbstractIntegrationTest {
 		UUID to = fundedAccount(0);
 		UUID transferId = UUID.randomUUID();
 		TransferEvents.Requested event =
-				new TransferEvents.Requested(transferId, from, to, amount, "KRW");
+				TransferEvents.Requested.internal(transferId, from, to, amount, "KRW");
 
 		transferSagaService.onRequested(event);
 		transferSagaService.onRequested(event);
@@ -144,7 +144,7 @@ class TransferSagaServiceTest extends AbstractIntegrationTest {
 		UUID transferId = UUID.randomUUID();
 
 		transferSagaService.onRequested(
-				new TransferEvents.Requested(transferId, from, to, amount, "KRW"));
+				TransferEvents.Requested.internal(transferId, from, to, amount, "KRW"));
 
 		assertThat(balanceOf(from)).isEqualByComparingTo("100.00");
 		assertThat(eventsOf(transferId))
@@ -176,7 +176,7 @@ class TransferSagaServiceTest extends AbstractIntegrationTest {
 		UUID to = foreignAccount();
 		UUID transferId = UUID.randomUUID();
 
-		transferSagaService.onDebited(new TransferEvents.Debited(
+		transferSagaService.onDebited(TransferEvents.Debited.internal(
 				transferId, from, to, amount, "KRW", new BigDecimal("4000.00"), Instant.now()));
 
 		assertThat(eventsOf(transferId))
@@ -203,7 +203,7 @@ class TransferSagaServiceTest extends AbstractIntegrationTest {
 		UUID to = fundedAccount(0);
 		UUID transferId = UUID.randomUUID();
 		TransferEvents.Requested event =
-				new TransferEvents.Requested(transferId, from, to, amount, "KRW");
+				TransferEvents.Requested.internal(transferId, from, to, amount, "KRW");
 
 		transferSagaService.onRequested(event);
 		transferSagaService.onRequested(event);
@@ -216,7 +216,7 @@ class TransferSagaServiceTest extends AbstractIntegrationTest {
 		UUID from = fundedAccount(5_000);
 		UUID to = foreignAccount();
 		UUID transferId = UUID.randomUUID();
-		transferSagaService.onRequested(new TransferEvents.Requested(transferId, from, to, amount, "KRW"));
+		transferSagaService.onRequested(TransferEvents.Requested.internal(transferId, from, to, amount, "KRW"));
 		assertThat(balanceOf(from)).isEqualByComparingTo("4000.00");
 
 		transferSagaService.onCreditFailed(new TransferEvents.CreditFailed(

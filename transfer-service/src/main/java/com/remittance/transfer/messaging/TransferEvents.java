@@ -29,10 +29,26 @@ public final class TransferEvents {
 	public static final String DEBIT_FAILED = "transfer.debit-failed";
 	/** Account가 발행: 입금 실패 → 환불이 진행 중이라는 뜻. 아직 종결이 아니다(COMPENSATING) */
 	public static final String CREDIT_FAILED = "transfer.credit-failed";
+
+	/**
+	 * 상대 은행에 보냈는데 <b>답이 없다</b> — 들어갔는지 모른다 (Phase 6.5).
+	 * 실패가 아니라 <b>제3의 상태</b>다. 실패로 처리하면 이미 나간 돈을 환불해 이중 지급이 된다.
+	 */
+	public static final String CREDIT_UNKNOWN = "transfer.credit-unknown";
+
 	/** Account가 발행: 출금을 되돌렸음 → 이제 FAILED로 종결한다 */
 	public static final String DEBIT_REVERSED = "transfer.debit-reversed";
 
 	private TransferEvents() {
+	}
+
+	/** {@link #CREDIT_UNKNOWN} 본문. 상태만 옮기면 되므로 최소한만 받는다. */
+	@JsonIgnoreProperties(ignoreUnknown = true)
+	public record CreditUnknown(
+			UUID transferId,
+			String toBankCode,
+			Instant occurredAt
+	) {
 	}
 
 	@JsonIgnoreProperties(ignoreUnknown = true)

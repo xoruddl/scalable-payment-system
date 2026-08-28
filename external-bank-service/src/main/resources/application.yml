@@ -1,0 +1,35 @@
+spring:
+  application:
+    name: external-bank-service
+  datasource:
+    url: jdbc:mysql://localhost:3306/external_bank_db?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC
+    username: root
+    password: root
+  # 스키마는 앱이 아니라 여기 있는 SQL이 만든다 (DECISIONS.md 교체 4번).
+  flyway:
+    baseline-on-migrate: true
+    baseline-version: 1
+  jpa:
+    hibernate:
+      # 스키마를 만들지 않고 대조만 한다. 마이그레이션을 빠뜨리면 기동이 실패한다.
+      ddl-auto: validate
+    open-in-view: false
+
+server:
+  port: 8086
+  tomcat:
+    # 응답을 삼킬 때 스레드를 30초씩 붙잡는다. 기본 200으로는 금방 마른다.
+    # 이 서비스는 일부러 느린 상대라, 스레드가 마르는 것 자체가 흉내의 일부는 아니다.
+    threads:
+      max: 400
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: always
+      probes:
+        enabled: true

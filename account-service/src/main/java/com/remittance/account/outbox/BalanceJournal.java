@@ -1,6 +1,6 @@
 package com.remittance.account.outbox;
 
-import com.remittance.account.domain.Account;
+import com.remittance.account.domain.AccountBalance;
 import com.remittance.account.messaging.AccountEvents;
 import com.remittance.account.support.Timestamps;
 import lombok.RequiredArgsConstructor;
@@ -32,24 +32,24 @@ public class BalanceJournal {
 	/**
 	 * @param transferId 송금 때문에 움직였으면 그 ID, 아니면 {@code null}
 	 */
-	public void record(Account account, AccountEvents.BalanceChangeReason reason,
+	public void record(AccountBalance balance, AccountEvents.BalanceChangeReason reason,
 			AccountEvents.TransactionDirection direction, BigDecimal amount, UUID transferId) {
 		AccountEvents.BalanceChanged body = new AccountEvents.BalanceChanged(
 				// 여기서 한 번 만들어 Outbox에 고정된다. 재전송이 와도 같은 값이라 원장이 멱등해진다.
 				UUID.randomUUID(),
-				account.getAccountId(),
+				balance.getAccountId(),
 				reason,
 				direction,
 				amount,
-				account.getBalance(),
-				account.getCurrency(),
+				balance.total(),
+				balance.getCurrency(),
 				transferId,
 				Timestamps.now());
 
 		outboxEventRepository.save(OutboxEvent.builder()
 				.aggregateType(AGGREGATE_TYPE)
 				// 계좌 단위로 순서를 지켜야 잔액 추이가 뒤섞이지 않는다 (Saga 이벤트는 송금 ID를 쓴다).
-				.aggregateId(account.getAccountId())
+				.aggregateId(balance.getAccountId())
 				.eventType(AccountEvents.BALANCE_CHANGED)
 				.payload(objectMapper.writeValueAsString(body))
 				.build());

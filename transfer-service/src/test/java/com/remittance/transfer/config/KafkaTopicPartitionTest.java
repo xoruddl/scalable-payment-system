@@ -39,8 +39,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 @SpringBootTest
 class KafkaTopicPartitionTest extends AbstractIntegrationTest {
 
-	/** 파티션 수는 순서 보장의 전제다. 한 번 잘못 만들어지면 나중에 줄일 수도 없다. */
-	private static final int EXPECTED_PARTITIONS = 3;
+	/**
+	 * 파티션 수는 순서 보장의 전제다. 한 번 잘못 만들어지면 나중에 줄일 수도 없다.
+	 *
+	 * <p>기대값을 여기 적지 않고 <b>운영 설정에서 그대로 읽는다.</b> 따로 적어두면
+	 * 같은 숫자가 두 곳에 있게 되고, 바꿀 때 한쪽만 고쳐 red를 보게 된다.
+	 * 이 테스트가 볼 것은 "3인가"가 아니라 <b>"선언한 대로 만들어졌는가"</b>다.
+	 */
+	private static final int EXPECTED_PARTITIONS = KafkaTopicsConfig.PARTITIONS;
 
 	@Autowired
 	private KafkaAdmin kafkaAdmin;

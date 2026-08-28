@@ -33,7 +33,7 @@ public class BalanceChangedConsumer {
 	private final KafkaTemplate<String, String> kafkaTemplate;
 	private final ObjectMapper objectMapper;
 
-	@KafkaListener(topics = AccountEvents.BALANCE_CHANGED, groupId = "${spring.kafka.consumer.group-id}")
+	@KafkaListener(id = AccountEvents.BALANCE_CHANGED, topics = AccountEvents.BALANCE_CHANGED, groupId = "${spring.kafka.consumer.group-id}")
 	public void onBalanceChanged(String payload) {
 		AccountEvents.BalanceChanged event =
 				objectMapper.readValue(payload, AccountEvents.BalanceChanged.class);
