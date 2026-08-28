@@ -61,8 +61,9 @@ Phase 6.5 🔄 상대 은행 (Kotlin, HTTP)  ← 지금 여기
              SLO 외부 항목 ✅  외부 지연은 목표로 걸지 않는다. 거는 것은 격리와 정합성이다
              홈서버 e2e ✅     정상 상대로 내부·외부 둘 다 p99 3초 · 성공률 1.00 · 대사 0건
              develop 머지 ✅   33커밋
-🚩 출시       **밀려 있다** — main은 2026-08-22(Phase 2·3)에 멈춰 있고 develop이 102커밋 앞선다.
-             Phase 5·6·6.5 **셋이 태그도 릴리스도 없다.** 지금 하는 일 ← 여기
+출시          ✅ 2026-08-28 — PR #2로 Phase 5·6·6.5를 한 번에 냈다 (main `0cbb74f`).
+             태그 셋을 각 Phase 끝점에 달았다: `phase-5-complete`(`6c10aec`) ·
+             `phase-6-complete`(`6b278c2`) · `phase-6-5-complete`(`5c79d54`)
 Phase 4       미착수 — Gateway·Config. **출시 다음은 여기다**(로드맵 순서가 6 → 4 → 6.5 → 7이고
              Phase 4 절에 "컨테이너화 전에 서비스 구성을 확정"이라고 적혀 있다)
 Phase 6.6     ❌ 취소 (2026-08-28) — 한도 서비스는 만들지 않는다. 근거는 ROADMAP 맨 위 표
@@ -4855,6 +4856,21 @@ Phase 7~9의 롤백·카나리 실습은 `phase-N-complete` 태그를 **기준�
 
 **세 태그가 서로 다른 코드 지점을 가리킵니다** — 롤백 실습이 필요로 하는 건 릴리스 횟수가
 아니라 그것입니다.
+
+### 결과 (2026-08-28)
+
+PR **#2**가 CI 세 잡(`lint-workflows` 13s · `unit` 1m33s · `build` 5m30s)을 통과해 머지됐고,
+`main`은 `0cbb74f`가 됐습니다. 태그 셋도 밀었고, 실제로 다른 코드 지점인지 확인했습니다.
+
+| 태그 | 커밋 | 잔액 샤딩 | `external-bank-service` |
+|---|---|---|---|
+| `phase-5-complete` | `6c10aec` | 없음 | 없음 |
+| `phase-6-complete` | `6b278c2` | **있음** | 없음 |
+| `phase-6-5-complete` | `5c79d54` | 있음 | **파일 15개** |
+
+> **PR 크기가 스스로를 증명했습니다.** CodeRabbit이
+> *"Review skipped: 197 files exceed the limit of 100"*으로 리뷰를 건너뛰었습니다.
+> 세 Phase를 묶은 대가이고, **Phase 4부터는 끝나는 즉시 냅니다.**
 
 ---
 
