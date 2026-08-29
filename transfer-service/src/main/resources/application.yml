@@ -71,6 +71,15 @@ server:
 outbox:
   relay:
     interval-ms: 500
+  # 발행이 끝난 행을 언제 지우나 (Phase 4).
+  # 근거와 대가는 account-service의 같은 블록에 적어뒀다.
+  # 여기는 사흘 만에 120만 건 · 551MB가 쌓였다.
+  retention:
+    enabled: true
+    keep-for: 3d
+    chunk-size: 1000
+    max-chunks-per-tick: 5
+    interval-ms: 60000
 
 # Actuator: 헬스체크·메트릭 노출.
 # health 상세는 K8s probe(Phase 7), prometheus는 메트릭 수집(Phase 9)에서 쓴다.

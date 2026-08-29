@@ -126,6 +126,21 @@ remittance:
 outbox:
   relay:
     interval-ms: 500
+  # 발행이 끝난 행을 언제 지우나 (Phase 4).
+  #
+  # ⚠️ 이게 없어서 사흘 만에 240만 건 · 1,105MB가 쌓였고, 같은 100 TPS에서 종결 p99가
+  # 4,673 → 5,044ms로 SLO를 넘겼다. 코드는 그대로였고 쌓인 것 말고 바뀐 게 없었다.
+  retention:
+    enabled: true
+    # 발행된 행이 쓸모 있는 경우는 "그 이벤트가 실제로 발행됐나"를 조사할 때뿐이다.
+    # 사고가 가장 늦게 발견되는 것이 EOD 대사(하루)이므로, 조사할 시간을 더해 3일로 잡았다.
+    # 늘리려면 그 근거가 OutboxRetention의 표에 있어야 한다.
+    keep-for: 3d
+    # 작게 끊어 지운다. 한 번에 지우면 삭제 흔적이 쏟아져 InnoDB가 뒤에서 치우느라
+    # 오히려 느려진다 — 2026-08-29에 360만 건을 한 번에 지우고 재봤다가 두 배 나빠졌다.
+    chunk-size: 1000
+    max-chunks-per-tick: 5
+    interval-ms: 60000
 
 # Actuator: 헬스체크·메트릭 노출.
 # health 상세는 K8s probe(Phase 7), prometheus는 메트릭 수집(Phase 9)에서 쓴다.
