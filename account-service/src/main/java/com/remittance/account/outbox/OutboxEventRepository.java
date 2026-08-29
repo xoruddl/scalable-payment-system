@@ -2,7 +2,11 @@ package com.remittance.account.outbox;
 
 import org.springframework.data.domain.Limit;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
@@ -28,4 +32,26 @@ public interface OutboxEventRepository extends JpaRepository<OutboxEvent, Long> 
 	 * 그 상태에서 차이를 이월하면 같은 변경을 두 번 세게 된다.
 	 */
 	boolean existsByAggregateIdAndPublishedAtIsNull(UUID aggregateId);
+
+	/**
+	 * 발행이 끝났는데 아직 남아 있는 건수 (Phase 4 · 보관 기간).
+	 *
+	 * <p>미발행 적체는 처음부터 세고 있었는데 <b>발행이 끝난 뒤 쌓이는 것은 아무도 세지 않았다.</b>
+	 * 그래서 240만 건이 될 때까지 몰랐다.
+	 */
+	long countByPublishedAtIsNotNull();
+
+	/**
+	 * 보관 기간이 지난 행을 <b>끊어서</b> 지운다.
+	 *
+	 * <p>파생 쿼리(`deleteBy...`)를 쓰지 않는 이유는 <b>건수를 못 자르기 때문</b>이다.
+	 * 한 번에 다 지우면 트랜잭션이 길어지고 삭제 흔적이 한꺼번에 쏟아진다 —
+	 * 2026-08-29에 360만 건을 한 번에 지우고 곧바로 재봤다가 종결 p99가 두 배 나빠졌다.
+	 *
+	 * @return 실제로 지운 건수. {@code limit}보다 적으면 더 지울 게 없다는 뜻이다.
+	 */
+	@Modifying(clearAutomatically = true)
+	@Query(value = "delete from outbox_events where published_at is not null "
+			+ "and published_at < :before order by id limit :limit", nativeQuery = true)
+	int deletePublishedBefore(@Param("before") Instant before, @Param("limit") int limit);
 }
