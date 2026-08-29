@@ -1,6 +1,12 @@
 spring:
   application:
     name: gateway
+  data:
+    # Rate Limiting의 카운터를 여기 둔다. 인메모리로 두면 게이트웨이를 여러 대 띄우는 순간
+    # 각자 세고, 재기동하면 리셋된다 — "초당 10건"이 "대수 × 10건"이 된다.
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
   cloud:
     gateway:
       server:
@@ -33,6 +39,27 @@ spring:
               uri: ${NOTIFICATION_URI:http://localhost:8085}
               predicates:
                 - Path=/notifications/**
+
+          # 모든 라우트에 걸리는 필터 (Phase 4).
+          #
+          # ⚠️ 이 시스템의 용량은 100 TPS다(2026-08-29 실측, 종결 p99 4,639ms).
+          # 그 위로 받으면 대기행렬이라 지연이 자릿수로 늘고 <b>모든 사용자가 같이 느려진다</b>.
+          # 그래서 한 사용자가 전체 용량을 다 먹지 못하게 문 앞에서 막는다.
+          #
+          # 초당 10건 = 용량의 10%. "한 명이 전체의 10분의 1까지"가 이 숫자의 뜻이고,
+          # 비율을 바꾸려면 그 근거가 있어야 한다.
+          #
+          # burst 20 = 몰아치는 것을 봐준다. 사람이 쓰는 앱은 조용하다 갑자기 몇 건씩 오므로
+          # 이게 없으면 정상 사용자도 자꾸 튕긴다.
+          default-filters:
+            - name: RequestRateLimiter
+              args:
+                key-resolver: "#{@rateLimitKeyResolver}"
+                redis-rate-limiter.replenishRate: ${RATE_LIMIT_PER_SECOND:10}
+                redis-rate-limiter.burstCapacity: ${RATE_LIMIT_BURST:20}
+                # 요청 하나가 토큰 하나를 쓴다. 무거운 요청에 더 물릴 수도 있지만,
+                # 그러려면 게이트웨이가 요청의 무게를 알아야 한다 — 도메인을 알게 된다.
+                redis-rate-limiter.requestedTokens: 1
 
           # 뒤 서비스가 답하지 않을 때 게이트웨이 스레드를 언제까지 붙들 것인가.
           #

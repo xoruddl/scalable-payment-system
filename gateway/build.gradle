@@ -40,5 +40,16 @@ dependencies {
 	// ⚠️ Boot BOM이 관리하지 않는다(Spring Security를 안 쓰기 때문). 버전을 직접 고정한다.
 	implementation 'com.nimbusds:nimbus-jose-jwt:9.9.3'
 
+	/*
+	 * Rate Limiting의 카운터를 Redis에 둔다 (Phase 4).
+	 *
+	 * 인메모리로 두면 게이트웨이를 <b>여러 대 띄우는 순간 각자 세고</b>, 재기동하면 리셋된다.
+	 * 그러면 "초당 10건"이 실제로는 "대수 × 10건"이 되어 약속이 약속이 아니게 된다.
+	 * Redis는 이미 분산 락으로 떠 있으므로 새 인프라가 아니다.
+	 */
+	implementation 'org.springframework.boot:spring-boot-starter-data-redis-reactive'
+
 	testImplementation 'org.springframework.boot:spring-boot-webtestclient'
+	testImplementation 'com.redis:testcontainers-redis'
+	testImplementation 'org.testcontainers:testcontainers-junit-jupiter'
 }
