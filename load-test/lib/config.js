@@ -1,7 +1,31 @@
-// 서비스 주소. Gateway(Phase 4)가 생기기 전이라 각 서비스를 직접 때린다.
+// 서비스 주소. 기본은 각 서비스를 직접 때린다.
 export const ACCOUNT_URL = __ENV.ACCOUNT_URL || 'http://localhost:8081';
 export const TRANSFER_URL = __ENV.TRANSFER_URL || 'http://localhost:8082';
 export const LEDGER_URL = __ENV.LEDGER_URL || 'http://localhost:8083';
+
+/**
+ * 게이트웨이를 통과해 잰다 (Phase 4).
+ *
+ *   GATEWAY_URL=http://localhost:8080 k6 run ...
+ *
+ * 비워두면 예전처럼 서비스를 직접 때린다. <b>둘을 같은 조건으로 번갈아 재는 것</b>이
+ * 이 변수의 목적이다 — 계층 하나가 지연에 얼마를 더하는지는 그렇게만 알 수 있다.
+ */
+export const GATEWAY_URL = __ENV.GATEWAY_URL || '';
+export const VIA_GATEWAY = GATEWAY_URL !== '';
+
+/**
+ * ⚠️ <b>시드는 게이트웨이를 통과하지 않는다.</b>
+ * 계좌를 만들고 돈을 넣는 것은 `/internal/*`을 쓰는 <b>운영 경로</b>라 게이트웨이가 막는다.
+ * 그리고 시드는 측정 대상이 아니므로 통과시킬 이유도 없다.
+ */
+export const TRANSFER_BASE = GATEWAY_URL || TRANSFER_URL;
+
+/**
+ * 게이트웨이의 HS256 검증 비밀. 부하 스크립트가 이걸로 토큰을 서명한다.
+ * 게이트웨이 쪽 기본값과 같아야 한다(`gateway/src/main/resources/application.yml`).
+ */
+export const AUTH_SECRET = __ENV.AUTH_SECRET || 'dev-only-secret-please-override-32-bytes-min';
 
 export const CURRENCY = 'KRW';
 

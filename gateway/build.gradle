@@ -2,7 +2,54 @@ plugins {
 	id 'org.springframework.boot'
 }
 
+/*
+ * Spring Cloud는 Boot BOM이 관리하지 않으므로 릴리스 트레인을 직접 고정한다.
+ *
+ * ⚠️ 2025.1.3은 Boot <b>4.0.8</b> 기준이고 이 저장소는 4.1.0이다.
+ * Spring Framework 줄기(7.0.x)가 같아 붙지만, 다음 Boot 업그레이드에서 여기가 먼저 깨질 자리다.
+ */
+ext {
+	springCloudVersion = '2025.1.3'
+}
+
+dependencyManagement {
+	imports {
+		mavenBom "org.springframework.cloud:spring-cloud-dependencies:${springCloudVersion}"
+	}
+}
+
 dependencies {
-	// Phase 4에서 Spring Cloud Gateway 의존성 및 라우팅 설정 추가 예정
-	implementation 'org.springframework.boot:spring-boot-starter-webflux'
+	/*
+	 * ⚠️ 아티팩트 이름이 바뀌었다. 예전 `spring-cloud-starter-gateway`는 4.3.5에서 멈췄고,
+	 * 5.x부터는 서버 구현을 이름에 박는다 — WebFlux(논블로킹)와 WebMVC(서블릿) 중 고르는 것이다.
+	 * 이 게이트웨이는 <b>모든 요청을 뒤로 흘려보내기만 하므로</b> 스레드를 붙들지 않는 쪽이 맞다.
+	 */
+	implementation 'org.springframework.cloud:spring-cloud-starter-gateway-server-webflux'
+
+	/*
+	 * JWT 검증 (Phase 4).
+	 *
+	 * <b>암호는 직접 만들지 않는다.</b> 이 저장소는 패턴을 손으로 만들어보고 표준으로 갈아타지만,
+	 * 서명 검증은 예외다 — 틀리면 그게 곧 보안 구멍이고, 테스트가 green이어도 뚫린다.
+	 * 그래서 <b>정책(어느 경로에 필요한가·헤더를 어떻게 넘기나)은 직접 쓰고,
+	 * 서명·만료 검사는 라이브러리에 맡긴다.</b>
+	 *
+	 * Spring Security의 리소스 서버도 속으로 이 라이브러리를 쓴다.
+	 * 비대칭 키와 JWKS가 필요해지는 시점에 그쪽으로 갈아탄다(ROADMAP).
+	 */
+	// ⚠️ Boot BOM이 관리하지 않는다(Spring Security를 안 쓰기 때문). 버전을 직접 고정한다.
+	implementation 'com.nimbusds:nimbus-jose-jwt:9.9.3'
+
+	/*
+	 * Rate Limiting의 카운터를 Redis에 둔다 (Phase 4).
+	 *
+	 * 인메모리로 두면 게이트웨이를 <b>여러 대 띄우는 순간 각자 세고</b>, 재기동하면 리셋된다.
+	 * 그러면 "초당 10건"이 실제로는 "대수 × 10건"이 되어 약속이 약속이 아니게 된다.
+	 * Redis는 이미 분산 락으로 떠 있으므로 새 인프라가 아니다.
+	 */
+	implementation 'org.springframework.boot:spring-boot-starter-data-redis-reactive'
+
+	testImplementation 'org.springframework.boot:spring-boot-webtestclient'
+	testImplementation 'com.redis:testcontainers-redis'
+	testImplementation 'org.testcontainers:testcontainers-junit-jupiter'
 }

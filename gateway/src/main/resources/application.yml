@@ -1,11 +1,88 @@
 spring:
   application:
     name: gateway
+  data:
+    # Rate Limiting의 카운터를 여기 둔다. 인메모리로 두면 게이트웨이를 여러 대 띄우는 순간
+    # 각자 세고, 재기동하면 리셋된다 — "초당 10건"이 "대수 × 10건"이 된다.
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+  cloud:
+    gateway:
+      server:
+        webflux:
+          # ⚠️ 순서가 곧 규칙이다. 위에서부터 먼저 맞는 라우트가 이긴다.
+          #
+          # account와 ledger가 /accounts로 겹친다 —
+          #   account : /accounts/{id}, /accounts/{id}/balance
+          #   ledger  : /accounts/{id}/transactions
+          # 그래서 <b>더 구체적인 원장 경로가 먼저 와야 한다.</b>
+          # 순서를 뒤집으면 거래내역 조회가 account-service로 가서 404가 된다.
+          routes:
+            - id: ledger-transactions-of-account
+              uri: ${LEDGER_URI:http://localhost:8083}
+              predicates:
+                - Path=/accounts/*/transactions
+            - id: ledger-transactions
+              uri: ${LEDGER_URI:http://localhost:8083}
+              predicates:
+                - Path=/transactions/**
+            - id: account
+              uri: ${ACCOUNT_URI:http://localhost:8081}
+              predicates:
+                - Path=/accounts/**
+            - id: transfer
+              uri: ${TRANSFER_URI:http://localhost:8082}
+              predicates:
+                - Path=/transfers/**
+            - id: notification
+              uri: ${NOTIFICATION_URI:http://localhost:8085}
+              predicates:
+                - Path=/notifications/**
+
+          # 모든 라우트에 걸리는 필터 (Phase 4).
+          #
+          # ⚠️ 이 시스템의 용량은 100 TPS다(2026-08-29 실측, 종결 p99 4,639ms).
+          # 그 위로 받으면 대기행렬이라 지연이 자릿수로 늘고 <b>모든 사용자가 같이 느려진다</b>.
+          # 그래서 한 사용자가 전체 용량을 다 먹지 못하게 문 앞에서 막는다.
+          #
+          # 초당 10건 = 용량의 10%. "한 명이 전체의 10분의 1까지"가 이 숫자의 뜻이고,
+          # 비율을 바꾸려면 그 근거가 있어야 한다.
+          #
+          # burst 20 = 몰아치는 것을 봐준다. 사람이 쓰는 앱은 조용하다 갑자기 몇 건씩 오므로
+          # 이게 없으면 정상 사용자도 자꾸 튕긴다.
+          default-filters:
+            - name: RequestRateLimiter
+              args:
+                key-resolver: "#{@rateLimitKeyResolver}"
+                redis-rate-limiter.replenishRate: ${RATE_LIMIT_PER_SECOND:10}
+                redis-rate-limiter.burstCapacity: ${RATE_LIMIT_BURST:20}
+                # 요청 하나가 토큰 하나를 쓴다. 무거운 요청에 더 물릴 수도 있지만,
+                # 그러려면 게이트웨이가 요청의 무게를 알아야 한다 — 도메인을 알게 된다.
+                redis-rate-limiter.requestedTokens: 1
+
+          # 뒤 서비스가 답하지 않을 때 게이트웨이 스레드를 언제까지 붙들 것인가.
+          #
+          # 상대 은행에서 배운 것이 여기에도 적용된다 — 느린 뒤쪽이 앞쪽 스레드를 다 쓰면
+          # 아무 관계 없는 요청까지 막힌다. 접수 SLO가 p99 500ms이므로 그보다 넉넉하되
+          # 무한정은 아니게 잡는다.
+          httpclient:
+            connect-timeout: 1000
+            response-timeout: 5s
+
+# 누가 보낸 요청인지 게이트웨이가 한 번만 확인한다 (Phase 4).
+#
+# ⚠️ 기본값은 <b>개발용</b>이다. 대칭키(HS256)라 이 값을 아는 사람은 아무 토큰이나 만들 수 있다.
+# 운영에서는 반드시 환경변수로 덮고, 발급자가 생기면 비대칭 키(RS256) + JWKS로 간다.
+remittance:
+  auth:
+    secret: ${AUTH_SECRET:dev-only-secret-please-override-32-bytes-min}
+    # 토큰 없이 통과시킬 경로. 헬스체크에 토큰을 요구하면 K8s가 파드를 못 살린다.
+    public-paths:
+      - /actuator/
 
 server:
   port: 8080
-
-# Phase 4에서 Spring Cloud Gateway 라우팅/인증 필터 설정 추가 예정
 
 # Actuator: 헬스체크·메트릭 노출.
 # health 상세는 K8s probe(Phase 7), prometheus는 메트릭 수집(Phase 9)에서 쓴다.

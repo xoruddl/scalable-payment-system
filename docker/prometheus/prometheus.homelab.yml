@@ -37,6 +37,9 @@ scrape_configs:
       # 느린 상대가 우리를 어떻게 묶는지 보려면 양쪽을 나란히 놓아야 한다.
       - targets: ['host.docker.internal:8086']
         labels: { service: external-bank }
+      # Phase 4 — 단일 진입점. 접수 지연이 여기서 한 홉 늘어나므로 따로 봐야 한다.
+      - targets: ['host.docker.internal:8080']
+        labels: { service: gateway }
 
   - job_name: prometheus
     static_configs:

@@ -4,6 +4,9 @@ plugins {
 
 dependencies {
 	implementation 'org.springframework.boot:spring-boot-starter-webflux'
+	// API 문서를 손으로 쓰지 않고 코드에서 낸다 (Phase 4). 버전은 루트 build.gradle에 고정.
+	// ⚠️ 이 서비스만 webflux 변형이다 — webmvc 변형을 넣으면 서블릿 자동 설정을 끌고 온다.
+	implementation "org.springdoc:springdoc-openapi-starter-webflux-ui:${springdocVersion}"
 	implementation 'org.springframework.boot:spring-boot-starter-data-mongodb-reactive'
 	implementation 'org.springframework.boot:spring-boot-starter-kafka'
 	implementation 'org.springframework.boot:spring-boot-starter-validation'

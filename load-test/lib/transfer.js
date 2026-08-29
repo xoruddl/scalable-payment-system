@@ -1,8 +1,40 @@
 import http from 'k6/http';
 import { check, sleep } from 'k6';
 import { Counter, Rate, Trend } from 'k6/metrics';
-import { CURRENCY, JSON_HEADERS, SETTLE_TIMEOUT_SEC, TRANSFER_AMOUNT, TRANSFER_URL } from './config.js';
+import {
+	AUTH_SECRET,
+	CURRENCY,
+	JSON_HEADERS,
+	SETTLE_TIMEOUT_SEC,
+	TRANSFER_AMOUNT,
+	TRANSFER_BASE,
+	VIA_GATEWAY,
+} from './config.js';
+import { issueToken } from './auth.js';
 import { uuid } from './uuid.js';
+
+/** 계좌 ID → `Bearer ...`. 한 번 만들어 재사용한다. */
+const TOKENS = {};
+
+/**
+ * <b>보내는 계좌마다 다른 토큰</b>을 쓴다 (Phase 4의 Rate Limiting 이후).
+ *
+ * 처음에는 `load-test` 하나로 전부 보냈다. 그런데 게이트웨이가 <b>사용자별로</b> 제한하므로
+ * 그러면 부하 전체가 한 사람 몫(초당 10건)에 갇힌다 — <b>100 TPS를 걸어도 10 TPS만 들어간다.</b>
+ * 계좌 주인이 각자 자기 토큰으로 보내는 것이 실제 모습이기도 하다.
+ *
+ * <p>토큰은 계좌당 <b>한 번만</b> 만들어 재사용한다. 매 요청 서명하면 그게 부하 생성기의 일이
+ * 되어, 재려는 것(게이트웨이가 더하는 지연)에 우리 CPU 시간이 섞인다.
+ */
+function authHeaders(fromAccountId) {
+	if (!VIA_GATEWAY) {
+		return {};
+	}
+	if (!TOKENS[fromAccountId]) {
+		TOKENS[fromAccountId] = `Bearer ${issueToken(fromAccountId, AUTH_SECRET)}`;
+	}
+	return { Authorization: TOKENS[fromAccountId] };
+}
 
 /**
  * 접수(202)와 종결(COMPLETED)은 다른 사건이다.
@@ -41,7 +73,7 @@ export function requestExternalTransfer(fromAccountId, bankCode, tags = {}) {
 
 function post(fromAccountId, destination, tags) {
 	const res = http.post(
-		`${TRANSFER_URL}/transfers`,
+		`${TRANSFER_BASE}/transfers`,
 		JSON.stringify({
 			fromAccountId,
 			...destination,
@@ -49,7 +81,7 @@ function post(fromAccountId, destination, tags) {
 			currency: CURRENCY,
 		}),
 		{
-			headers: { ...JSON_HEADERS, 'Idempotency-Key': uuid() },
+			headers: { ...JSON_HEADERS, ...authHeaders(fromAccountId), 'Idempotency-Key': uuid() },
 			tags: { name: 'accept', ...tags },
 		},
 	);
@@ -69,15 +101,16 @@ function post(fromAccountId, destination, tags) {
  * 안 넘기면 예전처럼 하나로 합쳐 잰다.
  */
 export function requestAndAwaitSettle(fromAccountId, toAccountId, tags = {}) {
-	return awaitSettle(() => requestTransfer(fromAccountId, toAccountId, tags), tags);
+	return awaitSettle(() => requestTransfer(fromAccountId, toAccountId, tags), fromAccountId, tags);
 }
 
 /** 상대 은행으로 보내고 종결까지 기다린다. */
 export function requestExternalAndAwaitSettle(fromAccountId, bankCode, tags = {}) {
-	return awaitSettle(() => requestExternalTransfer(fromAccountId, bankCode, tags), tags);
+	return awaitSettle(
+		() => requestExternalTransfer(fromAccountId, bankCode, tags), fromAccountId, tags);
 }
 
-function awaitSettle(send, tags) {
+function awaitSettle(send, fromAccountId, tags) {
 	const startedAt = Date.now();
 	const accepted = send();
 	if (accepted.status !== 202) {
@@ -90,7 +123,9 @@ function awaitSettle(send, tags) {
 
 	while (Date.now() < deadline) {
 		sleep(0.5);
-		const res = http.get(`${TRANSFER_URL}/transfers/${transferId}`, {
+		// 상태 조회도 같은 사람의 요청이다 — 토큰이 없으면 게이트웨이에서 401이다.
+		const res = http.get(`${TRANSFER_BASE}/transfers/${transferId}`, {
+			headers: authHeaders(fromAccountId),
 			tags: { name: 'poll-status', ...tags },
 		});
 		if (res.status !== 200) {
