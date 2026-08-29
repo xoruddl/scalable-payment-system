@@ -58,6 +58,12 @@ public class OutboxRetention {
 
 	private static final Logger log = LoggerFactory.getLogger(OutboxRetention.class);
 
+	/**
+	 * 삭제는 <b>별도 빈</b>이 한다. 청크 하나가 트랜잭션 하나여야 하는데, 같은 빈 안에서
+	 * 자기 메서드를 부르면 {@code @Transactional} 프록시를 타지 않는다 —
+	 * {@link OutboxRelay}가 {@code OutboxBatchPublisher}를 따로 두는 것과 같은 이유다.
+	 */
+	private final OutboxChunkDeleter chunkDeleter;
 	private final OutboxEventRepository repository;
 	private final MeterRegistry meterRegistry;
 
@@ -80,7 +86,7 @@ public class OutboxRetention {
 	public void sweep() {
 		int total = 0;
 		for (int i = 0; i < maxChunksPerTick; i++) {
-			int deleted = repository.deletePublishedBefore(
+			int deleted = chunkDeleter.deleteChunk(
 					com.remittance.transfer.support.Timestamps.now().minus(keepFor), chunkSize);
 			total += deleted;
 			// 덜 찼다 = 더 지울 게 없다. 다음 주기에 다시 본다.
