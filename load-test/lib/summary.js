@@ -51,6 +51,9 @@ function textSummary(name, data) {
 	if (shards > 1) {
 		condition += ` · 받는 계좌 ${shards}조각`;
 	}
+	// 게이트웨이를 거쳤는지는 접수 지연을 읽는 데 반드시 필요하다.
+	// 거친 값과 안 거친 값을 나란히 두면 그냥 틀린 비교가 된다 — 홉이 하나 다르다.
+	condition += __ENV.GATEWAY_URL ? ' · **게이트웨이 경유**' : ' · 서비스 직접';
 
 	const lines = [
 		'',

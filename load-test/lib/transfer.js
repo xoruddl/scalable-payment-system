@@ -1,8 +1,27 @@
 import http from 'k6/http';
 import { check, sleep } from 'k6';
 import { Counter, Rate, Trend } from 'k6/metrics';
-import { CURRENCY, JSON_HEADERS, SETTLE_TIMEOUT_SEC, TRANSFER_AMOUNT, TRANSFER_URL } from './config.js';
+import {
+	AUTH_SECRET,
+	CURRENCY,
+	JSON_HEADERS,
+	SETTLE_TIMEOUT_SEC,
+	TRANSFER_AMOUNT,
+	TRANSFER_BASE,
+	VIA_GATEWAY,
+} from './config.js';
+import { issueToken } from './auth.js';
 import { uuid } from './uuid.js';
+
+/**
+ * 게이트웨이를 통과할 때만 붙는 토큰 (Phase 4).
+ *
+ * <b>VU마다 만들지 않고 모듈이 한 번만 만든다.</b> 서명을 매 요청 하면 그게 부하 생성기의
+ * 일이 되어, 재려는 것(게이트웨이가 더하는 지연)에 우리 CPU 시간이 섞인다.
+ */
+const AUTH_HEADERS = VIA_GATEWAY
+	? { Authorization: `Bearer ${issueToken('load-test', AUTH_SECRET)}` }
+	: {};
 
 /**
  * 접수(202)와 종결(COMPLETED)은 다른 사건이다.
@@ -41,7 +60,7 @@ export function requestExternalTransfer(fromAccountId, bankCode, tags = {}) {
 
 function post(fromAccountId, destination, tags) {
 	const res = http.post(
-		`${TRANSFER_URL}/transfers`,
+		`${TRANSFER_BASE}/transfers`,
 		JSON.stringify({
 			fromAccountId,
 			...destination,
@@ -49,7 +68,7 @@ function post(fromAccountId, destination, tags) {
 			currency: CURRENCY,
 		}),
 		{
-			headers: { ...JSON_HEADERS, 'Idempotency-Key': uuid() },
+			headers: { ...JSON_HEADERS, ...AUTH_HEADERS, 'Idempotency-Key': uuid() },
 			tags: { name: 'accept', ...tags },
 		},
 	);
@@ -90,7 +109,8 @@ function awaitSettle(send, tags) {
 
 	while (Date.now() < deadline) {
 		sleep(0.5);
-		const res = http.get(`${TRANSFER_URL}/transfers/${transferId}`, {
+		const res = http.get(`${TRANSFER_BASE}/transfers/${transferId}`, {
+			headers: AUTH_HEADERS,
 			tags: { name: 'poll-status', ...tags },
 		});
 		if (res.status !== 200) {
