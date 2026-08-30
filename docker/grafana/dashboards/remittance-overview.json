@@ -1169,6 +1169,72 @@
       }
     },
     {
+      "id": 35,
+      "type": "timeseries",
+      "title": "락 해제 실패 (초당)",
+      "description": "놓으려 했더니 **이미 내 락이 아니었던** 횟수. TTL이 내 작업보다 먼저 끝나 **임계 구역이 두 서버에서 겹쳐 돌았다**는 뜻이다.\n\n겹치는 동안은 낙관적 락이 뒤에서 막아주므로 **에러율에도 대사에도 안 나타난다** — 여기 말고는 알 방법이 없다.\n\n`released`는 분모다. 0이 정상이라 **카운터를 기동 시 미리 만들어 둔다** — '0건'과 '수집이 안 됨'을 구분하기 위해서다.\n\n이 값이 0을 넘으면 TTL이나 임계 구역 길이 둘 중 하나가 틀렸다는 뜻이고, **Redisson(watchdog)으로 갈아탈 근거**가 된다.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 8,
+        "x": 0,
+        "y": 59
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum by (outcome) (rate(remittance_lock_release_total[1m]))",
+          "legendFormat": "{{outcome}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "min": 0,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": true,
+            "gradientMode": "opacity",
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
       "id": 104,
       "type": "row",
       "title": "정합성 대사 — 찾아내는 것보다 닿는 게 중요하다",
@@ -1177,7 +1243,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 59
+        "y": 67
       },
       "panels": []
     },
@@ -1194,7 +1260,7 @@
         "h": 8,
         "w": 8,
         "x": 0,
-        "y": 60
+        "y": 68
       },
       "targets": [
         {
@@ -1260,7 +1326,7 @@
         "h": 8,
         "w": 8,
         "x": 8,
-        "y": 60
+        "y": 68
       },
       "targets": [
         {
@@ -1326,7 +1392,7 @@
         "h": 8,
         "w": 8,
         "x": 16,
-        "y": 60
+        "y": 68
       },
       "targets": [
         {
@@ -1399,7 +1465,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 68
+        "y": 76
       },
       "panels": []
     },
@@ -1416,7 +1482,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 69
+        "y": 77
       },
       "targets": [
         {
@@ -1482,7 +1548,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 69
+        "y": 77
       },
       "targets": [
         {
