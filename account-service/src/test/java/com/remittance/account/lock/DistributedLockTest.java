@@ -45,6 +45,10 @@ class DistributedLockTest extends AbstractIntegrationTest {
 		return meterRegistry.get("remittance.lock.hold").timer();
 	}
 
+	private double releaseCount(String outcome) {
+		return meterRegistry.get("remittance.lock.release").tag("outcome", outcome).counter().count();
+	}
+
 	/**
 	 * 이번 호출이 <b>얼마를 보탰는지</b> 잰다.
 	 *
@@ -222,6 +226,41 @@ class DistributedLockTest extends AbstractIntegrationTest {
 		assertThat(redisTemplate.opsForValue().get(key))
 				.as("내 락이 아니므로 지우지 않고 그대로 두어야 한다")
 				.isEqualTo("another-owner");
+	}
+
+	/**
+	 * 위의 "지우지 않는다"는 <b>피해를 막은 것이지 사고가 안 난 게 아니다.</b>
+	 * 저 상황이 벌어졌다는 건 TTL이 작업보다 먼저 끝나 <b>임계 구역이 겹쳐 돌았다</b>는 뜻이고,
+	 * 겹치는 동안은 낙관적 락이 뒤에서 막아주므로 <b>에러율에도 다른 지표에도 안 나타난다.</b>
+	 * 그래서 Lua의 반환값 0을 버리지 않고 센다.
+	 */
+	@Test
+	void 락을_뺏긴_채로_끝나면_해제_실패로_센다() {
+		String key = newKey();
+		double before = releaseCount("lost");
+
+		distributedLock.executeWithLock(key, Duration.ofMillis(100), Duration.ofSeconds(1), () -> {
+			sleep(300);
+			redisTemplate.opsForValue().set(key, "another-owner", Duration.ofSeconds(10));
+			return null;
+		});
+
+		assertThat(releaseCount("lost"))
+				.as("TTL이 먼저 끝나 임계 구역이 겹쳤다는 신호는 여기 말고 나올 곳이 없다")
+				.isEqualTo(before + 1);
+	}
+
+	@Test
+	void 제_손으로_놓으면_해제_성공으로_센다() {
+		double beforeReleased = releaseCount("released");
+		double beforeLost = releaseCount("lost");
+
+		distributedLock.executeWithLock(newKey(), Duration.ofSeconds(5), Duration.ofSeconds(1), () -> null);
+
+		assertThat(releaseCount("released")).isEqualTo(beforeReleased + 1);
+		assertThat(releaseCount("lost"))
+				.as("정상 경로가 lost를 올리면 지표를 믿을 수 없다")
+				.isEqualTo(beforeLost);
 	}
 
 	private void sleep(long millis) {

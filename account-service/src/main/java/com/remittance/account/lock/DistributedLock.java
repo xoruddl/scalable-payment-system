@@ -1,8 +1,11 @@
 package com.remittance.account.lock;
 
 import com.remittance.account.exception.LockAcquisitionException;
+import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.data.redis.core.script.RedisScript;
@@ -52,9 +55,24 @@ import java.util.function.Supplier;
  * <p>둘은 처방이 다르다. 보유가 길면 <b>임계 구역을 줄여야</b> 하고, 넘겨받는 지연이 크면
  * <b>폴링을 그만두고 알림을 받아야</b> 한다(Redisson은 pub/sub을 쓴다).
  * <b>가르지 않고 고치면 어느 쪽을 고친 건지 말할 수 없다.</b>
+ *
+ * <h2>해제 실패를 세는 이유 (2026-08-30)</h2>
+ * 위의 "남의 락은 지우지 않는다"는 <b>안전 장치</b>다. 그런데 그 장치가 실제로 걸렸다는 것은
+ * 이미 사고가 났다는 뜻이다 — <b>내 TTL이 내 작업보다 먼저 끝나서, 임계 구역이 두 서버에서
+ * 겹쳐 돌았다</b>는 말이기 때문이다. 지우지 않은 덕에 <b>피해는 막았지만 원인은 그대로 있다.</b>
+ *
+ * <p>Lua가 그때 {@code 0}을 돌려주는데, 이 값을 버리면 <b>겹쳤는지 아닌지를 말할 방법이 없다.</b>
+ * 겹치는 동안 낙관적 락(@Version)이 뒤에서 막아주므로 <b>지표에도 에러율에도 안 나타난다.</b>
+ * 그래서 세어둔다.
+ *
+ * <p>이 숫자는 다음 결정의 근거이기도 하다. 0이 아니면 TTL 문제가 실재하므로
+ * <b>watchdog(Redisson)이 값을 한다</b>. 계속 0이면 Redisson을 넣는 이유는 TTL이 아니라
+ * <b>위의 50ms 폴링을 pub/sub으로 바꾸는 것</b>이 된다. <b>근거가 다르면 교체의 성공 조건도 다르다.</b>
  */
 @Component
 public class DistributedLock {
+
+	private static final Logger log = LoggerFactory.getLogger(DistributedLock.class);
 
 	/** 값이 내 토큰일 때만 삭제한다. 반환값 1 = 해제 성공, 0 = 이미 남의 락. */
 	private static final String RELEASE_SCRIPT = """
@@ -80,12 +98,35 @@ public class DistributedLock {
 	 */
 	private final Timer held;
 
+	/** 내가 놓은 락. 정상. */
+	private final Counter released;
+
+	/**
+	 * 놓으려 했더니 <b>이미 내 락이 아니었던</b> 횟수. TTL이 내 작업보다 먼저 끝났다는 뜻이고,
+	 * 곧 <b>임계 구역이 겹쳐 돌았다</b>는 뜻이다. 0이 아니면 TTL이나 임계 구역 둘 중 하나가 틀렸다.
+	 */
+	private final Counter lost;
+
 	public DistributedLock(StringRedisTemplate redisTemplate, MeterRegistry meterRegistry) {
 		this.redisTemplate = redisTemplate;
 		this.acquired = waitTimer(meterRegistry, "acquired");
 		this.timedOut = waitTimer(meterRegistry, "timeout");
 		this.held = Timer.builder("remittance.lock.hold")
 				.description("분산 락을 쥐고 있던 시간 — 한 계좌의 처리량 상한을 정한다")
+				.register(meterRegistry);
+		this.released = releaseCounter(meterRegistry, "released");
+		this.lost = releaseCounter(meterRegistry, "lost");
+	}
+
+	/**
+	 * 대기 타이머와 같은 모양으로 둔다 — <b>지표 하나에 결과를 태그로 붙인다.</b>
+	 * 성공과 실패를 다른 이름의 지표로 나누면 분모가 사라져서
+	 * "몇 건 중 몇 건이 겹쳤나"를 말할 수 없다.
+	 */
+	private static Counter releaseCounter(MeterRegistry meterRegistry, String outcome) {
+		return Counter.builder("remittance.lock.release")
+				.description("분산 락 해제 결과 — lost는 TTL이 먼저 끝나 임계 구역이 겹쳤다는 뜻이다")
+				.tag("outcome", outcome)
 				.register(meterRegistry);
 	}
 
@@ -140,6 +181,14 @@ public class DistributedLock {
 	}
 
 	private void release(String key, String token) {
-		redisTemplate.execute(releaseScript, List.of(key), token);
+		Long deleted = redisTemplate.execute(releaseScript, List.of(key), token);
+		if (deleted != null && deleted == 1L) {
+			released.increment();
+			return;
+		}
+		// null은 나오지 않아야 하는 값이지만, 나오면 lost로 센다.
+		// "확실히 놓았다"고 말할 수 없는 건 안전 지표에서 못 놓은 쪽으로 세는 게 맞다.
+		lost.increment();
+		log.warn("락 해제 실패 — 이미 내 락이 아니다. TTL이 작업보다 먼저 끝났다. key={}", key);
 	}
 }
