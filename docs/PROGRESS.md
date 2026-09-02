@@ -5610,6 +5610,77 @@ Phase 6이 ✅ 완료인데 **미체크가 17개** 남아 있었습니다. 그 �
 
 ---
 
+## 릴레이가 두 대면 같은 이벤트를 두 번 보낸다 — 그리고 SKIP LOCKED만으로는 안 됐다 ★★★
+
+**2026-09-02.** ShedLock 작업(교체 4번)의 첫 조각입니다. `@Scheduled`를 훑어 **인스턴스가
+둘 이상이면 깨지는 것**을 갈랐고, 그중 **Outbox 릴레이**를 먼저 고쳤습니다.
+
+### 먼저 세어봤더니 10개가 아니라 7개였다
+
+문서에 `@Scheduled` ×10이라고 적혀 있었는데 **실제로는 7개**입니다(나머지 3개는 주석 속 언급).
+그리고 셋으로 갈립니다.
+
+| 작업 | replica 2대가 되면 | 처방 |
+|---|---|---|
+| `OutboxRelay` ×2 (account·transfer) | **같은 행을 둘 다 집어 중복 발행** | **`SKIP LOCKED`** ← 이번에 함 |
+| `OutboxRetention` ×2 · `ReconciliationScheduler` · `ExternalCreditProber` | 헛일이 2배 (돈은 안 틀림) | ShedLock |
+| **`ShardRouter.refresh`** | **아무 문제 없음** | **★ 손대지 않는다** |
+
+### ★ `ShardRouter`가 이 작업의 함정이다
+
+`refresh()`는 **각 인스턴스의 로컬 캐시**(`ConcurrentHashMap`)를 갱신합니다. 여기에 ShedLock을
+붙이면 **한 대만 갱신하고 나머지는 영영 낡은 `shardCount`를 들고** 있게 됩니다. 그러면 새로 쪼갠
+핫 계좌를 어떤 인스턴스는 1조각으로 알고 계산합니다 —
+**Phase 6에서 25 → 70 TPS를 만든 샤딩이 조용히 깨집니다.**
+
+`@Scheduled`를 전부 훑어 **일괄로** ShedLock을 붙이는 접근이 정확히 이 사고를 냅니다.
+그래서 *"안 붙인다"*는 결정을 남겨야 합니다 — **안 한 것과 빠뜨린 것이 구분되게.**
+
+### 재현부터 했다 — 합계가 20이었다
+
+```
+10건을 준비하고 두 릴레이가 동시에 publishBatch(10)
+  기대: 합계 10        실제: 합계 20    ← 같은 10건을 각자 발행했다
+```
+
+돈이 틀리지는 않습니다(소비 쪽이 멱등합니다). 하지만 **Kafka·컨슈머·DB가 하는 일이 통째로
+두 배**가 되고, 그건 replica를 늘려 처리량을 얻겠다는 목적과 정확히 반대입니다 —
+**인스턴스를 늘릴수록 헛일이 늘어납니다.**
+
+### ★★ SKIP LOCKED만으로는 부족했다 — 격리 수준까지 내려가야 했다
+
+고치고 단독으로 돌리니 green이었는데, **전체 스위트에서 깨졌습니다.**
+
+```
+CannotAcquireLockException: Deadlock found when trying to get lock
+  [update outbox_events set published_at=? where id=?]
+```
+
+원인은 **REPEATABLE READ의 갭 락**입니다. `FOR UPDATE`는 스캔한 인덱스 **구간**까지 잠그는데,
+**`SKIP LOCKED`는 잠긴 *행*을 건너뛸 뿐 *갭 락*을 없애주지 않습니다.** 릴레이 셋이 동시에 돌자
+서로의 갭을 물었습니다. `publishBatch`를 **READ COMMITTED**로 내려 해결했습니다 —
+갭 락 없이 행 락만 잡으므로 큐를 나눠 갖는 이 패턴에 맞고, 이 트랜잭션은 **한 번 읽고 그 행만
+갱신**하므로 잃는 것도 없습니다.
+
+> **왜 릴레이 셋이었나** — 이게 운이 좋았던 부분입니다. `TransferCompensationTest`가
+> `outbox.relay.enabled=true`로 띄운 Spring 컨텍스트가 **캐시되어 JVM이 끝날 때까지 폴링**합니다.
+> 제 테스트의 두 스레드에 그것이 더해져 **우연히 운영의 replica 3대 상황이 재현**됐습니다.
+> 단독 실행만 봤으면 **데드락을 모른 채 홈서버에서 만났을 것**입니다.
+
+### 무엇을 바꿨나
+
+- `OutboxEventRepository.findUnpublishedForRelay` 신설 — `... limit :limit for update skip locked`
+  (네이티브 SQL. JPA의 `@QueryHints(-2)` 매직 넘버보다 **SQL을 그대로 적는 편**을 골랐다)
+- `OutboxBatchPublisher.publishBatch` — 이 조회를 쓰고 **`@Transactional(isolation = READ_COMMITTED)`**
+- `OutboxRelayConcurrencyTest` ×2 신설 — 계약 셋: 같은 행을 안 집는다 · **기다리지 않는다** ·
+  마킹은 행마다 한 번. **transfer 쪽은 잠금을 도로 빼서 빨개지는 것까지 확인**했다
+
+**남은 대가**: 이 트랜잭션은 **행 락을 Kafka 전송 동안 쥡니다.** 단일 인스턴스에서는 보이지
+않던 성질이라 **replica를 늘린 뒤 재측정 대상**입니다. 그리고 아직 **홈서버에서 2대로 띄워
+확인하지 않았습니다** — 테스트가 green인 것과 실제로 도는 것은 다릅니다.
+
+---
+
 ## 브랜치 히스토리
 
 ```

@@ -3,10 +3,10 @@ package com.remittance.transfer.outbox;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.data.domain.Limit;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.support.SendResult;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
@@ -50,13 +50,27 @@ public class OutboxBatchPublisher {
 	private final KafkaTemplate<String, String> kafkaTemplate;
 
 	/**
+	 * ★ <b>왜 READ COMMITTED인가 — SKIP LOCKED만으로는 부족했다.</b>
+	 *
+	 * <p>MySQL 기본값인 REPEATABLE READ에서는 {@code FOR UPDATE}가 스캔한 인덱스 구간에
+	 * <b>갭 락</b>까지 겁니다. 릴레이 셋이 동시에 돌자 서로의 갭을 물고
+	 * {@code Deadlock found when trying to get lock}으로 죽었다 — {@code SKIP LOCKED}는
+	 * <b>잠긴 행</b>을 건너뛸 뿐 <b>갭 락</b>을 없애주지 않기 때문이다.
+	 *
+	 * <p>READ COMMITTED는 갭 락을 걸지 않고 <b>행 락만</b> 잡는다. 큐를 나눠 갖는 이 패턴에
+	 * 맞는 격리 수준이고, 여기서 잃는 것도 없다 — 이 트랜잭션은 <b>한 번 읽고 그 행만 갱신</b>하므로
+	 * 반복 읽기의 일관성이 필요 없다.
+	 *
+	 * <p>이 결함은 <b>인스턴스가 둘 이상일 때만</b> 나타난다. 테스트에서 잡힌 것은 운이 좋았다 —
+	 * 릴레이를 켜둔 다른 테스트의 Spring 컨텍스트가 캐시되어 <b>세 번째 릴레이</b>로 같이 돌았다.
+	 *
 	 * @return 실제로 발행하고 마킹한 건수. {@code batchSize}보다 적으면 <b>더 비울 게 없거나
 	 *         중간에 실패한 것</b>이므로, 부르는 쪽은 이번 주기를 여기서 끝내면 된다.
 	 */
-	@Transactional
+	@Transactional(isolation = Isolation.READ_COMMITTED)
 	public int publishBatch(int batchSize) {
-		List<OutboxEvent> pending =
-				outboxEventRepository.findByPublishedAtIsNullOrderByIdAsc(Limit.of(batchSize));
+		// 집는 순간 잠근다 — 다른 인스턴스의 릴레이가 같은 행을 집어 두 번 발행하지 않게.
+		List<OutboxEvent> pending = outboxEventRepository.findUnpublishedForRelay(batchSize);
 		if (pending.isEmpty()) {
 			return 0;
 		}
