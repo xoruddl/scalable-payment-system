@@ -63,8 +63,47 @@ CPUSET="${CPUSET:-}"
 # 코드를 고쳐가며 재면 빌드가 달라져 무엇 때문에 숫자가 바뀌었는지 말할 수 없다.
 SERVICE_ENV="${SERVICE_ENV:-}"
 
+# 같은 서비스를 여러 벌 띄운다. 공백으로 구분한 모듈=개수 목록.
+#
+#   REPLICAS="transfer-service=2 account-service=2" ./scripts/homelab-services.sh restart
+#
+# 왜 필요한가: <b>인스턴스가 하나면 존재할 수 없는 결함</b>이 있다. Outbox 릴레이의 중복
+# 발행이 그렇다 — 잠금 없이 미발행 행을 집으면 두 릴레이가 같은 100건을 둘 다 보낸다.
+# 단위 테스트에서는 스레드 둘로 흉내 냈지만, 진짜 두 프로세스가 각자 커넥션 풀과
+# 스케줄러를 들고 도는 것과는 다르다. Phase 8에서 replica를 올리기 전에 여기서 본다.
+#
+# --network host라 포트가 곧 주소다. 2번째부터는 +100 해서 충돌을 피한다(8082 → 8182).
+# 게이트웨이는 기본 포트만 알므로 <b>추가 인스턴스는 HTTP를 받지 않는다</b> —
+# Kafka 소비와 Outbox 릴레이에만 참여한다. 릴레이를 보려는 목적에는 그게 맞다.
+REPLICAS="${REPLICAS:-}"
+
 container_name() { echo "remittance-$1"; }
 jar_path() { echo "/app/$1/build/libs/$1-0.0.1-SNAPSHOT.jar"; }
+
+replica_count() {
+	local kv
+	for kv in $REPLICAS; do
+		[ "${kv%%=*}" = "$1" ] && { echo "${kv#*=}"; return; }
+	done
+	echo 1
+}
+
+# SERVICES를 replica까지 펼친 목록. 한 줄에 "모듈 포트 힙 한도 컨테이너이름".
+# start·stop·status가 모두 이걸 돌므로 세 곳이 어긋날 일이 없다.
+expand_instances() {
+	local entry name port heap mem n i
+	for entry in "${SERVICES[@]}"; do
+		IFS=: read -r name port heap mem <<<"$entry"
+		n="$(replica_count "$name")"
+		for i in $(seq 1 "$n"); do
+			if [ "$i" -eq 1 ]; then
+				echo "$name $port $heap $mem $(container_name "$name")"
+			else
+				echo "$name $((port + 100 * (i - 1))) $heap $mem $(container_name "$name")-$i"
+			fi
+		done
+	done
+}
 
 cmd_build() {
 	echo "▶ 컨테이너 안에서 빌드한다 (호스트에 JDK가 없어도 된다)"
@@ -88,10 +127,9 @@ cmd_build() {
 }
 
 cmd_start() {
-	for entry in "${SERVICES[@]}"; do
-		IFS=: read -r name port heap mem <<<"$entry"
-		local_name="$(container_name "$name")"
-		docker rm -f "$local_name" >/dev/null 2>&1 || true
+	local name port heap mem cname total=0
+	while read -r name port heap mem cname; do
+		docker rm -f "$cname" >/dev/null 2>&1 || true
 
 		local cpuset_arg=()
 		[ -n "$CPUSET" ] && cpuset_arg=(--cpuset-cpus "$CPUSET")
@@ -100,11 +138,12 @@ cmd_start() {
 		for kv in $SERVICE_ENV; do env_args+=(-e "$kv"); done
 
 		docker run -d \
-			--name "$local_name" \
+			--name "$cname" \
 			--network host \
 			--memory "$mem" \
 			"${cpuset_arg[@]}" \
 			"${env_args[@]}" \
+			-e "SERVER_PORT=$port" \
 			-v "$PWD":/app:ro \
 			-w /app \
 			--restart no \
@@ -112,28 +151,38 @@ cmd_start() {
 			java "-Xmx$heap" "-Xms$heap" \
 			-XX:+ExitOnOutOfMemoryError \
 			-jar "$(jar_path "$name")" >/dev/null
-		echo "▶ $local_name (포트 $port, 힙 $heap, 한도 $mem)"
-	done
+		echo "▶ $cname (포트 $port, 힙 $heap, 한도 $mem)"
+		total=$((total + 1))
+	done < <(expand_instances)
 
 	echo "▶ 기동을 기다린다"
 	for _ in $(seq 1 90); do
 		local up=0
-		for entry in "${SERVICES[@]}"; do
-			IFS=: read -r _ port _ _ <<<"$entry"
+		while read -r _ port _ _ _; do
 			curl -s -m 1 "http://localhost:$port/actuator/health" 2>/dev/null | grep -q '"status":"UP"' && up=$((up + 1))
-		done
-		[ "$up" -eq "${#SERVICES[@]}" ] && { echo "   ${#SERVICES[@]}개 전부 UP"; break; }
+		done < <(expand_instances)
+		[ "$up" -eq "$total" ] && { echo "   ${total}개 전부 UP"; break; }
 		sleep 2
 	done
 	cmd_status
 }
 
+# ⚠️ expand_instances로 내리면 안 된다. REPLICAS가 <b>지금</b> 안 켜져 있으면
+# 지난번에 띄운 -2가 목록에 안 잡혀 <b>살아남는다.</b> 2026-09-05에 실제로 당했다 —
+# REPLICAS 없이 restart하고 "1대로 되돌렸다"고 믿은 채 2대로 측정했고,
+# 심지어 -2는 이전 SERVICE_ENV(concurrency=3)를 그대로 들고 있어 설정까지 섞였다.
+# 그래서 <b>이름으로 훑어서</b> remittance-<모듈>과 remittance-<모듈>-N을 전부 내린다.
 cmd_stop() {
+	local entry name count=0 c
 	for entry in "${SERVICES[@]}"; do
 		IFS=: read -r name _ _ _ <<<"$entry"
-		docker rm -f "$(container_name "$name")" >/dev/null 2>&1 || true
+		for c in $(docker ps -a --format '{{.Names}}' |
+				grep -E "^$(container_name "$name")(-[0-9]+)?$" || true); do
+			docker rm -f "$c" >/dev/null 2>&1 || true
+			count=$((count + 1))
+		done
 	done
-	echo "▶ ${#SERVICES[@]}개를 내렸다"
+	echo "▶ ${count}개를 내렸다"
 }
 
 # 떠 있는 것이 "내가 방금 만든 것"인지 확인한다.
@@ -144,9 +193,12 @@ cmd_status() {
 	local head; head="$(git rev-parse --short=12 HEAD 2>/dev/null || echo unknown)"
 	local mismatch=0
 	echo "▶ HEAD=$head"
-	for entry in "${SERVICES[@]}"; do
-		IFS=: read -r name port _ _ <<<"$entry"
+	local name port cname
+	while read -r name port _ _ cname; do
 		local commit info extra
+		# replica는 이름이 아니라 컨테이너 이름으로 구분해야 한다 —
+		# 같은 모듈이 두 줄 나오면 어느 쪽이 빨간지 알 수 없다.
+		[ "$cname" = "$(container_name "$name")" ] || name="$cname"
 		info="$(curl -s -m 2 "http://localhost:$port/actuator/info" 2>/dev/null)"
 		commit="$(echo "$info" | sed -n 's/.*"commit":"\([^"]*\)".*/\1/p')"
 		# 실험 설정도 함께 보여준다. 어느 전략으로 쟀는지 물어볼 수 없으면
@@ -157,12 +209,12 @@ cmd_status() {
 				extra=" [$(echo "$info" | sed -n 's/.*"accountLockStrategy":"\([^"]*\)".*/\1/p')]" ;;
 		esac
 		if [ "$commit" = "$head" ]; then
-			printf "   %-14s %s ✅%s\n" "$name" "$commit" "$extra"
+			printf "   %-32s %s ✅%s\n" "$name" "$commit" "$extra"
 		else
-			printf "   %-14s %s 🔴 HEAD와 다르다\n" "$name" "${commit:-응답없음}"
+			printf "   %-32s %s 🔴 HEAD와 다르다\n" "$name" "${commit:-응답없음}"
 			mismatch=1
 		fi
-	done
+	done < <(expand_instances)
 	[ "$mismatch" -eq 0 ] || {
 		echo "   ⚠️  이 상태로 측정하면 무엇을 쟀는지 알 수 없다. build 후 restart 하라."
 		return 1
