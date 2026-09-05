@@ -57,7 +57,8 @@ export const options = {
 		'http_reqs{name:accept}': ['count>0'],
 		'http_req_duration{name:accept}': ['p(95)<200'],
 		// 진짜 지표. 이게 무너지는 지점이 천장이다.
-		settle_duration: ['p(95)<5000'],
+		// ⚠️ p95가 아니라 <b>p99</b>다 — docs/SLO.md가 약속한 것이 p99다 (2026-09-05 정정).
+		settle_duration: ['p(99)<5000'],
 		settled: ['rate>0.99'],
 	},
 };

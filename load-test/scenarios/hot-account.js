@@ -69,7 +69,12 @@ export const options = {
 		'http_reqs{name:accept}': ['count>0'],
 		'http_req_duration{name:accept}': ['p(95)<200'],
 		// 이쪽이 무너진다. baseline에서는 통과하지 못하는 게 정상이다.
-		settle_duration: ['p(95)<5000'],
+		//
+		// ⚠️ p95가 아니라 <b>p99</b>다. docs/SLO.md가 약속한 것이 p99이므로 판정도 p99여야 한다.
+		// 2026-09-05까지 p95로 잡혀 있었고, 그래서 종결 p99 5,499ms인 실행에
+		// ✅가 찍혔다 — <b>약속을 어긴 실행을 용량이라고 부른 것</b>이다.
+		// capacity.js·mixed-bank.js는 처음부터 p99였다. 여기와 spread.js만 어긋나 있었다.
+		settle_duration: ['p(99)<5000'],
 		settled: ['rate>0.99'],
 	},
 };
