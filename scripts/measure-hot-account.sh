@@ -113,19 +113,38 @@ fi
 echo "   -- ② 정식 대사 (drain 뒤 1회) --"
 # 부하 중 주기 대사는 진행 중인 정상 Saga를 순간적인 불일치로 잡는다.
 # 판정은 반드시 <b>드레인이 끝난 뒤</b> 한 번 돌린 결과로 한다 (docs/SLO.md).
+# ⚠️ 종류를 갈라서 본다. 예전에는 findingCount가 0이 아니면 무조건
+# "잔액–원장이 어긋났다"를 찍었는데, 그러면 <b>돈이 안 맞는 것</b>과
+# <b>사람이 치울 흔적</b>이 같은 얼굴로 나온다.
+# 2026-09-05에 실제로 헷갈렸다 — 측정을 중간에 죽여 생긴 STRANDED_IDEMPOTENCY_KEY 4건을
+# 보고 잔액이 틀린 줄 알았다. 그 4건은 transfer_id가 NULL이라 돈이 움직인 적이 없었다.
+#
+#   BALANCE_MISMATCH        잔액과 원장이 안 맞는다 → 용량 판정 탈락
+#   STRANDED_IDEMPOTENCY_KEY  접수 도중 죽은 흔적 → 알리되 탈락시키지 않는다
+#   UNKNOWN_EXTERNAL_CREDIT   상대 은행 결과를 모른다 → 위와 같다
 verdict="$(curl -s -X POST localhost:8084/reconciliations/runs |
 	python3 -c "
-import sys, json
+import sys, json, collections
 try:
     d = json.load(sys.stdin)
 except Exception:
     print('ERR|대사 응답을 읽지 못했다'); raise SystemExit
-n = d.get('findingCount', d.get('finding_count'))
-print('%s|계좌 %s건 대조, 어긋남 %s건' % ('OK' if n == 0 else 'NG', d.get('accountsChecked', '?'), n))
+by = collections.Counter(f.get('type', '?') for f in d.get('findings', []))
+hard = by.get('BALANCE_MISMATCH', 0)
+soft = sum(by.values()) - hard
+detail = ', '.join('%s %d건' % (t, n) for t, n in sorted(by.items())) or '어긋남 0건'
+print('%s|계좌 %s건 대조, %s' % ('OK' if hard == 0 else 'NG', d.get('accountsChecked', '?'), detail))
+print('SOFT|%d' % soft)
 " 2>/dev/null)"
+soft_count="$(printf '%s\n' "$verdict" | sed -n 's/^SOFT|//p')"
+verdict="$(printf '%s\n' "$verdict" | head -1)"
 echo "      ${verdict#*|}"
 case "$verdict" in
-	OK*) ;;
+	OK*)
+		[ "${soft_count:-0}" -eq 0 ] || {
+			echo "      ⚠️  잔액은 맞다. 위 건은 사람이 치울 흔적이라 용량 판정에서 빼지 않는다"
+			echo "         자세히: curl -s localhost:8084/reconciliations/findings | head"
+		} ;;
 	*)   echo "   ❌ 잔액–원장이 어긋났다. p99가 좋아도 이 TPS는 용량이 아니다"
 	     echo "      자세히: curl -s localhost:8084/reconciliations/findings | head"
 	     exit 4 ;;
@@ -134,7 +153,9 @@ esac
 echo "   -- ③ 판정 --"
 # 셋을 <b>전부</b> 통과해야 용량이다. 하나라도 빼면 그건 다른 것을 잰 것이다.
 #
-#   지연     k6 threshold (docs/SLO.md의 p99)
+#   지연     k6 threshold — settle_duration p(99) < 5000 (docs/SLO.md)
+#            ⚠️ 2026-09-05까지 시나리오가 p95로 잡고 있어 이 주석과 어긋나 있었다.
+#               p99 5,499ms인 실행에 ✅가 찍혔다. 시나리오를 p99로 고쳤다
 #   회복     새 요청을 끊으면 적체가 끝까지 빠지는가
 #   정합성   drain 뒤 정식 대사 0건
 if [ "$k6_status" -ne 0 ]; then
