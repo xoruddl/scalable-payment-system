@@ -4,6 +4,7 @@ import com.redis.testcontainers.RedisContainer;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -33,7 +34,15 @@ import static org.assertj.core.api.Assertions.assertThat;
  * <h2>Redis를 실제로 띄워서 잰다</h2>
  * 인메모리 대체물로 재면 <b>여기서 확인하려는 것이 사라진다</b> — 카운터가 프로세스 밖에 있어야
  * 게이트웨이를 여러 대 띄워도 "초당 10건"이 지켜진다. 그래서 컨테이너를 띄운다.
+ *
+ * <h2>왜 {@code @Tag("integration")}인가</h2>
+ * 컨테이너를 띄우므로 <b>Docker가 필요하다.</b> 다른 서비스의 통합 테스트는
+ * {@code AbstractIntegrationTest}를 상속해 태그를 물려받는데, 이 테스트는 상속하지 않아
+ * <b>태그 없이 {@code unitTest}에 섞여 있었다.</b> 그래서 "Docker 불필요"라던 {@code unitTest}가
+ * Docker 없는 로컬에서 {@code Could not find a valid Docker environment}로 죽었다
+ * (2026-09-05). Testcontainers를 쓰면서 태그가 없던 <b>유일한 테스트</b>였다.
  */
+@Tag("integration")
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @AutoConfigureWebTestClient(timeout = "10s")
 class RateLimitTest {
