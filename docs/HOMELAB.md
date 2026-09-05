@@ -97,6 +97,35 @@ ssh home1 'cd ~/remittance && ./scripts/homelab-services.sh start'
 (`--network host`라 노트북에서 `java -jar`로 띄우던 것과 같은 그림입니다).
 Phase 7에서 서비스마다 제대로 된 Dockerfile을 쓸 때까지의 임시 방편입니다.
 
+#### 같은 서비스를 여러 벌 띄우려면 — `REPLICAS`
+
+**인스턴스가 하나면 존재할 수 없는 결함**을 보려면 진짜로 두 벌을 띄워야 합니다.
+Outbox 릴레이의 중복 발행이 그런 종류입니다.
+
+```bash
+ssh home1 'cd ~/remittance && REPLICAS="transfer-service=2 account-service=2" \
+  CPUSET=0-9 ./scripts/homelab-services.sh restart'
+```
+
+`--network host`라 포트가 곧 주소이므로 **2번째부터 +100**으로 갈립니다(8082 → 8182).
+게이트웨이는 기본 포트만 알기 때문에 **추가 인스턴스는 HTTP를 받지 않고**
+Kafka 소비와 Outbox 릴레이에만 참여합니다.
+
+> ⚠️ **`stop`·`restart`에도 `REPLICAS`를 붙일 필요는 없지만, 붙이는 습관이 안전합니다.**
+> 스크립트는 이름으로 훑어 `remittance-<모듈>`과 `remittance-<모듈>-N`을 전부 내립니다.
+> 예전에는 `REPLICAS` 없이 `restart`하면 `-2`가 살아남았고, **"1대로 되돌렸다"고 믿으며
+> 2대로 측정**하는 사고가 났습니다(2026-09-05). 측정 전 `status`가 몇 줄을 찍는지
+> 세어보는 것이 가장 확실합니다.
+
+**두 인스턴스가 정말 둘 다 일하는지**는 발행량으로 확인합니다. 한쪽이 0이면
+그 측정은 2대를 잰 것이 아닙니다.
+
+```bash
+ssh home1 'for p in 8081 8181 8082 8182; do echo -n "  :$p "; \
+  curl -s localhost:$p/actuator/prometheus \
+  | awk "/^kafka_producer_record_send_total/ {s+=\$2} END {print s+0}"; done'
+```
+
 ### 4. 측정 전에 반드시 — 떠 있는 게 내가 만든 것인가
 
 ```bash
