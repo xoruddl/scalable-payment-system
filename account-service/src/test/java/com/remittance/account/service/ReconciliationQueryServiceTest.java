@@ -16,7 +16,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * 대사는 계좌를 <b>하나도 빠짐없이</b> 훑어야 한다. 한 계좌를 건너뛰면 그 계좌의 불일치는
+ * 대사는 계좌를 하나도 빠짐없이 훑어야 한다. 한 계좌를 건너뛰면 그 계좌의 불일치는
  * 영영 발견되지 않는다.
  */
 @SpringBootTest

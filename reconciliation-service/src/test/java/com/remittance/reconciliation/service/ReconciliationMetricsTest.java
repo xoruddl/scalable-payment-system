@@ -19,9 +19,9 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * 대사 결과가 <b>메트릭으로 나가는지</b> 지킨다 (Phase 5 Step 2).
+ * 대사 결과가 메트릭으로 나가는지 지킨다 (Phase 5 Step 2).
  *
- * <p>Phase 2에서 대사는 만들었지만 결과를 아는 방법이 API를 열어보는 것뿐이었다.
+ * Phase 2에서 대사는 만들었지만 결과를 아는 방법이 API를 열어보는 것뿐이었다.
  * 아무도 열어보지 않으면 어긋남은 DB에만 쌓인다.
  */
 @ExtendWith(MockitoExtension.class)

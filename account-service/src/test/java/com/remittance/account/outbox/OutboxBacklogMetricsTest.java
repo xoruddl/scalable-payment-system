@@ -12,13 +12,13 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Outbox 적체가 <b>바깥에서 보이는지</b> 지킨다 (Phase 5 Step 2).
+ * Outbox 적체가 바깥에서 보이는지 지킨다 (Phase 5 Step 2).
  *
- * <p>릴레이가 부하를 못 따라가면 <b>접수는 계속 202를 주고 HTTP 에러율도 안 오르는데
- * 돈만 안 움직이는</b> 상태가 된다. k6가 재는 "종결 지연"이 늘어나는 건 보이지만
- * <b>어디서</b> 늘어나는지는 이 값이 답한다.
+ * 릴레이가 부하를 못 따라가면 접수는 계속 202를 주고 HTTP 에러율도 안 오르는데
+ * 돈만 안 움직이는 상태가 된다. k6가 재는 "종결 지연"이 늘어나는 건 보이지만
+ * 어디서 늘어나는지는 이 값이 답한다.
  *
- * <p>릴레이는 테스트 설정에서 꺼져 있으므로(`outbox.relay.enabled=false`) 넣어둔 이벤트가
+ * 릴레이는 테스트 설정에서 꺼져 있으므로(`outbox.relay.enabled=false`) 넣어둔 이벤트가
  * 세는 도중에 발행되어 사라지지 않는다.
  */
 @SpringBootTest

@@ -17,14 +17,14 @@ import java.time.Instant;
 import java.util.UUID;
 
 /**
- * 이미 처리한 이벤트의 흔적. <b>컨슈머 멱등성</b>을 위해 존재한다.
+ * 이미 처리한 이벤트의 흔적. 컨슈머 멱등성을 위해 존재한다.
  *
- * <p>Outbox 릴레이는 at-least-once라 같은 이벤트가 두 번 올 수 있다.
+ * Outbox 릴레이는 at-least-once라 같은 이벤트가 두 번 올 수 있다.
  * 잔액 변경은 두 번 적용되면 그대로 사고이므로, "이 이벤트를 처리했다"는 기록을
- * <b>잔액 변경과 같은 트랜잭션</b>에 남긴다. 둘이 함께 커밋되므로
+ * 잔액 변경과 같은 트랜잭션에 남긴다. 둘이 함께 커밋되므로
  * "처리는 했는데 기록이 없어 또 처리하는" 틈이 생기지 않는다.
  *
- * <p>중복 감지는 PK unique 제약에 맡긴다. 조회 후 INSERT하면 두 컨슈머 스레드가
+ * 중복 감지는 PK unique 제약에 맡긴다. 조회 후 INSERT하면 두 컨슈머 스레드가
  * 동시에 "없다"를 보고 둘 다 처리하는 경합이 남기 때문이다.
  */
 @Entity
@@ -44,7 +44,7 @@ public class ProcessedEvent implements Persistable<String> {
 	/**
 	 * PK를 애플리케이션이 직접 지정하므로 Spring Data는 이 엔티티를 "이미 존재하는 것"으로 보고
 	 * INSERT 대신 merge(=UPDATE)를 시도한다. 그러면 중복 이벤트가 unique 제약에 걸리지 않고
-	 * <b>조용히 통과</b>해 이중 처리가 된다. INSERT를 강제해 제약 위반이 드러나게 한다.
+	 * 조용히 통과해 이중 처리가 된다. INSERT를 강제해 제약 위반이 드러나게 한다.
 	 * (transfer-service의 IdempotencyKey에서 같은 함정을 겪었다.)
 	 */
 	@Transient

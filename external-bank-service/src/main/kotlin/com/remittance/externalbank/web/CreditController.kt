@@ -31,7 +31,7 @@ import java.util.UUID
  * GET  /transfers/{transferId}           거래 조회 — 타임아웃 뒤 결과를 아는 유일한 방법
  * ```
  *
- * <p>조회가 없으면 보내는 쪽은 타임아웃 뒤에 **아무것도 할 수 없다.**
+ * 조회가 없으면 보내는 쪽은 타임아웃 뒤에 **아무것도 할 수 없다.**
  * 재시도는 이중 입금이고, 실패 처리는 돈을 잃는 것이다. 그래서 조회는 선택이 아니라
  * **이 계약의 필수 절반**이다.
  */
@@ -102,9 +102,9 @@ class CreditController(
 	/**
 	 * 응답을 삼키기로 한 요청. **아무것도 쓰지 않고 그냥 매달아 둔다.**
 	 *
-	 * <p>여기서 504 같은 상태 코드를 주면 안 된다. 상태 코드는 **답을 준 것**이고,
+	 * 여기서 504 같은 상태 코드를 주면 안 된다. 상태 코드는 **답을 준 것**이고,
 	 * 그러면 보내는 쪽이 "적어도 상대가 살아는 있다"를 알게 된다.
-	 * 진짜 타임아웃은 <b>아무 소식도 없는 것</b>이라, 클라이언트의 read timeout이 먼저 끊게 둔다.
+	 * 진짜 타임아웃은 아무 소식도 없는 것이라, 클라이언트의 read timeout이 먼저 끊게 둔다.
 	 */
 	@ExceptionHandler(ResponseSwallowedException::class)
 	fun onSwallowed(e: ResponseSwallowedException): ResponseEntity<Void> {

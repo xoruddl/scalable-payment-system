@@ -27,9 +27,9 @@ import static org.mockito.BDDMockito.given;
 import static org.mockito.BDDMockito.willThrow;
 
 /**
- * Phase 2 Step 5b — 대사가 <b>어긋난 것을 실제로 찾아내는지</b>.
+ * Phase 2 Step 5b — 대사가 어긋난 것을 실제로 찾아내는지.
  *
- * <p>다른 서비스는 모킹한다. 여기서 검증할 것은 HTTP 배선이 아니라 <b>판단</b>이다 —
+ * 다른 서비스는 모킹한다. 여기서 검증할 것은 HTTP 배선이 아니라 판단이다 —
  * 무엇을 어긋남으로 볼지, 못 읽었을 때 어떻게 처신할지.
  */
 @SpringBootTest
@@ -107,7 +107,7 @@ class ReconciliationServiceTest extends AbstractIntegrationTest {
 	}
 
 	/**
-	 * 계좌는 있는데 원장이 통째로 빈 경우다. 원장을 기준으로 훑었다면 <b>존재조차 몰랐을</b> 계좌라,
+	 * 계좌는 있는데 원장이 통째로 빈 경우다. 원장을 기준으로 훑었다면 존재조차 몰랐을 계좌라,
 	 * 대사가 계좌 쪽을 기준으로 도는 이유가 여기 있다.
 	 */
 	@Test
@@ -174,11 +174,11 @@ class ReconciliationServiceTest extends AbstractIntegrationTest {
 	}
 
 	/**
-	 * Phase 2 Step 6b — 묶인 키는 두 종류이고 <b>대응이 정반대다.</b>
+	 * Phase 2 Step 6b — 묶인 키는 두 종류이고 대응이 정반대다.
 	 *
-	 * <p>접수가 커밋된 키는 재요청하면 그 송금을 돌려받으므로 사실상 해결된 것이고,
+	 * 접수가 커밋된 키는 재요청하면 그 송금을 돌려받으므로 사실상 해결된 것이고,
 	 * 커밋되지 않은 키는 재요청해야 비로소 풀린다. 뭉뚱그려 적으면 보는 사람이 매번 직접
-	 * 캐봐야 하고, 접수된 송금을 못 봤다고 착각해 <b>같은 송금을 두 번 보낼 수 있다.</b>
+	 * 캐봐야 하고, 접수된 송금을 못 봤다고 착각해 같은 송금을 두 번 보낼 수 있다.
 	 */
 	@Test
 	void 묶인_키가_접수까지_갔는지를_구분해_보고한다() {
@@ -207,10 +207,10 @@ class ReconciliationServiceTest extends AbstractIntegrationTest {
 	}
 
 	/**
-	 * Phase 6.5 — <b>우리도 상대도 모르는 돈</b>은 기계가 더 나아갈 수 없는 유일한 종류다.
+	 * Phase 6.5 — 우리도 상대도 모르는 돈은 기계가 더 나아갈 수 없는 유일한 종류다.
 	 *
-	 * <p>재시도하면 이중 입금이고 실패로 처리하면 돈이 사라진다. 그래서 사람이 상대 은행에
-	 * 연락해야 하고, 연락하려면 <b>송금 ID와 금액</b>이 필요하다 — 게이지의 숫자 하나로는 못 한다.
+	 * 재시도하면 이중 입금이고 실패로 처리하면 돈이 사라진다. 그래서 사람이 상대 은행에
+	 * 연락해야 하고, 연락하려면 송금 ID와 금액이 필요하다 — 게이지의 숫자 하나로는 못 한다.
 	 */
 	@Test
 	void 상대_은행_결과를_오래_모르는_건은_사람이_보게_남긴다() {
@@ -233,7 +233,7 @@ class ReconciliationServiceTest extends AbstractIntegrationTest {
 	}
 
 	/**
-	 * 대사가 못 돌았는데 "발견 0건"으로 남으면, 보는 사람은 <b>깨끗하다고 오해한다.</b>
+	 * 대사가 못 돌았는데 "발견 0건"으로 남으면, 보는 사람은 깨끗하다고 오해한다.
 	 * 배치가 죽은 걸 정상으로 읽는 게 어긋남 자체보다 위험하다.
 	 */
 	@Test

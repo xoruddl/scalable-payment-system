@@ -20,8 +20,8 @@ import java.util.UUID;
 /**
  * Idempotency-Key의 예약/조회/종결을 담당한다.
  *
- * <p>각 메서드는 짧은 독립 트랜잭션으로 동작해야 한다. 특히 {@link #reserve}는 송금 처리가
- * 시작되기 <b>전에 커밋</b>되어야, 같은 키로 동시에 들어온 두 번째 요청이 그 행을 보고 막힌다.
+ * 각 메서드는 짧은 독립 트랜잭션으로 동작해야 한다. 특히 {@link #reserve}는 송금 처리가
+ * 시작되기 전에 커밋되어야, 같은 키로 동시에 들어온 두 번째 요청이 그 행을 보고 막힌다.
  */
 @Service
 @RequiredArgsConstructor
@@ -33,10 +33,10 @@ public class IdempotencyService {
 	/**
 	 * 이만큼 {@code IN_PROGRESS}로 남아 있으면 접수하던 요청이 죽은 것으로 본다.
 	 *
-	 * <p>짧으면 <b>지금 진행 중인 접수</b>를 죽었다고 판단해 키를 뺏고, 그러면 같은 키로 두 건이
+	 * 짧으면 지금 진행 중인 접수를 죽었다고 판단해 키를 뺏고, 그러면 같은 키로 두 건이
 	 * 접수될 수 있다. 접수는 몇 밀리초면 끝나므로 넉넉히 잡아도 잃는 게 없다.
 	 *
-	 * <p>대사의 {@code reconciliation.key-stranded-after}와 뜻이 같다 — 한쪽만 바꾸면
+	 * 대사의 {@code reconciliation.key-stranded-after}와 뜻이 같다 — 한쪽만 바꾸면
 	 * 대사가 "묶였다"고 보고하는 키를 정작 재요청은 안 풀어주거나 그 반대가 된다.
 	 */
 	private static final Duration ABANDON_AFTER = Duration.ofMinutes(10);
@@ -103,10 +103,10 @@ public class IdempotencyService {
 	/**
 	 * 접수하다 죽은 것이 확실한 키를 놓아준다 — 행을 지워 같은 키를 다시 쓸 수 있게 한다.
 	 *
-	 * <p><b>부르기 전에 "이 키로 접수된 송금이 없다"를 반드시 확인해야 한다.</b> 송금이 이미
+	 * 부르기 전에 "이 키로 접수된 송금이 없다"를 반드시 확인해야 한다. 송금이 이미
 	 * 커밋된 키를 풀면 재요청이 두 번째 송금을 만든다. 그 확인은 {@code TransferService}가 한다.
 	 *
-	 * <p>상태를 바꾸는 대신 지우는 이유는, 재요청이 {@code reserve}의 INSERT로 다시 선점해야
+	 * 상태를 바꾸는 대신 지우는 이유는, 재요청이 {@code reserve}의 INSERT로 다시 선점해야
 	 * 하기 때문이다. 남겨두면 그 키는 영영 새 접수를 받을 수 없다.
 	 */
 	@Transactional

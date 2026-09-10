@@ -29,11 +29,11 @@ import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.verify;
 
 /**
- * 잔액 샤딩 — <b>쪼개도 돈이 틀리지 않는가</b>, 그리고 <b>쪼갠 것이 실제로 갈리는가</b>.
+ * 잔액 샤딩 — 쪼개도 돈이 틀리지 않는가, 그리고 쪼갠 것이 실제로 갈리는가.
  *
- * <p>빠른지는 여기서 답하지 않는다. 그건 홈서버 부하 시험의 몫이다.
+ * 빠른지는 여기서 답하지 않는다. 그건 홈서버 부하 시험의 몫이다.
  * 여기서 볼 것은 그보다 앞선 두 가지다 — 총액이 맞는가, 그리고 락이 조각별로 갈리는가.
- * <b>락이 안 갈리면 조각을 아무리 나눠도 거기서 다시 줄을 서므로 빨라질 수가 없다.</b>
+ * 락이 안 갈리면 조각을 아무리 나눠도 거기서 다시 줄을 서므로 빨라질 수가 없다.
  */
 @SpringBootTest
 class BalanceShardingTest extends AbstractIntegrationTest {

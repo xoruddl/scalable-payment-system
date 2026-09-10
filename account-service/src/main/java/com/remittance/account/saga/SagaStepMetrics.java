@@ -10,14 +10,14 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 
 /**
- * Saga 잔액 변경 트랜잭션의 <b>80ms가 어디서 쓰이는지</b> 가르는 계측기 (Phase 6 Step 1).
+ * Saga 잔액 변경 트랜잭션의 80ms가 어디서 쓰이는지 가르는 계측기 (Phase 6 Step 1).
  *
- * <p>{@code save()}는 SQL을 즉시 실행하지 않고 커밋까지 미룰 수 있다. 그래서 Outbox 구간을
+ * {@code save()}는 SQL을 즉시 실행하지 않고 커밋까지 미룰 수 있다. 그래서 Outbox 구간을
  * "INSERT"라고 부르지 않고 {@code outbox_enqueue}라고 부른다. 실제 지연 쓰기와 커밋은
  * 메서드 본문이 끝난 뒤 트랜잭션 프록시에서 일어나므로 {@code deferred_writes_and_commit}이 잰다.
  * 이름을 잘못 붙이면 그래프는 맞아도 결론이 틀린다.
  *
- * <p>이벤트 종류와 단계는 코드에 정해진 작은 집합이라 태그 cardinality가 제한된다.
+ * 이벤트 종류와 단계는 코드에 정해진 작은 집합이라 태그 cardinality가 제한된다.
  * transferId나 accountId는 절대 태그로 싣지 않는다.
  */
 @Component

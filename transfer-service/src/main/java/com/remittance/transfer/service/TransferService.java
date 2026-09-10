@@ -27,29 +27,25 @@ import java.util.UUID;
 /**
  * 송금의 접수와 상태 추적을 담당한다.
  *
- * <p><b>Phase 2 Step 4a에서 흐름이 근본적으로 바뀌었다.</b> 예전에는 이 클래스가 요청 스레드 안에서
- * 출금 → 입금 → 원장기록을 차례로 <b>호출</b>했다(오케스트레이션). 이제는 {@code transfer.requested}
+ * Phase 2 Step 4a에서 흐름이 근본적으로 바뀌었다. 예전에는 이 클래스가 요청 스레드 안에서
+ * 출금 → 입금 → 원장기록을 차례로 호출했다(오케스트레이션). 이제는 {@code transfer.requested}
  * 이벤트 하나만 남기고 즉시 202로 응답한다. 그 뒤의 단계는 각 서비스가 이벤트를 보고 스스로 진행한다
  * (Choreography Saga).
  *
- * <pre>
  *   Transfer  transfer.requested       ─▶ Account  출금 ─▶ transfer.debited
  *   Account   transfer.debited         ─▶ Account  입금 ─▶ transfer.credited
  *   Ledger    transfer.credited        ─▶ 원장 기록     ─▶ transfer.ledger-recorded
  *   Transfer  transfer.debited/credited/ledger-recorded ─▶ 상태 갱신
- * </pre>
  *
- * <p>얻은 것: 요청 스레드가 다른 서비스의 응답 시간에 묶이지 않고, 중간에 한 서비스가 죽어도
+ * 얻은 것: 요청 스레드가 다른 서비스의 응답 시간에 묶이지 않고, 중간에 한 서비스가 죽어도
  * 이벤트가 브로커에 남아 재개된다.
- * <br>잃은 것: 응답을 받은 시점에 송금이 <b>끝난 게 아니다</b>. 클라이언트는 조회로 확인해야 한다.
+ * 잃은 것: 응답을 받은 시점에 송금이 끝난 게 아니다. 클라이언트는 조회로 확인해야 한다.
  *
- * <p><b>Step 4b에서 실패 흐름이 붙었다.</b> 이 서비스는 실패를 <b>판정</b>하지 않는다 —
+ * Step 4b에서 실패 흐름이 붙었다. 이 서비스는 실패를 판정하지 않는다 —
  * 계좌에 무슨 일이 있었는지는 Account가 알려주고, 그걸 받아 송금의 최종 상태를 찍을 뿐이다.
- * <pre>
  *   PENDING          ── transfer.debit-failed   ─▶ FAILED        (움직인 돈 없음)
  *   DEBIT_COMPLETED  ── transfer.credit-failed  ─▶ COMPENSATING  (환불 진행 중)
  *   COMPENSATING     ── transfer.debit-reversed ─▶ FAILED        (환불 완료)
- * </pre>
  */
 @Service
 @RequiredArgsConstructor
@@ -70,7 +66,7 @@ public class TransferService {
 	private final MeterRegistry meterRegistry;
 
 	/**
-	 * 송금 요청의 공개 진입점. 송금을 <b>접수</b>하고 바로 돌아온다.
+	 * 송금 요청의 공개 진입점. 송금을 접수하고 바로 돌아온다.
 	 * 같은 Idempotency-Key로 다시 들어온 요청은 새 송금을 만들지 않고 최초 송금을 그대로 돌려준다.
 	 */
 	public Transfer requestTransfer(String idempotencyKey, CreateTransferRequest request) {
@@ -98,7 +94,7 @@ public class TransferService {
 
 	/** 선점에 성공한 뒤 실제로 접수한다. */
 	/**
-	 * 송금 저장 · Outbox 기록 · 키 결과 기록이 <b>한 트랜잭션</b>이다
+	 * 송금 저장 · Outbox 기록 · 키 결과 기록이 한 트랜잭션이다
 	 * ({@link TransferAcceptExecutor}). 전에는 뒤의 하나가 갈라져 커밋이 두 번이었다.
 	 */
 	private Transfer accept(String idempotencyKey, CreateTransferRequest request) {
@@ -107,7 +103,7 @@ public class TransferService {
 
 	private void validate(CreateTransferRequest request) {
 		// 받는 쪽이 둘 다 적히면 어느 쪽이 진짜인지 알 수 없고, 둘 다 없으면 보낼 곳이 없다.
-		// 어느 쪽이든 <b>돈이 엉뚱한 데로 갈 수 있는</b> 상태라 키를 쓰기 전에 막는다.
+		// 어느 쪽이든 돈이 엉뚱한 데로 갈 수 있는 상태라 키를 쓰기 전에 막는다.
 		if (!request.hasExactlyOneDestination()) {
 			throw new InvalidTransferRequestException(
 					"받는 쪽은 우리 계좌(toAccountId) 또는 상대 은행(toBankCode+toAccountNumber) "
@@ -121,21 +117,19 @@ public class TransferService {
 	/**
 	 * 이미 쓰인 키로 들어온 요청을 어떻게든 결론짓는다.
 	 *
-	 * @return 돌려줄 송금. <b>비어 있으면 "죽은 키를 놓아줬으니 다시 선점해보라"</b>는 뜻이다.
+	 * @return 돌려줄 송금. 비어 있으면 "죽은 키를 놓아줬으니 다시 선점해보라"는 뜻이다.
 	 *         결론이 안 나는 경우(충돌·아직 접수 중)는 예외로 나간다.
 	 *
-	 * <h4>Step 6b에서 달라진 것</h4>
+	 * Step 6b에서 달라진 것
 	 * 전에는 키가 {@code IN_PROGRESS}이면 무조건 409였다. 접수가 실제로 커밋됐는지 알 방법이
 	 * 없어서다 — 키에는 송금 ID가 완료 시점에야 채워지고 송금 쪽에는 키가 남지 않았다.
-	 * 그래서 <b>접수가 멀쩡히 끝난 송금도 영영 돌려받지 못했고</b>, 죽은 키도 영영 풀리지 않았다.
+	 * 그래서 접수가 멀쩡히 끝난 송금도 영영 돌려받지 못했고, 죽은 키도 영영 풀리지 않았다.
 	 *
-	 * <p>이제 송금에 키가 남으므로 <b>송금 쪽에 직접 물어봐</b> 두 경우를 가른다.
-	 * <pre>
+	 * 이제 송금에 키가 남으므로 송금 쪽에 직접 물어봐 두 경우를 가른다.
 	 *   키 IN_PROGRESS + 그 키로 접수된 송금이 있다  ─▶ 키에 적기 직전에 죽은 것. 전진 복구한다.
 	 *   키 IN_PROGRESS + 송금이 없다 + 오래됐다      ─▶ 커밋 전에 죽은 것. 키를 놓아준다.
 	 *   키 IN_PROGRESS + 송금이 없다 + 방금 것       ─▶ 지금 접수 중일 수 있다. 409.
-	 * </pre>
-	 * 세 번째를 두 번째와 섞으면 <b>진행 중인 접수의 키를 뺏어</b> 같은 키로 두 건이 접수된다.
+	 * 세 번째를 두 번째와 섞으면 진행 중인 접수의 키를 뺏어 같은 키로 두 건이 접수된다.
 	 */
 	private Optional<Transfer> settleExisting(String idempotencyKey, String requestHash) {
 		IdempotencyKey existing = idempotencyService.find(idempotencyKey).orElse(null);
@@ -161,7 +155,7 @@ public class TransferService {
 	/**
 	 * {@code IN_PROGRESS}로 남은 키를 송금 쪽 사실에 비춰 결론짓는다.
 	 *
-	 * @return 전진 복구한 송금. <b>비어 있으면 죽은 키를 놓아줬다</b>는 뜻이다.
+	 * @return 전진 복구한 송금. 비어 있으면 죽은 키를 놓아줬다는 뜻이다.
 	 * @throws IdempotencyInProgressException 아직 진행 중일 수 있어 판단을 미뤄야 할 때
 	 */
 	private Optional<Transfer> recoverInProgress(String idempotencyKey, IdempotencyKey existing) {
@@ -201,7 +195,7 @@ public class TransferService {
 	/**
 	 * 원장 기록까지 끝나야 COMPLETED다.
 	 *
-	 * <p>입금 시점에 완료로 찍으면, 원장 기록이 실패했을 때 "송금은 성공인데 원장에는 없는" 상태가 된다.
+	 * 입금 시점에 완료로 찍으면, 원장 기록이 실패했을 때 "송금은 성공인데 원장에는 없는" 상태가 된다.
 	 * 그 불일치를 나중에 찾아내는 것보다, 완료 판정을 원장까지 미루는 편이 낫다.
 	 * (Phase 1의 정합성 재현 테스트가 잡아낸 바로 그 문제다.)
 	 */
@@ -219,8 +213,8 @@ public class TransferService {
 	/**
 	 * 입금이 실패 — Account가 환불하는 중이다. 아직 종결이 아니라는 걸 상태로 드러낸다.
 	 *
-	 * <p>이 중간 상태가 없으면 "출금은 됐는데 왜 멈춰 있지?"로 보인다. COMPENSATING은
-	 * <b>되돌리는 중</b>이라는 뜻이고, 되돌리기가 끝나면 {@link #applyDebitReversed}가 FAILED로 닫는다.
+	 * 이 중간 상태가 없으면 "출금은 됐는데 왜 멈춰 있지?"로 보인다. COMPENSATING은
+	 * 되돌리는 중이라는 뜻이고, 되돌리기가 끝나면 {@link #applyDebitReversed}가 FAILED로 닫는다.
 	 */
 	public void applyCreditFailed(TransferEvents.StepFailed event) {
 		withOptimisticRetry(event.transferId(), () -> stateUpdater.markCompensating(event.transferId()));
@@ -229,9 +223,9 @@ public class TransferService {
 	/**
 	 * 상대 은행이 답하지 않아 결과를 모른다 (Phase 6.5).
 	 *
-	 * <p>여기서 할 일은 <b>상태를 드러내는 것뿐</b>이다. 확인은 account-service의 조회 루프가
+	 * 여기서 할 일은 상태를 드러내는 것뿐이다. 확인은 account-service의 조회 루프가
 	 * 하고, 결론이 나면 평소의 {@code credited}·{@code credit-failed}로 돌아온다.
-	 * 이 상태가 없으면 "단순히 느린 건"과 <b>돈이 나갔을지 모르는 건</b>이 구분되지 않는다.
+	 * 이 상태가 없으면 "단순히 느린 건"과 돈이 나갔을지 모르는 건이 구분되지 않는다.
 	 */
 	public void applyCreditUnknown(TransferEvents.CreditUnknown event) {
 		withOptimisticRetry(event.transferId(), () -> stateUpdater.markCreditUnknown(event.transferId()));
@@ -244,11 +238,11 @@ public class TransferService {
 	}
 
 	/**
-	 * 낙관적 락 충돌은 <b>다른 리스너가 같은 송금을 먼저 바꿨다</b>는 뜻이다.
+	 * 낙관적 락 충돌은 다른 리스너가 같은 송금을 먼저 바꿨다는 뜻이다.
 	 * 다시 읽어 전이 조건을 처음부터 판단하면 그 변화를 반영한 결정이 나온다 —
 	 * 이미 종결됐으면 건너뛰고, 아직이면 이어서 진행한다.
 	 *
-	 * <p>끝내 못 잡으면 예외를 그대로 내보낸다. 컨슈머 에러 핸들러가 재시도하고,
+	 * 끝내 못 잡으면 예외를 그대로 내보낸다. 컨슈머 에러 핸들러가 재시도하고,
 	 * 그래도 안 되면 DLT로 간다 (Step 4c).
 	 */
 	private void withOptimisticRetry(UUID transferId, Runnable transition) {
@@ -269,19 +263,19 @@ public class TransferService {
 	}
 
 	/**
-	 * 상태 전이 경합을 <b>센다</b> (Phase 5 Step 2).
+	 * 상태 전이 경합을 센다 (Phase 5 Step 2).
 	 *
-	 * <p>Saga 단계마다 토픽이 다르고 토픽마다 리스너 스레드가 다르므로, 다섯 리스너가 같은
-	 * 송금 행을 동시에 건드릴 수 있다. Step 4d에서 이 경합이 실제로 터져 <b>바깥에는 실패라고
-	 * 알려놓고 자기 기록은 진행 중</b>인 상태를 만들었다. 로그로만 남기면 그때처럼
+	 * Saga 단계마다 토픽이 다르고 토픽마다 리스너 스레드가 다르므로, 다섯 리스너가 같은
+	 * 송금 행을 동시에 건드릴 수 있다. Step 4d에서 이 경합이 실제로 터져 바깥에는 실패라고
+	 * 알려놓고 자기 기록은 진행 중인 상태를 만들었다. 로그로만 남기면 그때처럼
 	 * 사고가 난 뒤에야 찾아보게 된다.
 	 */
 
 	/**
-	 * 충돌이 한 번도 없어도 <b>0으로 보이게</b> 미리 만들어 둔다 (Phase 5 Step 2).
+	 * 충돌이 한 번도 없어도 0으로 보이게 미리 만들어 둔다 (Phase 5 Step 2).
 	 *
-	 * <p>카운터는 처음 증가할 때 생긴다. 그대로 두면 충돌이 없는 동안 시계열 자체가 없어서
-	 * 화면에서 <b>"충돌 0건"과 "수집이 안 되고 있다"가 똑같이 빈 칸</b>으로 보인다.
+	 * 카운터는 처음 증가할 때 생긴다. 그대로 두면 충돌이 없는 동안 시계열 자체가 없어서
+	 * 화면에서 "충돌 0건"과 "수집이 안 되고 있다"가 똑같이 빈 칸으로 보인다.
 	 * 정작 이 지표는 평소에 0인 게 정상이라, 0을 그릴 수 있어야 값어치가 있다.
 	 */
 	@PostConstruct

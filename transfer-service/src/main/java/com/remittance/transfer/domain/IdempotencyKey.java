@@ -24,7 +24,7 @@ import java.util.UUID;
  * 동일 key로 재요청 시 requestHash를 비교해 동일 payload면 최초 처리 결과를,
  * 다른 payload면 충돌 응답을 내리는 데 사용한다.
  *
- * <p>PK를 애플리케이션이 직접 부여하기 때문에 Spring Data JPA는 이 엔티티를 "이미 존재하는 것"으로
+ * PK를 애플리케이션이 직접 부여하기 때문에 Spring Data JPA는 이 엔티티를 "이미 존재하는 것"으로
  * 보고 {@code merge()}를 호출한다. 그러면 중복 key 저장이 예외 대신 조용한 UPDATE가 되어
  * 멱등성 판정이 무너진다. {@link Persistable}로 신규 여부를 직접 알려줘 {@code persist()},
  * 즉 INSERT가 실행되도록 하고, 중복은 DB unique 제약 위반으로 드러나게 한다.

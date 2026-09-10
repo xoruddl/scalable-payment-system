@@ -3,7 +3,7 @@ package com.remittance.externalbank.fault
 /**
  * 이 은행이 **얼마나 나쁘게 굴지**. 런타임에 바꾼다.
  *
- * <p>같은 jar에 이 값만 바꿔 A/B를 재기 위해서다 —
+ * 같은 jar에 이 값만 바꿔 A/B를 재기 위해서다 —
  * `account.lock.strategy`, `SHARDS`와 같은 규칙이다.
  * 코드를 고쳐가며 재면 빌드가 달라져 무엇 때문에 숫자가 바뀌었는지 말할 수 없다.
  *

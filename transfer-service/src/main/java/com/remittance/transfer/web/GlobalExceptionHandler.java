@@ -16,7 +16,7 @@ import java.util.UUID;
 
 /**
  * 계좌 관련 오류(잔액 부족 등)를 여기서 다루지 않는 이유: Step 4a에서 송금이 비동기가 되면서
- * 그런 실패는 요청 스레드가 아니라 <b>Saga 도중</b>에 일어난다. HTTP 응답으로 돌려줄 방법이 없고,
+ * 그런 실패는 요청 스레드가 아니라 Saga 도중에 일어난다. HTTP 응답으로 돌려줄 방법이 없고,
  * 송금의 최종 상태(FAILED + failureReason)로 남는다. 조회로 확인해야 한다.
  */
 @RestControllerAdvice

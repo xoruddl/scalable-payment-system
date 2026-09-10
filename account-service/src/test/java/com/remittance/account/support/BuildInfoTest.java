@@ -8,16 +8,16 @@ import java.util.Properties;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * 빌드 결과물이 <b>자기가 어느 커밋인지</b> 답할 수 있어야 한다.
+ * 빌드 결과물이 자기가 어느 커밋인지 답할 수 있어야 한다.
  *
- * <p>아티팩트 버전은 {@code 0.0.1-SNAPSHOT}으로 고정이라 커밋을 구분하지 못하고,
- * 컨테이너 이미지 태그는 배포한 사람만 압니다. 그래서 <b>실행 중인 프로세스에 직접 물어볼 수
- * 있어야</b> 합니다 — {@code GET /actuator/info}가 이 파일을 읽어 답합니다.
+ * 아티팩트 버전은 {@code 0.0.1-SNAPSHOT}으로 고정이라 커밋을 구분하지 못하고,
+ * 컨테이너 이미지 태그는 배포한 사람만 압니다. 그래서 실행 중인 프로세스에 직접 물어볼 수
+ * 있어야 합니다 — {@code GET /actuator/info}가 이 파일을 읽어 답합니다.
  *
- * <p>이게 없으면 장애 대응 중에 "지금 떠 있는 게 어느 코드냐"를 아무도 확답하지 못합니다.
+ * 이게 없으면 장애 대응 중에 "지금 떠 있는 게 어느 코드냐"를 아무도 확답하지 못합니다.
  * Phase 7에서 이미지를 굽고 Phase 8에서 배포하기 시작하면 그 순간부터 필요합니다.
  *
- * <p>Docker가 필요 없어 {@code ./gradlew unitTest}에 포함됩니다. 루트 {@code build.gradle}의
+ * Docker가 필요 없어 {@code ./gradlew unitTest}에 포함됩니다. 루트 {@code build.gradle}의
  * {@code bootBuildInfo} 설정이 사라지면 이 테스트가 빨개집니다.
  */
 class BuildInfoTest {

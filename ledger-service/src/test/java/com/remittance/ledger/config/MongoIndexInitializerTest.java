@@ -16,14 +16,14 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Phase 6 Step 2 — 선언한 인덱스가 <b>실제 컬렉션에</b> 있는지 본다.
+ * Phase 6 Step 2 — 선언한 인덱스가 실제 컬렉션에 있는지 본다.
  *
- * <p>이 검증이 없어서 놓쳤다. {@code Transaction}에는 {@code @Indexed}가 넷이나 붙어 있었지만
+ * 이 검증이 없어서 놓쳤다. {@code Transaction}에는 {@code @Indexed}가 넷이나 붙어 있었지만
  * 실제로 만들어진 건 {@code _id_} 하나뿐이었고(Spring Data MongoDB 3.0부터 자동 생성이 기본 꺼짐),
- * <b>기능은 전부 정상이라 아무도 몰랐다.</b> 느려질 뿐이었고, 그마저 문서가 쌓여야 드러났다.
+ * 기능은 전부 정상이라 아무도 몰랐다. 느려질 뿐이었고, 그마저 문서가 쌓여야 드러났다.
  * 2026-08-23 부하 측정에서 MongoDB CPU 89%를 보고서야 찾았다.
  *
- * <p>그래서 <b>애노테이션을 읽지 않고 서버에 직접 묻는다.</b> 애노테이션을 확인하는 검증이었다면
+ * 그래서 애노테이션을 읽지 않고 서버에 직접 묻는다. 애노테이션을 확인하는 검증이었다면
  * 원래도 통과했을 것이다 — 애노테이션은 처음부터 멀쩡했다.
  */
 @SpringBootTest
@@ -44,7 +44,7 @@ class MongoIndexInitializerTest extends AbstractIntegrationTest {
 	}
 
 	/**
-	 * {@code transferId} 인덱스는 <b>가장 뜨거운 경로</b>다.
+	 * {@code transferId} 인덱스는 가장 뜨거운 경로다.
 	 * {@code BalanceChangedConsumer}가 메시지 한 건마다 {@code findByTransferId}를 부르므로,
 	 * 이게 없으면 메시지마다 컬렉션 전체를 훑는다.
 	 */
@@ -63,7 +63,7 @@ class MongoIndexInitializerTest extends AbstractIntegrationTest {
 	}
 
 	/**
-	 * unique 인덱스는 성능이 아니라 <b>원장에 같은 줄이 두 번 들어가는 것을 막는 장치</b>다.
+	 * unique 인덱스는 성능이 아니라 원장에 같은 줄이 두 번 들어가는 것을 막는 장치다.
 	 * 이름만 있는지 보지 않고 실제로 {@code unique} 속성이 붙었는지 확인한다.
 	 */
 	@Test

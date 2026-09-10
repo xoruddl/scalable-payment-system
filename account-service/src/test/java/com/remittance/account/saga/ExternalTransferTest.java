@@ -29,16 +29,14 @@ import static org.mockito.Mockito.verify;
 /**
  * 상대 은행으로 나가는 송금 (Phase 6.5 Step 2).
  *
- * <p>여기서 볼 것은 <b>원장이 두 다리를 그대로 받는가</b>이다.
- * 상대 계좌는 우리 원장에 적을 수 없으므로 <b>그 은행의 정산 계좌</b>로 적는다.
+ * 여기서 볼 것은 원장이 두 다리를 그대로 받는가이다.
+ * 상대 계좌는 우리 원장에 적을 수 없으므로 그 은행의 정산 계좌로 적는다.
  *
- * <pre>
  *   고객 계좌  −50,000  ─┐
  *                        ├─ 우리 원장에 두 다리 (원장·대사 로직을 안 고쳐도 된다)
  *   KB 정산계좌 +50,000  ─┘
- * </pre>
  *
- * <p>상대 은행은 목이다. <b>여기서 확인할 것은 우리 쪽 처리</b>이고,
+ * 상대 은행은 목이다. 여기서 확인할 것은 우리 쪽 처리이고,
  * 상대가 실제로 어떻게 구는지는 {@code external-bank-service}의 테스트가 본다.
  */
 @SpringBootTest
@@ -47,9 +45,9 @@ class ExternalTransferTest extends AbstractIntegrationTest {
 	private static final String THEIR_ACCOUNT = "1234-5678";
 
 	/**
-	 * <b>테스트마다 다른 은행</b>을 쓴다. 정산 계좌는 은행당 하나라서, 코드를 고정하면
+	 * 테스트마다 다른 은행을 쓴다. 정산 계좌는 은행당 하나라서, 코드를 고정하면
 	 * 앞 테스트가 쌓아둔 잔액이 다음 테스트에 그대로 보인다 — 실제로 그렇게 깨졌다.
-	 * 컨테이너 DB를 여러 테스트가 공유하므로 <b>테스트가 스스로 격리를 만들어야</b> 한다.
+	 * 컨테이너 DB를 여러 테스트가 공유하므로 테스트가 스스로 격리를 만들어야 한다.
 	 */
 	private final String bank = "KB" + UUID.randomUUID().toString().substring(0, 8);
 

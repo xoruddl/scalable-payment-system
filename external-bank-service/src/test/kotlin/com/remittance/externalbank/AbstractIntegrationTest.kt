@@ -9,7 +9,7 @@ import org.testcontainers.utility.DockerImageName
 /**
  * 상대 은행의 통합 테스트 공통 베이스. 로컬에서 Docker가 실행 중이어야 한다.
  *
- * <p>다른 서비스와 같은 이유로 **운영과 같은 MySQL**을 쓰고, **싱글턴 컨테이너 패턴**을 쓴다
+ * 다른 서비스와 같은 이유로 **운영과 같은 MySQL**을 쓰고, **싱글턴 컨테이너 패턴**을 쓴다
  * (`@Container`는 클래스마다 컨테이너를 멈춰서 두 번째 클래스가 실패한다).
  */
 @Tag("integration")

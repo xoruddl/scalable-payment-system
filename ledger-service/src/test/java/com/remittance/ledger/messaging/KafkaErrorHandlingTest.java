@@ -18,9 +18,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
 
 /**
- * Phase 2 Step 4c — 처리할 수 없는 메시지가 <b>사라지지 않는지</b>.
+ * Phase 2 Step 4c — 처리할 수 없는 메시지가 사라지지 않는지.
  *
- * <p>여기서 메시지를 잃으면 원장에 거래 한 건이 통째로 빠지고, 원장 기록 이벤트가 나가지 않아
+ * 여기서 메시지를 잃으면 원장에 거래 한 건이 통째로 빠지고, 원장 기록 이벤트가 나가지 않아
  * 송금도 CREDIT_COMPLETED에서 멈춘다. 무엇이 빠졌는지 알 수 있도록 DLT에 남겨야 한다.
  */
 @SpringBootTest

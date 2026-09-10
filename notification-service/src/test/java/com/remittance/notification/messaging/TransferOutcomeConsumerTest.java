@@ -28,13 +28,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
 
 /**
- * Phase 3 — 송금이 끝나면 알린다. <b>다만 한 번만.</b>
+ * Phase 3 — 송금이 끝나면 알린다. 다만 한 번만.
  *
- * <p>이 서비스가 연습하는 건 알림 기능 자체가 아니라 <b>되돌릴 수 없는 부수효과를
- * at-least-once 이벤트 위에서 다루는 법</b>이다. 원장은 같은 줄을 덮어쓰면 그만이고 잔액은
- * 처리 흔적으로 막을 수 있지만, <b>이미 나간 알림은 회수할 수 없다.</b>
+ * 이 서비스가 연습하는 건 알림 기능 자체가 아니라 되돌릴 수 없는 부수효과를
+ * at-least-once 이벤트 위에서 다루는 법이다. 원장은 같은 줄을 덮어쓰면 그만이고 잔액은
+ * 처리 흔적으로 막을 수 있지만, 이미 나간 알림은 회수할 수 없다.
  *
- * <p>그래서 확인하는 건 두 가지다 — <b>빠짐없이 가는가</b>, 그리고 <b>두 번 가지 않는가.</b>
+ * 그래서 확인하는 건 두 가지다 — 빠짐없이 가는가, 그리고 두 번 가지 않는가.
  */
 @SpringBootTest
 @Import(TransferOutcomeConsumerTest.CountingSenderConfig.class)
@@ -97,7 +97,7 @@ class TransferOutcomeConsumerTest extends AbstractIntegrationTest {
 	}
 
 	/**
-	 * 실패는 <b>보낸 쪽에게만</b> 간다. 받는 쪽에 알리면 있지도 않았던 거래를 알려주는 꼴이 된다 —
+	 * 실패는 보낸 쪽에게만 간다. 받는 쪽에 알리면 있지도 않았던 거래를 알려주는 꼴이 된다 —
 	 * "당신에게 오려던 돈이 실패했습니다"는 받는 사람이 알 이유가 없는 소식이다.
 	 */
 	@Test
@@ -121,7 +121,7 @@ class TransferOutcomeConsumerTest extends AbstractIntegrationTest {
 	}
 
 	/**
-	 * <b>이 서비스의 핵심.</b> 이벤트는 at-least-once라 같은 소식이 두 번 온다.
+	 * 이 서비스의 핵심. 이벤트는 at-least-once라 같은 소식이 두 번 온다.
 	 * "10000원을 보냈습니다"가 두 번 가면 사용자는 두 번 빠져나간 줄 안다.
 	 */
 	@Test
@@ -148,9 +148,9 @@ class TransferOutcomeConsumerTest extends AbstractIntegrationTest {
 	}
 
 	/**
-	 * 발송이 실패하면 오프셋이 커밋되지 않아 재배달된다. 그때 <b>다시 보내야</b> 한다 —
+	 * 발송이 실패하면 오프셋이 커밋되지 않아 재배달된다. 그때 다시 보내야 한다 —
 	 * 자리를 잡자마자 SENT로 적어버리면 재배달이 "이미 보냈다"로 읽고 건너뛰어,
-	 * <b>알림이 조용히 사라지고 아무도 모른다.</b>
+	 * 알림이 조용히 사라지고 아무도 모른다.
 	 */
 	@Test
 	void 발송이_실패하면_재배달로_다시_보낸다() {

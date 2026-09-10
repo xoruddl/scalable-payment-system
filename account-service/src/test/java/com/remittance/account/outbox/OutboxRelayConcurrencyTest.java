@@ -19,34 +19,32 @@ import java.util.concurrent.atomic.AtomicReference;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * 릴레이가 <b>두 대에서 동시에 돌아도</b> 같은 이벤트를 두 번 발행하지 않는다.
+ * 릴레이가 두 대에서 동시에 돌아도 같은 이벤트를 두 번 발행하지 않는다.
  *
- * <h2>왜 지금 이 테스트를 쓰나 — Phase 8의 전제다</h2>
- * 지금까지 모든 측정이 <b>단일 인스턴스</b>였다. 그래서 이 결함은 한 번도 나타난 적이 없다.
- * 그런데 Phase 7~8에서 replica를 2로 올리는 순간, 릴레이는 <b>고치는 작업이 아니라 버그</b>가 된다.
+ * 왜 지금 이 테스트를 쓰나 — Phase 8의 전제다
+ * 지금까지 모든 측정이 단일 인스턴스였다. 그래서 이 결함은 한 번도 나타난 적이 없다.
+ * 그런데 Phase 7~8에서 replica를 2로 올리는 순간, 릴레이는 고치는 작업이 아니라 버그가 된다.
  * 컨테이너화 전에 끝나 있어야 하는 이유가 이것이다 (`ROADMAP.md`).
  *
- * <h2>무엇이 깨지나</h2>
+ * 무엇이 깨지나
  * {@code publishBatch}는 미발행 행을 {@code SELECT}해서 Kafka로 보내고 {@code published_at}을 찍는다.
- * 이 {@code SELECT}에는 <b>잠금이 없다.</b> 두 인스턴스가 같은 순간에 읽으면 <b>같은 행 100건</b>을
- * 둘 다 집어, 같은 이벤트를 <b>두 번</b> 보낸다.
+ * 이 {@code SELECT}에는 잠금이 없다. 두 인스턴스가 같은 순간에 읽으면 같은 행 100건을
+ * 둘 다 집어, 같은 이벤트를 두 번 보낸다.
  *
- * <p>돈이 틀리지는 않는다 — 소비하는 쪽이 멱등하다({@code processed_events}). 하지만
- * <b>Kafka·컨슈머·DB가 하는 일이 통째로 두 배</b>가 되고, 그건 replica를 늘려 처리량을 얻겠다는
- * 목적과 정확히 반대다. <b>인스턴스를 늘릴수록 헛일이 늘어난다.</b>
+ * 돈이 틀리지는 않는다 — 소비하는 쪽이 멱등하다({@code processed_events}). 하지만
+ * Kafka·컨슈머·DB가 하는 일이 통째로 두 배가 되고, 그건 replica를 늘려 처리량을 얻겠다는
+ * 목적과 정확히 반대다. 인스턴스를 늘릴수록 헛일이 늘어난다.
  *
- * <h2>왜 ShedLock이 아닌가 ★</h2>
- * 다른 예약 작업(보관 기간 정리·대사·외부 조회)은 <b>한 대만 돌면 되므로</b> ShedLock으로 잠그면 된다.
- * <b>릴레이는 반대다.</b> 여러 대가 <b>동시에</b> 돌아야 처리량이 나온다 —
- * 여기에 ShedLock을 걸면 수평 확장을 하려다 릴레이를 <b>한 대로 묶어버린다.</b>
- * 그래서 릴레이만 {@code FOR UPDATE SKIP LOCKED}로 <b>행을 나눠 갖는</b> 방식이어야 한다.
+ * 왜 ShedLock이 아닌가 ★
+ * 다른 예약 작업(보관 기간 정리·대사·외부 조회)은 한 대만 돌면 되므로 ShedLock으로 잠그면 된다.
+ * 릴레이는 반대다. 여러 대가 동시에 돌아야 처리량이 나온다 —
+ * 여기에 ShedLock을 걸면 수평 확장을 하려다 릴레이를 한 대로 묶어버린다.
+ * 그래서 릴레이만 {@code FOR UPDATE SKIP LOCKED}로 행을 나눠 갖는 방식이어야 한다.
  *
- * <h2>거는 계약</h2>
- * <ol>
- *   <li>두 릴레이가 <b>같은 행을 집지 않는다</b> — 겹치면 그대로 중복 발행이다</li>
- *   <li>먼저 잡은 쪽을 <b>기다리지 않는다</b> — 기다리면 두 대가 한 대만도 못해진다</li>
- *   <li>동시에 돌려도 <b>마킹은 행마다 한 번</b>이다</li>
- * </ol>
+ * 거는 계약
+ *   1. 두 릴레이가 같은 행을 집지 않는다 — 겹치면 그대로 중복 발행이다
+ *   2. 먼저 잡은 쪽을 기다리지 않는다 — 기다리면 두 대가 한 대만도 못해진다
+ *   3. 동시에 돌려도 마킹은 행마다 한 번이다
  */
 @SpringBootTest
 class OutboxRelayConcurrencyTest extends AbstractIntegrationTest {
@@ -55,11 +53,11 @@ class OutboxRelayConcurrencyTest extends AbstractIntegrationTest {
 	private static final int BATCH = 10;
 
 	/**
-	 * 두 번째 릴레이가 <b>기다리지 않는다</b>를 확인하는 상한.
+	 * 두 번째 릴레이가 기다리지 않는다를 확인하는 상한.
 	 *
-	 * <p>넉넉해 보이지만 의미가 있다 — {@code SKIP LOCKED} 없이 {@code FOR UPDATE}만 걸면
-	 * 두 번째는 {@code innodb_lock_wait_timeout}(기본 50초)까지 <b>블로킹된다.</b>
-	 * 그 경우 이 테스트는 통과가 아니라 <b>시간을 넘겨 실패</b>해야 한다.
+	 * 넉넉해 보이지만 의미가 있다 — {@code SKIP LOCKED} 없이 {@code FOR UPDATE}만 걸면
+	 * 두 번째는 {@code innodb_lock_wait_timeout}(기본 50초)까지 블로킹된다.
+	 * 그 경우 이 테스트는 통과가 아니라 시간을 넘겨 실패해야 한다.
 	 */
 	private static final long 안_기다린다_초 = 10;
 
@@ -73,8 +71,8 @@ class OutboxRelayConcurrencyTest extends AbstractIntegrationTest {
 	private PlatformTransactionManager transactionManager;
 
 	/**
-	 * ⚠️ 테스트 메서드에 {@code @Transactional}을 붙이지 않는다. 붙이면 <b>테스트가 트랜잭션을
-	 * 대신 만들어주고</b>, 운영 코드가 자기 트랜잭션을 여는지를 못 본다 —
+	 * ⚠️ 테스트 메서드에 {@code @Transactional}을 붙이지 않는다. 붙이면 테스트가 트랜잭션을
+	 * 대신 만들어주고, 운영 코드가 자기 트랜잭션을 여는지를 못 본다 —
 	 * {@link OutboxRetentionTest}에서 실제로 그렇게 거짓 green이 나왔다.
 	 * 준비 데이터는 자동 커밋되는 JdbcTemplate으로 넣는다.
 	 */
@@ -89,7 +87,7 @@ class OutboxRelayConcurrencyTest extends AbstractIntegrationTest {
 	/**
 	 * ★ 이 테스트가 이 작업의 전부다.
 	 *
-	 * <p>릴레이 A가 트랜잭션을 연 채 미발행 행을 집는다. <b>커밋하기 전에</b> 릴레이 B가 같은 것을 집는다.
+	 * 릴레이 A가 트랜잭션을 연 채 미발행 행을 집는다. 커밋하기 전에 릴레이 B가 같은 것을 집는다.
 	 * 실제 두 인스턴스에서 벌어지는 일을 그대로 만든 것이다 — A가 Kafka로 보내는 동안(수 ms)
 	 * B의 폴링 주기(200ms)가 겹치면 이 상황이 된다.
 	 */
@@ -139,8 +137,8 @@ class OutboxRelayConcurrencyTest extends AbstractIntegrationTest {
 	/**
 	 * 운영 경로 그대로 — 두 스레드가 {@code publishBatch}를 동시에 부른다.
 	 *
-	 * <p>위 테스트가 계약이고 이건 <b>그 계약이 실제 호출 경로에서도 지켜지는지</b>를 본다.
-	 * 반환값은 "발행하고 마킹한 건수"이므로, 합이 준비한 행 수를 넘으면 <b>같은 행을 두 번 센 것</b>이다.
+	 * 위 테스트가 계약이고 이건 그 계약이 실제 호출 경로에서도 지켜지는지를 본다.
+	 * 반환값은 "발행하고 마킹한 건수"이므로, 합이 준비한 행 수를 넘으면 같은 행을 두 번 센 것이다.
 	 */
 	@Test
 	void 동시에_돌려도_마킹은_행마다_한_번이다() throws Exception {
@@ -182,7 +180,7 @@ class OutboxRelayConcurrencyTest extends AbstractIntegrationTest {
 	}
 
 	/**
-	 * 두 번째 릴레이는 <b>먼저 잡은 쪽을 기다리면 안 된다.</b> 기다리면 두 대가 한 대만도 못해진다.
+	 * 두 번째 릴레이는 먼저 잡은 쪽을 기다리면 안 된다. 기다리면 두 대가 한 대만도 못해진다.
 	 * 그래서 별도 스레드에서 시간 제한을 두고 부른다 — 블로킹되면 여기서 실패한다.
 	 */
 	private List<Long> 기다리지_않고_집는다() throws Exception {

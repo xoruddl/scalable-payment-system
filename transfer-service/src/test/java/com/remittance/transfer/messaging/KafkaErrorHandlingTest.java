@@ -18,9 +18,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
 
 /**
- * Phase 2 Step 4c — 처리할 수 없는 메시지가 <b>사라지지 않는지</b>.
+ * Phase 2 Step 4c — 처리할 수 없는 메시지가 사라지지 않는지.
  *
- * <p>spring-kafka 기본 동작은 지연 없이 10번 시도한 뒤 로그만 남기고 오프셋을 커밋한다.
+ * spring-kafka 기본 동작은 지연 없이 10번 시도한 뒤 로그만 남기고 오프셋을 커밋한다.
  * 즉 메시지가 조용히 없어진다. 이 서비스가 이벤트를 잃으면 송금 상태가 실제와 어긋난 채 남으므로,
  * 끝내 처리 못 한 건 DLT에 남겨야 한다.
  */

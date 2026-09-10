@@ -18,7 +18,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * 대사가 "흐름이 끊겼다"를 판단하는 근거를 만드는 쪽.
- * <b>정상 건이 섞여 들어오면 신호가 묻히고</b>, 진짜 멈춘 건을 빠뜨리면 아무 소용이 없다.
+ * 정상 건이 섞여 들어오면 신호가 묻히고, 진짜 멈춘 건을 빠뜨리면 아무 소용이 없다.
  */
 @SpringBootTest
 class ReconciliationQueryServiceTest extends AbstractIntegrationTest {

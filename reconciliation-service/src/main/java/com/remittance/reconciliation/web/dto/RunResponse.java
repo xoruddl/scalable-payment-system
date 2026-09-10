@@ -6,7 +6,7 @@ import java.time.Instant;
 import java.util.List;
 
 /**
- * @param failureReason 값이 있으면 이 회차는 <b>끝까지 돌지 못했다</b>. 발견 0건을 "깨끗하다"로
+ * @param failureReason 값이 있으면 이 회차는 끝까지 돌지 못했다. 발견 0건을 "깨끗하다"로
  *                      읽으면 안 된다는 표시다.
  */
 public record RunResponse(

@@ -19,17 +19,17 @@ public interface AccountBalanceShardRepository extends JpaRepository<AccountBala
 	Optional<AccountBalanceShard> findByAccountIdAndShardNo(UUID accountId, short shardNo);
 
 	/**
-	 * 여러 계좌의 잔액을 <b>한 번에</b> 합산한다. 대사가 계좌를 페이지로 훑을 때 쓴다.
+	 * 여러 계좌의 잔액을 한 번에 합산한다. 대사가 계좌를 페이지로 훑을 때 쓴다.
 	 *
-	 * <p>계좌마다 조각을 따로 읽으면 페이지 크기만큼 쿼리가 나간다(N+1).
+	 * 계좌마다 조각을 따로 읽으면 페이지 크기만큼 쿼리가 나간다(N+1).
 	 * 대사는 계좌 전체를 훑으므로 그 차이가 그대로 대사 시간이 된다.
 	 */
 	/**
-	 * 이 계좌에서 <b>한 조각을 뺀 나머지</b>의 합. 입금이 조각 하나만 읽을 때,
+	 * 이 계좌에서 한 조각을 뺀 나머지의 합. 입금이 조각 하나만 읽을 때,
 	 * 분개장에 남길 "변경 후 잔액"을 만들기 위해 쓴다.
 	 *
-	 * <p>잠그지 않는 읽기라 이 값 때문에 경합이 생기지는 않는다.
-	 * 대신 <b>읽은 시점의 값</b>이라 근사치다.
+	 * 잠그지 않는 읽기라 이 값 때문에 경합이 생기지는 않는다.
+	 * 대신 읽은 시점의 값이라 근사치다.
 	 */
 	@Query("""
 			select coalesce(sum(s.balance), 0)

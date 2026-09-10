@@ -25,11 +25,11 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /**
  * Account Service가 맡은 Saga 단계들 — 출금(4a) · 입금(4a) · 환불(4b).
  *
- * <p>핵심 계약은 <b>"잔액 변경과 다음 이벤트 기록이 함께 일어나고, 두 번 일어나지 않는다"</b>이다.
+ * 핵심 계약은 "잔액 변경과 다음 이벤트 기록이 함께 일어나고, 두 번 일어나지 않는다"이다.
  * 이벤트는 at-least-once로 재전송되므로 두 번째 계약이 특히 중요하다 —
  * 출금이 두 번 적용되면 그대로 사고다.
  *
- * <p>실패 흐름에는 계약이 하나 더 붙는다. <b>단계가 실패했으면 그 사실이 반드시 이벤트로 나가야 한다.</b>
+ * 실패 흐름에는 계약이 하나 더 붙는다. 단계가 실패했으면 그 사실이 반드시 이벤트로 나가야 한다.
  * 조용히 멈추면 송금이 PENDING인 채로 영원히 남는다(Step 4a가 그랬다).
  */
 @SpringBootTest
@@ -134,7 +134,7 @@ class TransferSagaServiceTest extends AbstractIntegrationTest {
 
 	/**
 	 * 잔액이 모자라면 다시 시도해도 결과가 같으므로 재시도하지 않고 멈춘다.
-	 * <b>다음 단계 이벤트(debited)가 나가면 안 된다</b> — 출금이 안 됐는데 입금이 일어나기 때문이다.
+	 * 다음 단계 이벤트(debited)가 나가면 안 된다 — 출금이 안 됐는데 입금이 일어나기 때문이다.
 	 * 대신 실패 사실을 알려야 송금이 종결된다.
 	 */
 	@Test
@@ -168,7 +168,7 @@ class TransferSagaServiceTest extends AbstractIntegrationTest {
 
 	/**
 	 * 여기가 Saga에서 가장 위험한 지점이다. 출금은 이미 나갔는데 입금이 안 됐으므로
-	 * <b>돈이 공중에 뜬다</b>. 그 사실을 이벤트로 남기지 않으면 아무도 되돌려주지 않는다.
+	 * 돈이 공중에 뜬다. 그 사실을 이벤트로 남기지 않으면 아무도 되돌려주지 않는다.
 	 */
 	@Test
 	void 입금이_실패하면_transfer_credit_failed를_남겨_보상을_부른다() {
@@ -195,7 +195,7 @@ class TransferSagaServiceTest extends AbstractIntegrationTest {
 
 	/**
 	 * 실패도 "처리했다"고 기록해야 한다. 잔액이 부족한 송금은 몇 번을 다시 받아도 부족하므로,
-	 * 흔적을 남기지 않으면 재전송될 때마다 실패 이벤트가 새로 나가고 <b>Transfer가 같은 실패를 반복해서 듣는다</b>.
+	 * 흔적을 남기지 않으면 재전송될 때마다 실패 이벤트가 새로 나가고 Transfer가 같은 실패를 반복해서 듣는다.
 	 */
 	@Test
 	void 같은_이벤트로_두_번_실패해도_실패_이벤트는_한_번만_나간다() {
@@ -249,7 +249,7 @@ class TransferSagaServiceTest extends AbstractIntegrationTest {
 	}
 
 	/**
-	 * 전진 단계는 실패하면 실패 이벤트를 남기고 물러나지만, <b>보상은 물러날 곳이 없다.</b>
+	 * 전진 단계는 실패하면 실패 이벤트를 남기고 물러나지만, 보상은 물러날 곳이 없다.
 	 * 여기서 예외를 삼키면 고객 돈이 사라진 채로 조용히 끝난다.
 	 * 밖으로 던져야 컨슈머가 재시도하고, 끝내 안 되면 DLT로 가서 사람 눈에 띈다.
 	 */

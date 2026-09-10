@@ -21,15 +21,15 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * Phase 2 Step 6a — <b>원장 도입 이전 잔액을 한 줄로 이월한다.</b>
+ * Phase 2 Step 6a — 원장 도입 이전 잔액을 한 줄로 이월한다.
  *
- * <p>Step 5b e2e에서 {@code BALANCE_MISMATCH} 17건이 계속 잡혔다. 전부 Step 5a 이전에 만들어진
- * 계좌라 <b>오탐이 아니라 정탐</b>이었고, 그래서 무시할 수도 지울 수도 없었다.
+ * Step 5b e2e에서 {@code BALANCE_MISMATCH} 17건이 계속 잡혔다. 전부 Step 5a 이전에 만들어진
+ * 계좌라 오탐이 아니라 정탐이었고, 그래서 무시할 수도 지울 수도 없었다.
  * 이월은 그 과거를 원장에 적어 넣어 대사가 다시 의미를 갖게 하는 일이다.
  *
- * <p>여기서 가장 위험한 건 <b>잘못된 금액을 심는 것</b>이다. 이월분은 되돌릴 장치가 없어,
+ * 여기서 가장 위험한 건 잘못된 금액을 심는 것이다. 이월분은 되돌릴 장치가 없어,
  * 한 번 어긋나면 그 계좌는 계속 어긋난 채로 남는다. 그래서 "심는다"보다
- * <b>"언제 심지 않는가"</b>를 더 많이 확인한다.
+ * "언제 심지 않는가"를 더 많이 확인한다.
  */
 @SpringBootTest
 class OpeningBalanceServiceTest extends AbstractIntegrationTest {
@@ -52,7 +52,7 @@ class OpeningBalanceServiceTest extends AbstractIntegrationTest {
 	/**
 	 * Step 5a 이전에 만들어진 계좌를 흉내낸다 — 잔액은 있는데 원장에는 아무것도 없는 상태다.
 	 *
-	 * <p>테스트에서는 릴레이가 꺼져 있어 분개가 Outbox에 그대로 쌓인다. 그걸 발행 처리해서
+	 * 테스트에서는 릴레이가 꺼져 있어 분개가 Outbox에 그대로 쌓인다. 그걸 발행 처리해서
 	 * "원장이 받아갈 건 다 받아갔고, 그럼에도 원장 합이 0인" 상황을 만든다.
 	 */
 	private UUID legacyAccount(String amount) {
@@ -103,7 +103,7 @@ class OpeningBalanceServiceTest extends AbstractIntegrationTest {
 	}
 
 	/**
-	 * 이월은 <b>과거를 적는 일이지 돈을 넣는 일이 아니다.</b> 잔액이 함께 늘면 그 순간
+	 * 이월은 과거를 적는 일이지 돈을 넣는 일이 아니다. 잔액이 함께 늘면 그 순간
 	 * 계좌에 없던 돈이 생기고, 대사를 맞추려던 작업이 진짜 사고가 된다.
 	 */
 	@Test
@@ -179,7 +179,7 @@ class OpeningBalanceServiceTest extends AbstractIntegrationTest {
 	}
 
 	/**
-	 * 잔액 검사만으로는 못 잡는 경우다. <b>잔액은 그대로인데 원장만 뒤처져 있다.</b>
+	 * 잔액 검사만으로는 못 잡는 경우다. 잔액은 그대로인데 원장만 뒤처져 있다.
 	 * 미발행 분개는 "잔액에는 이미 반영됐지만 원장은 아직 모르는 변경"이라,
 	 * 지금 차이를 심으면 그 변경을 이월분에 한 번, 뒤늦게 도착한 분개에 또 한 번 세게 된다.
 	 */

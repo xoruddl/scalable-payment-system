@@ -23,8 +23,8 @@ import static org.awaitility.Awaitility.await;
 /**
  * Phase 2 Step 4a — 컨슈머 배선 검증.
  *
- * <p>{@code TransferSagaServiceTest}는 도메인 처리를 직접 호출해 검증한다.
- * 여기서는 <b>Transfer Service가 실제로 발행하는 모양의 JSON</b>이 토픽명·역직렬화·리스너 등록을
+ * {@code TransferSagaServiceTest}는 도메인 처리를 직접 호출해 검증한다.
+ * 여기서는 Transfer Service가 실제로 발행하는 모양의 JSON이 토픽명·역직렬화·리스너 등록을
  * 모두 거쳐 출금까지 도달하는지 본다. 셋 중 하나만 어긋나도 아무 일도 일어나지 않는데,
  * 예외가 나지 않으니 서비스를 띄워보기 전에는 알아채기 어렵다.
  */

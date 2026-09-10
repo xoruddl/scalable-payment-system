@@ -32,11 +32,11 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
 /**
- * Transfer Service가 하는 일은 <b>접수</b>와 <b>상태 추적</b> 두 가지다.
+ * Transfer Service가 하는 일은 접수와 상태 추적 두 가지다.
  * 출금·입금·원장기록은 이벤트를 받은 다른 서비스가 알아서 한다.
  *
- * <p>상태 전이 규칙 자체는 {@link TransferStateUpdaterTest}에 있다. 여기서는 그 전이를
- * <b>경합이 있어도 반영되게 만드는</b> 재시도만 본다.
+ * 상태 전이 규칙 자체는 {@link TransferStateUpdaterTest}에 있다. 여기서는 그 전이를
+ * 경합이 있어도 반영되게 만드는 재시도만 본다.
  */
 @ExtendWith(MockitoExtension.class)
 class TransferServiceTest {
@@ -55,7 +55,7 @@ class TransferServiceTest {
 
 	/**
 	 * 메트릭은 목이 아니라 진짜 레지스트리를 쓴다. 목으로 두면 "increment()가 불렸다"까지만
-	 * 확인하게 되는데, 정작 알고 싶은 건 <b>어떤 태그로 몇이 찍혔나</b>이다.
+	 * 확인하게 되는데, 정작 알고 싶은 건 어떤 태그로 몇이 찍혔나이다.
 	 */
 	private final MeterRegistry meterRegistry = new SimpleMeterRegistry();
 
@@ -77,7 +77,7 @@ class TransferServiceTest {
 
 	/**
 	 * 접수 실행은 {@link TransferAcceptExecutor}로 옮겼다(한 트랜잭션으로 묶기 위해).
-	 * 여기서는 <b>거기까지 도달하는가</b>만 보고, 무엇이 저장되는지는
+	 * 여기서는 거기까지 도달하는가만 보고, 무엇이 저장되는지는
 	 * {@code TransferAcceptExecutorTest}가 진짜 DB로 확인한다.
 	 */
 	private void stubAcceptReturnsNewTransfer() {
