@@ -20,21 +20,21 @@ import java.net.http.HttpResponse;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * 대시보드가 기대는 메트릭이 <b>실제로 노출되는지</b> 지킨다 (Phase 5 Step 2).
+ * 대시보드가 기대는 메트릭이 실제로 노출되는지 지킨다 (Phase 5 Step 2).
  *
- * <p>이 테스트가 생긴 이유가 둘 다 실제로 겪은 일이다.
+ * 이 테스트가 생긴 이유가 둘 다 실제로 겪은 일이다.
  *
- * <p><b>하나 — 히스토그램을 켜지 않으면 p95는 영원히 안 나온다.</b>
+ * 하나 — 히스토그램을 켜지 않으면 p95는 영원히 안 나온다.
  * 기본값으로는 {@code _count}와 {@code _sum}만 나온다. 그 둘로는 평균밖에 못 구하는데,
- * Grafana의 {@code histogram_quantile()}은 버킷이 없으면 오류를 내지 않고 <b>조용히 빈 패널</b>을
+ * Grafana의 {@code histogram_quantile()}은 버킷이 없으면 오류를 내지 않고 조용히 빈 패널을
  * 낸다. 화면을 열어보기 전까지 아무도 모른다.
  *
- * <p><b>둘 — 잘못된 분포 설정은 요청 자체를 죽인다.</b>
+ * 둘 — 잘못된 분포 설정은 요청 자체를 죽인다.
  * {@code maximum-expected-value: 10s}를 걸었더니 같은 이름 접두사를 쓰는 LongTaskTimer
  * ({@code http.server.requests.active})의 기본 최솟값(120초)과 충돌해,
- * {@code InvalidConfigurationException}이 <b>요청마다</b> 터졌다. 기동은 멀쩡히 됐고
+ * {@code InvalidConfigurationException}이 요청마다 터졌다. 기동은 멀쩡히 됐고
  * 헬스체크만 500을 냈다. 기존 테스트는 하나도 빨개지지 않았는데,
- * <b>진짜 포트로 요청을 보내는 테스트가 없어서</b>였다 — 예외는 서블릿 필터
+ * 진짜 포트로 요청을 보내는 테스트가 없어서였다 — 예외는 서블릿 필터
  * ({@code ServerHttpObservationFilter})에서 터지므로 MockMvc로는 재현되지 않는다.
  */
 @SpringBootTest(
@@ -74,8 +74,8 @@ class MetricsExposureTest extends AbstractIntegrationTest {
 	 * 대시보드의 p95·p99 패널이 이 세 타이머에 걸려 있다. 이름이 바뀌거나 slo 설정이 빠지면
 	 * 여기서 먼저 잡힌다.
 	 *
-	 * <p>메트릭을 하나 만들어 보고 버킷이 붙는지 확인한다. 실제 요청을 기다리지 않아도
-	 * <b>"이 이름에 분포 설정이 걸려 있는가"</b>는 이걸로 답할 수 있다.
+	 * 메트릭을 하나 만들어 보고 버킷이 붙는지 확인한다. 실제 요청을 기다리지 않아도
+	 * "이 이름에 분포 설정이 걸려 있는가"는 이걸로 답할 수 있다.
 	 */
 	@ParameterizedTest
 	@ValueSource(strings = {"http.server.requests", "spring.kafka.listener", "hikaricp.connections.acquire"})
@@ -90,12 +90,12 @@ class MetricsExposureTest extends AbstractIntegrationTest {
 	}
 
 	/**
-	 * 리스너 지표의 {@code name} 라벨은 <b>컨테이너 빈 이름</b>이 그대로 쓰인다.
+	 * 리스너 지표의 {@code name} 라벨은 컨테이너 빈 이름이 그대로 쓰인다.
 	 * {@code @KafkaListener}에 {@code id}를 주지 않으면
 	 * {@code org.springframework.kafka.KafkaListenerEndpointContainer#0-0}이 되는데,
-	 * 그걸로는 <b>어느 토픽이 느린지 화면에서 읽을 수 없다.</b>
+	 * 그걸로는 어느 토픽이 느린지 화면에서 읽을 수 없다.
 	 *
-	 * <p>라벨은 <b>baseline을 재기 전에</b> 확정해야 한다. 나중에 바꾸면 시계열이 갈라져
+	 * 라벨은 baseline을 재기 전에 확정해야 한다. 나중에 바꾸면 시계열이 갈라져
 	 * Phase 6의 재측정을 baseline과 같은 잣대로 비교할 수 없다.
 	 */
 	@Test

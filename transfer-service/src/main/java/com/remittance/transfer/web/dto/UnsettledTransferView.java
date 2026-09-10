@@ -8,7 +8,7 @@ import java.util.UUID;
 
 /**
  * 종결되지 않은 채 오래 남은 송금. 정상이라면 몇 초 안에 끝나므로,
- * 한참 지나도 이 상태라는 건 <b>흐름이 어딘가에서 끊겼다</b>는 뜻이다.
+ * 한참 지나도 이 상태라는 건 흐름이 어딘가에서 끊겼다는 뜻이다.
  */
 public record UnsettledTransferView(
 		UUID transferId,

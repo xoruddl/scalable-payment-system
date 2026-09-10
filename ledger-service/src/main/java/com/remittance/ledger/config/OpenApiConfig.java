@@ -7,12 +7,12 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 /**
- * 이 서비스가 <b>자기 계약을 자기 입으로</b> 말하게 한다 (Phase 4).
+ * 이 서비스가 자기 계약을 자기 입으로 말하게 한다 (Phase 4).
  *
- * <p>공개(거래 내역 조회)와 내부(`/internal/*`)를 그룹으로 가른다.
+ * 공개(거래 내역 조회)와 내부(`/internal/*`)를 그룹으로 가른다.
  * 자세한 이유는 `account-service`의 같은 이름 설정에 적어두었다.
  *
- * <p><b>이 서비스만 WebFlux다.</b> 그래서 의존성도 `springdoc-openapi-starter-webflux-ui`인데,
+ * 이 서비스만 WebFlux다. 그래서 의존성도 `springdoc-openapi-starter-webflux-ui`인데,
  * 설정 코드는 같다 — 그룹은 라우팅 방식과 무관한 개념이기 때문이다.
  */
 @Configuration

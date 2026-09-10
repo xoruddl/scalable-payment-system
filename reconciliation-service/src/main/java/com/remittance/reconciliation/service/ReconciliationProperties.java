@@ -13,7 +13,7 @@ import java.time.Duration;
  * @param keyStrandedAfter  멱등성 키가 이 시간을 넘겨 IN_PROGRESS면 접수가 죽은 것으로 본다.
  * @param externalCreditUnknownAfter 상대 은행에 보낸 뒤 이 시간을 넘겨도 결과를 모르면 사람이 봐야 한다.
  *                          확인 루프의 백오프가 최대 1분까지 늘어나므로 그보다 넉넉히 잡는다 —
- *                          짧으면 <b>아직 스스로 풀릴 건</b>까지 사람을 부르게 된다.
+ *                          짧으면 아직 스스로 풀릴 건까지 사람을 부르게 된다.
  * @param tolerance         이보다 작은 차이는 무시한다. 지금은 0 — 돈은 한 푼도 어긋나면 안 된다.
  */
 @ConfigurationProperties(prefix = "reconciliation")

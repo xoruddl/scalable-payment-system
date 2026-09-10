@@ -18,8 +18,8 @@ import java.time.Instant;
 /**
  * 대사가 찾아낸 어긋남 한 건.
  *
- * <p>같은 문제가 매 회차 다시 발견되는 게 정상이다 — 대사는 고치지 않으므로, 사람이 손대기 전까지
- * 계속 잡힌다. 그래서 <b>회차마다 새로 쌓는다.</b> "언제부터 어긋나 있었나"가 남아야
+ * 같은 문제가 매 회차 다시 발견되는 게 정상이다 — 대사는 고치지 않으므로, 사람이 손대기 전까지
+ * 계속 잡힌다. 그래서 회차마다 새로 쌓는다. "언제부터 어긋나 있었나"가 남아야
  * 원인을 되짚을 수 있다.
  */
 @Entity
@@ -43,7 +43,7 @@ public class ReconciliationFinding {
 	@Column(nullable = false, length = 64, updatable = false)
 	private String subject;
 
-	/** 사람이 읽을 설명. 금액 차이나 멈춘 상태처럼 <b>바로 손댈 수 있는 정보</b>를 담는다. */
+	/** 사람이 읽을 설명. 금액 차이나 멈춘 상태처럼 바로 손댈 수 있는 정보를 담는다. */
 	@Column(nullable = false, length = 500, updatable = false)
 	private String detail;
 

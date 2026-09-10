@@ -24,10 +24,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
 
 /**
- * Phase 2 Step 5a — 원장이 <b>모든 잔액 변경</b>을 받아 적는다.
+ * Phase 2 Step 5a — 원장이 모든 잔액 변경을 받아 적는다.
  *
- * <p>전에는 {@code transfer.credited}를 듣고 송금 한 건을 두 줄로 적었다. 그러면 송금이 아닌
- * 잔액 변경(입출금, 보상 환불)이 원장에 남지 않아 <b>"원장 합 = 잔액"이 성립하지 않았다.</b>
+ * 전에는 {@code transfer.credited}를 듣고 송금 한 건을 두 줄로 적었다. 그러면 송금이 아닌
+ * 잔액 변경(입출금, 보상 환불)이 원장에 남지 않아 "원장 합 = 잔액"이 성립하지 않았다.
  * 이제 잔액이 움직인 사실 하나가 원장 한 줄이 된다.
  */
 @SpringBootTest
@@ -120,7 +120,7 @@ class BalanceChangedConsumerTest extends AbstractIntegrationTest {
 
 	/**
 	 * 출금 줄과 입금 줄은 계좌가 달라 서로 다른 파티션으로 온다 — 도착 순서가 보장되지 않는다.
-	 * 그래서 "입금을 적었으니 끝"이 아니라, <b>둘 다 모였을 때</b> 알려야 한다.
+	 * 그래서 "입금을 적었으니 끝"이 아니라, 둘 다 모였을 때 알려야 한다.
 	 */
 	@Test
 	void 출금과_입금이_모두_기록되어야_원장_기록_완료를_알린다() {
@@ -144,8 +144,8 @@ class BalanceChangedConsumerTest extends AbstractIntegrationTest {
 	}
 
 	/**
-	 * 대사는 이 계산을 믿고 계좌 잔액과 비교한다. 부호를 잘못 더하면 <b>멀쩡한 계좌를
-	 * 어긋났다고 보고</b>하게 되고, 그게 반복되면 아무도 대사 결과를 안 믿게 된다.
+	 * 대사는 이 계산을 믿고 계좌 잔액과 비교한다. 부호를 잘못 더하면 멀쩡한 계좌를
+	 * 어긋났다고 보고하게 되고, 그게 반복되면 아무도 대사 결과를 안 믿게 된다.
 	 */
 	@Test
 	void 원장_합은_입금은_더하고_출금은_뺀_값이다() {
@@ -175,9 +175,9 @@ class BalanceChangedConsumerTest extends AbstractIntegrationTest {
 	}
 
 	/**
-	 * Phase 2 Step 6a — 개시 이월도 원장에서는 <b>다른 줄과 똑같이</b> 더해진다.
+	 * Phase 2 Step 6a — 개시 이월도 원장에서는 다른 줄과 똑같이 더해진다.
 	 *
-	 * <p>이월분이 합에서 빠지면 애초에 이월한 의미가 없다. 잔액과 맞추려고 심은 줄이
+	 * 이월분이 합에서 빠지면 애초에 이월한 의미가 없다. 잔액과 맞추려고 심은 줄이
 	 * 계산에 안 들어가면 그 계좌는 여전히 어긋난 것으로 잡힌다.
 	 */
 	@Test
@@ -203,9 +203,9 @@ class BalanceChangedConsumerTest extends AbstractIntegrationTest {
 	}
 
 	/**
-	 * 개시 이월은 <b>송금의 한 다리가 아니다.</b> 이월을 전송 단계로 세면, 출금 줄 하나와
-	 * 이월 줄 하나만으로 "두 줄 모였다"고 판단해 <b>입금이 원장에 없는데도 원장 기록 완료를
-	 * 알릴</b> 수 있다. 그러면 송금이 원장 없이 COMPLETED가 된다.
+	 * 개시 이월은 송금의 한 다리가 아니다. 이월을 전송 단계로 세면, 출금 줄 하나와
+	 * 이월 줄 하나만으로 "두 줄 모였다"고 판단해 입금이 원장에 없는데도 원장 기록 완료를
+	 * 알릴 수 있다. 그러면 송금이 원장 없이 COMPLETED가 된다.
 	 */
 	@Test
 	void 개시_이월은_원장_기록_완료로_세지_않는다() {

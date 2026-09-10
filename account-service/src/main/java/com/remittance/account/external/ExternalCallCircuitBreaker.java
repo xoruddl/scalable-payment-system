@@ -24,12 +24,12 @@ import java.util.function.Supplier;
 /**
  * 장애가 계속되는 상대 은행에 새 입금 요청을 잠시 보내지 않는다.
  *
- * <p>직접 만든 CLOSED/OPEN/HALF_OPEN 상태 머신을 Resilience4j로 교체했다. 회로는 은행별로
+ * 직접 만든 CLOSED/OPEN/HALF_OPEN 상태 머신을 Resilience4j로 교체했다. 회로는 은행별로
  * 나뉘며, 크기가 실패 임계값인 count-based window와 실패율 100%를 조합해
- * <b>N회 연속 실패</b>를 표현한다. 중간에 성공이 하나라도 끼면 최근 N건의 실패율이 100%가
+ * N회 연속 실패를 표현한다. 중간에 성공이 하나라도 끼면 최근 N건의 실패율이 100%가
  * 아니므로 열리지 않는다.
  *
- * <p>이미 보낸 돈을 확인하는 조회는 이 회로를 지나지 않는다. 새 전송을 막느라
+ * 이미 보낸 돈을 확인하는 조회는 이 회로를 지나지 않는다. 새 전송을 막느라
  * {@code CREDIT_UNKNOWN} 해소까지 막으면 안 되기 때문이다.
  */
 @Component
@@ -73,7 +73,7 @@ public class ExternalCallCircuitBreaker {
 	/**
 	 * 회로의 허가를 얻은 뒤 {@code beforeCall}을 실행하고 상대를 부른다.
 	 *
-	 * <p>미전송 건의 {@code sent=true} 영속화는 허가 뒤, HTTP 직전에 와야 한다. 그래서
+	 * 미전송 건의 {@code sent=true} 영속화는 허가 뒤, HTTP 직전에 와야 한다. 그래서
 	 * 데코레이터 한 줄 대신 Resilience4j의 저수준 permission API를 쓴다. {@code beforeCall}이
 	 * 실패하면 상대 장애로 기록하지 않고 허가를 반환한다.
 	 */

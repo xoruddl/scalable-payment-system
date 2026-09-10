@@ -16,7 +16,7 @@ import org.springframework.web.bind.annotation.RestController
  *      -d '{"timeoutRate":0.1,"latencyMs":50}'
  * ```
  *
- * <p><b>왜 런타임인가</b> — 같은 jar에 이 값만 바꿔 A/B를 재기 위해서다.
+ * 왜 런타임인가 — 같은 jar에 이 값만 바꿔 A/B를 재기 위해서다.
  * 코드를 고쳐가며 재면 빌드가 달라져 무엇 때문에 숫자가 바뀌었는지 말할 수 없다
  * (`account.lock.strategy`, `SHARDS`와 같은 규칙).
  */

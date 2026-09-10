@@ -22,15 +22,15 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.BDDMockito.willThrow;
 
 /**
- * 접수가 <b>한 트랜잭션</b>인지 본다 (Phase 6, 커밋 수 줄이기).
+ * 접수가 한 트랜잭션인지 본다 (Phase 6, 커밋 수 줄이기).
  *
- * <p>합쳤다는 것은 <b>커밋이 한 번</b>이라는 뜻이고, 그건 "둘 중 하나만 남는 상태가 없다"로만
- * 증명할 수 있다. 그래서 <b>키 결과를 적는 마지막 단계에서 일부러 터뜨리고</b>
+ * 합쳤다는 것은 커밋이 한 번이라는 뜻이고, 그건 "둘 중 하나만 남는 상태가 없다"로만
+ * 증명할 수 있다. 그래서 키 결과를 적는 마지막 단계에서 일부러 터뜨리고
  * 앞서 저장한 송금과 Outbox까지 함께 사라지는지 확인한다.
  *
- * <p>갈라져 있던 시절에는 이 테스트가 red다 — 송금은 이미 커밋됐으므로 남는다.
+ * 갈라져 있던 시절에는 이 테스트가 red다 — 송금은 이미 커밋됐으므로 남는다.
  * 실제로 그 상태를 위해 {@code TransferService#recoverInProgress}의 전진 복구가 있었다.
- * 그 코드는 지우지 않았지만(옛 행이 남아 있을 수 있다), <b>새로 만들어지지는 않는다.</b>
+ * 그 코드는 지우지 않았지만(옛 행이 남아 있을 수 있다), 새로 만들어지지는 않는다.
  */
 @SpringBootTest
 class TransferAcceptExecutorTest extends AbstractIntegrationTest {

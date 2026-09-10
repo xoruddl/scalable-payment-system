@@ -17,16 +17,16 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 /**
- * 상대 은행에 <b>HTTP로</b> 입금을 요청한다.
+ * 상대 은행에 HTTP로 입금을 요청한다.
  *
- * <h2>왜 HTTP인가 (Phase 6.5)</h2>
- * Kafka로 하면 지금 구조와 잘 어울리지만, <b>브로커가 재전송을 책임져 불확실성이 사라진다.</b>
- * "보냈는데 결과를 모른다"가 생기려면 <b>응답을 기다리다 포기하는</b> 구조여야 한다.
+ * 왜 HTTP인가 (Phase 6.5)
+ * Kafka로 하면 지금 구조와 잘 어울리지만, 브로커가 재전송을 책임져 불확실성이 사라진다.
+ * "보냈는데 결과를 모른다"가 생기려면 응답을 기다리다 포기하는 구조여야 한다.
  * 외부 조직과 토픽을 공유하는 것도 현실적이지 않다.
  *
- * <h2>멱등성이 우리 손을 떠난다</h2>
- * 지금까지 중복은 우리 DB의 unique 제약이 막았다. 상대 은행에는 <b>우리가 제약을 걸 수 없다.</b>
- * 송금 ID를 키로 상대가 막아준다고 <b>믿어야</b> 하고, 그 믿음 자체가 계약이다.
+ * 멱등성이 우리 손을 떠난다
+ * 지금까지 중복은 우리 DB의 unique 제약이 막았다. 상대 은행에는 우리가 제약을 걸 수 없다.
+ * 송금 ID를 키로 상대가 막아준다고 믿어야 하고, 그 믿음 자체가 계약이다.
  * 그래서 같은 요청을 다시 보내는 것이 안전하다 — 상대가 약속을 지키는 한.
  */
 @Component
@@ -45,9 +45,9 @@ public class ExternalBankClient {
 	/**
 	 * 입금을 요청한다.
 	 *
-	 * <p>여기서 <b>예외가 나가면 처리되지 않은 것으로 본다</b> — 컨슈머가 재시도한다.
-	 * 그런데 타임아웃도 예외로 나간다. <b>타임아웃은 처리됐을 수도 있다.</b>
-	 * 재시도가 안전한 이유는 오직 <b>상대가 멱등하기 때문</b>이고, 재시도를 다 쓰고도
+	 * 여기서 예외가 나가면 처리되지 않은 것으로 본다 — 컨슈머가 재시도한다.
+	 * 그런데 타임아웃도 예외로 나간다. 타임아웃은 처리됐을 수도 있다.
+	 * 재시도가 안전한 이유는 오직 상대가 멱등하기 때문이고, 재시도를 다 쓰고도
 	 * 답을 못 받으면 그때는 "모르는 상태"로 남는다 (Step 2b).
 	 */
 	public ExternalCreditResult credit(String bankCode, UUID transferId, String accountNumber,
@@ -60,7 +60,7 @@ public class ExternalBankClient {
 					.retrieve()
 					.body(CreditResponse.class);
 		} catch (RestClientException failed) {
-			// 답이 없다. <b>처리됐는지 안 됐는지 알 수 없다.</b>
+			// 답이 없다. 처리됐는지 안 됐는지 알 수 없다.
 			// 5xx와 달리 "안 됐다"고 말할 수 없으므로 다시 보내면 안 된다 — 조회해야 한다.
 			if (isNoAnswer(failed)) {
 				throw new ExternalCreditUnknownException(bankCode, transferId, failed);
@@ -78,9 +78,9 @@ public class ExternalBankClient {
 	}
 
 	/**
-	 * 결과를 <b>물어본다.</b> 재시도가 아니라 조회다 — 이 차이가 이 Phase의 전부다.
+	 * 결과를 물어본다. 재시도가 아니라 조회다 — 이 차이가 이 Phase의 전부다.
 	 *
-	 * <p>없는 거래면 404가 오고, 그건 <b>"우리 요청이 도달하지 않았다"</b>는 뜻이다.
+	 * 없는 거래면 404가 오고, 그건 "우리 요청이 도달하지 않았다"는 뜻이다.
 	 * 답이 없으면 여전히 모르는 상태이므로 예외로 나가 다음 주기에 다시 묻는다.
 	 */
 	public ExternalCreditResult inquire(String bankCode, UUID transferId) {
@@ -89,7 +89,7 @@ public class ExternalBankClient {
 					.uri("/transfers/{transferId}", transferId)
 					.retrieve()
 					.onStatus(HttpStatusCode::is4xxClientError, (request, res) -> {
-						// 404는 오류가 아니라 <b>답</b>이다. 예외로 바꾸면 "모른다"와 구분이 사라진다.
+						// 404는 오류가 아니라 답이다. 예외로 바꾸면 "모른다"와 구분이 사라진다.
 					})
 					.body(CreditResponse.class);
 			return response == null
@@ -104,21 +104,21 @@ public class ExternalBankClient {
 	}
 
 	/**
-	 * 이 실패가 <b>"답을 못 받은 것"</b>인가.
+	 * 이 실패가 "답을 못 받은 것"인가.
 	 *
-	 * <h2>예외 타입 하나로 판별하면 안 된다 ★</h2>
-	 * 처음에는 {@link ResourceAccessException}만 잡았다. <b>홈서버에서 진짜로 돌려보니
-	 * 타임아웃이 그 타입으로 오지 않았다</b> —
+	 * 예외 타입 하나로 판별하면 안 된다 ★
+	 * 처음에는 {@link ResourceAccessException}만 잡았다. 홈서버에서 진짜로 돌려보니
+	 * 타임아웃이 그 타입으로 오지 않았다 —
 	 * {@code RestClientException: Error while extracting response ...}였다.
-	 * 응답 헤더는 받았는데 <b>본문을 읽다가 끊긴</b> 경우라 다른 자리에서 감싸진다.
+	 * 응답 헤더는 받았는데 본문을 읽다가 끊긴 경우라 다른 자리에서 감싸진다.
 	 *
-	 * <p>그대로 뒀으면 "모르는 상태"가 만들어지지 않고 <b>메시지가 DLT로 죽었다.</b>
+	 * 그대로 뒀으면 "모르는 상태"가 만들어지지 않고 메시지가 DLT로 죽었다.
 	 * 돈은 나갔을 수 있는데 아무도 확인하지 않는, 이 Phase가 없애려던 바로 그 상태다.
 	 * 목으로 만든 테스트는 이걸 못 잡는다 — 진짜 소켓이 끊겨봐야 나온다.
 	 *
-	 * <p>그래서 타입이 아니라 <b>원인 사슬에 I/O 실패가 있는지</b>를 본다
+	 * 그래서 타입이 아니라 원인 사슬에 I/O 실패가 있는지를 본다
 	 * ({@code KafkaErrorHandlingConfig}의 경합 판별과 같은 방식이다).
-	 * {@code static}인 이유는 <b>테스트에서 직접 부를 수 있게</b> 하기 위해서다.
+	 * {@code static}인 이유는 테스트에서 직접 부를 수 있게 하기 위해서다.
 	 */
 	static boolean isNoAnswer(Throwable failure) {
 		for (Throwable cause = failure; cause != null; cause = cause.getCause()) {

@@ -56,7 +56,7 @@ class AccountServiceTest {
 
 	/**
 	 * 메트릭은 목이 아니라 진짜 레지스트리를 쓴다. 목으로 두면 "increment()가 불렸다"까지만
-	 * 확인하게 되는데, 정작 알고 싶은 건 <b>어떤 태그로 몇이 찍혔나</b>이다.
+	 * 확인하게 되는데, 정작 알고 싶은 건 어떤 태그로 몇이 찍혔나이다.
 	 */
 	@Spy
 	private MeterRegistry meterRegistry = new SimpleMeterRegistry();
@@ -71,11 +71,11 @@ class AccountServiceTest {
 	}
 
 	/**
-	 * <b>분산 락 전략</b>으로 두되, 락 자체는 여기서 검증 대상이 아니므로 그냥 통과시켜
+	 * 분산 락 전략으로 두되, 락 자체는 여기서 검증 대상이 아니므로 그냥 통과시켜
 	 * 원래 동작을 실행하게 한다.
 	 *
-	 * <p>전략을 명시하는 이유: 기본값을 안 정해두면 목이 {@code false}를 돌려주어
-	 * <b>낙관적 락 경로로 새는데</b>, 그러면 이 클래스의 재시도 검증들이 무엇을 재는지 흐려진다.
+	 * 전략을 명시하는 이유: 기본값을 안 정해두면 목이 {@code false}를 돌려주어
+	 * 낙관적 락 경로로 새는데, 그러면 이 클래스의 재시도 검증들이 무엇을 재는지 흐려진다.
 	 */
 	@SuppressWarnings("unchecked")
 	private void passThroughLock() {

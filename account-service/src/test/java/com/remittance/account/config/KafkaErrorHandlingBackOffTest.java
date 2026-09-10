@@ -14,15 +14,15 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Phase 6 Step 1 — <b>붐빈다는 이유로 돈을 버리지 않는다.</b>
+ * Phase 6 Step 1 — 붐빈다는 이유로 돈을 버리지 않는다.
  *
- * <p>2026-08-23 핫 계좌 측정에서 송금 9건이 {@code DEBIT_COMPLETED}로 영영 갇혔다.
+ * 2026-08-23 핫 계좌 측정에서 송금 9건이 {@code DEBIT_COMPLETED}로 영영 갇혔다.
  * 출금은 됐는데 입금이 안 된 채로 멈춘 것이고, 원인은 락을 3초 안에 못 잡은 실패가
- * <b>여느 실패와 똑같이 취급돼 세 번 만에 DLT로 죽은</b> 것이었다.
+ * 여느 실패와 똑같이 취급돼 세 번 만에 DLT로 죽은 것이었다.
  *
- * <p>여기서 확인하는 것은 <b>어떤 실패에 어떤 재시도 정책이 붙는가</b>다.
+ * 여기서 확인하는 것은 어떤 실패에 어떤 재시도 정책이 붙는가다.
  * "무한 재시도가 실제로 일어나는지"는 부하를 걸어야 보이지만, 정책이 잘못 붙으면
- * 그 부하 시험도 볼 것이 없다. <b>그리고 이건 틀려도 아무 증상이 없다</b> —
+ * 그 부하 시험도 볼 것이 없다. 그리고 이건 틀려도 아무 증상이 없다 —
  * 평상시에는 경합이 없어 두 정책이 똑같이 보인다.
  */
 class KafkaErrorHandlingBackOffTest {
@@ -57,7 +57,7 @@ class KafkaErrorHandlingBackOffTest {
 
 	/**
 	 * 리스너에서 난 예외는 spring-kafka가 {@link ListenerExecutionFailedException}으로 감싸서 올린다.
-	 * <b>맨 바깥만 보면 경합인 줄 모른다</b> — 실제 운영에서 오는 모양이 이쪽이다.
+	 * 맨 바깥만 보면 경합인 줄 모른다 — 실제 운영에서 오는 모양이 이쪽이다.
 	 */
 	@Test
 	void 감싸져_올라와도_경합인_줄_안다() {
@@ -69,7 +69,7 @@ class KafkaErrorHandlingBackOffTest {
 	}
 
 	/**
-	 * 경합이 아닌 실패까지 무한 재시도하면 <b>진짜 못 고치는 메시지가 파티션을 영영 막는다.</b>
+	 * 경합이 아닌 실패까지 무한 재시도하면 진짜 못 고치는 메시지가 파티션을 영영 막는다.
 	 * 그건 DLT를 둔 이유 자체를 없애는 것이다.
 	 */
 	@Test

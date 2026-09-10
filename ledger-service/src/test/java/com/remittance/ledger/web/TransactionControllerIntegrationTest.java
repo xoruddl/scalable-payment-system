@@ -20,7 +20,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * 조회 API. Step 5a에서 원장 기록 경로가 REST에서 이벤트로 바뀌었으므로,
- * 여기서는 서비스로 직접 원장을 채운 뒤 <b>조회 쪽만</b> 본다.
+ * 여기서는 서비스로 직접 원장을 채운 뒤 조회 쪽만 본다.
  */
 @SpringBootTest
 @AutoConfigureWebTestClient

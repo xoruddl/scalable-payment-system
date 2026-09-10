@@ -42,7 +42,7 @@ public class AccountClient {
 	}
 
 	/**
-	 * @param inquiries 몇 번 물어봤나. <b>많이 물어봤는데도 아직 여기 있다</b>는 것이
+	 * @param inquiries 몇 번 물어봤나. 많이 물어봤는데도 아직 여기 있다는 것이
 	 *                  사람이 나서야 한다는 신호라, 건수와 함께 적어 보낸다.
 	 */
 	public record UnknownExternalCredit(UUID transferId, String bankCode, BigDecimal amount,

@@ -18,7 +18,7 @@ public interface TransferRepository extends JpaRepository<Transfer, Long> {
 	/**
 	 * 이 키로 접수된 송금이 실제로 커밋됐는가.
 	 *
-	 * <p>발이 묶인 멱등성 키를 만났을 때 <b>풀어도 되는지를 가르는 유일한 근거</b>다.
+	 * 발이 묶인 멱등성 키를 만났을 때 풀어도 되는지를 가르는 유일한 근거다.
 	 * 있으면 접수는 끝난 것이고(키 기록만 못 남겼다), 없으면 접수가 커밋되지 않은 것이다.
 	 */
 	Optional<Transfer> findByIdempotencyKey(String idempotencyKey);

@@ -11,10 +11,10 @@ import org.springframework.stereotype.Component;
 import java.time.Instant;
 
 /**
- * 조회로 <b>결론이 난</b> 건을 흐름에 되돌려 놓는다 (Phase 6.5 Step 2b).
+ * 조회로 결론이 난 건을 흐름에 되돌려 놓는다 (Phase 6.5 Step 2b).
  *
- * <p>{@code ExternalCreditProber}가 물어보고, 결론을 여기서 처리한다. 나눠 둔 이유는
- * <b>Saga를 아는 코드와 상대 은행을 아는 코드를 섞지 않기 위해서</b>다.
+ * {@code ExternalCreditProber}가 물어보고, 결론을 여기서 처리한다. 나눠 둔 이유는
+ * Saga를 아는 코드와 상대 은행을 아는 코드를 섞지 않기 위해서다.
  * 조회는 "상대에게 묻는 일"이고, 여기서 하는 것은 "우리 흐름을 이어붙이는 일"이다.
  */
 @Component
@@ -45,7 +45,7 @@ public class ExternalCreditResolver {
 	/**
 	 * 기록해둔 것에서 {@code Debited} 이벤트를 되살린다.
 	 *
-	 * <p>이 값들을 통째로 저장해둔 이유가 이것이다 — 확인이 몇 분 뒤에 날 수도 있는데,
+	 * 이 값들을 통째로 저장해둔 이유가 이것이다 — 확인이 몇 분 뒤에 날 수도 있는데,
 	 * 그때 Kafka 메시지는 이미 없다.
 	 */
 	private TransferEvents.Debited toDebited(PendingExternalCredit credit) {

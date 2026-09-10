@@ -17,11 +17,11 @@ import tools.jackson.databind.ObjectMapper;
 import java.util.UUID;
 
 /**
- * "보냈는데 답을 못 받은" 입금을 <b>기록하고 지운다.</b> 확인은 {@link ExternalCreditProber}가 한다.
+ * "보냈는데 답을 못 받은" 입금을 기록하고 지운다. 확인은 {@link ExternalCreditProber}가 한다.
  *
- * <p>기록과 이벤트 발행이 <b>한 트랜잭션</b>이어야 한다. 기록만 남고 이벤트가 유실되면
- * 송금은 {@code DEBIT_COMPLETED}인 채로 남아 <b>단순히 느린 건과 구분되지 않고</b>,
- * 이벤트만 나가고 기록이 없으면 <b>아무도 그 건을 확인하지 않는다.</b>
+ * 기록과 이벤트 발행이 한 트랜잭션이어야 한다. 기록만 남고 이벤트가 유실되면
+ * 송금은 {@code DEBIT_COMPLETED}인 채로 남아 단순히 느린 건과 구분되지 않고,
+ * 이벤트만 나가고 기록이 없으면 아무도 그 건을 확인하지 않는다.
  */
 @Component
 @RequiredArgsConstructor
@@ -37,7 +37,7 @@ public class PendingExternalCredits {
 	private final MeterRegistry meterRegistry;
 
 	/**
-	 * 보냈는데 <b>답을 못 받았다</b> — 기록하고 알린다.
+	 * 보냈는데 답을 못 받았다 — 기록하고 알린다.
 	 */
 	@Transactional
 	public void rememberUnknown(TransferEvents.Debited event) {
@@ -52,9 +52,9 @@ public class PendingExternalCredits {
 	}
 
 	/**
-	 * 격벽에 막혀 <b>보내지도 못했다.</b> 기록만 하고 <b>알리지 않는다</b> —
+	 * 격벽에 막혀 보내지도 못했다. 기록만 하고 알리지 않는다 —
 	 * 돈은 안 나갔으므로 "모르는 상태"가 아니다.
-	 * 안 보낸 건을 사고로 알리면 <b>없는 사고를 보고하는 것</b>이 된다.
+	 * 안 보낸 건을 사고로 알리면 없는 사고를 보고하는 것이 된다.
 	 */
 	@Transactional
 	public void rememberUnsent(TransferEvents.Debited event) {
@@ -98,22 +98,20 @@ public class PendingExternalCredits {
 	}
 
 	/**
-	 * 확인을 못 한 건이 몇 개나 쌓여 있나. <b>둘로 갈라서 낸다.</b>
+	 * 확인을 못 한 건이 몇 개나 쌓여 있나. 둘로 갈라서 낸다.
 	 *
-	 * <p>한 표에 두 가지가 함께 사는데, 하나로 세면 <b>사고의 크기를 부풀려 보고한다.</b>
+	 * 한 표에 두 가지가 함께 사는데, 하나로 세면 사고의 크기를 부풀려 보고한다.
 	 * 2026-08-28 재측정에서 회로가 열렸을 때 이 값이 320이었는데
-	 * <b>진짜로 모르는 건은 1건</b>이었고 나머지 319건은 아예 보내지도 않은 것이었다.
-	 * 차단된 건은 돈이 나갈 수가 없으므로 <b>사고가 아니라 밀린 일</b>이다.
+	 * 진짜로 모르는 건은 1건이었고 나머지 319건은 아예 보내지도 않은 것이었다.
+	 * 차단된 건은 돈이 나갈 수가 없으므로 사고가 아니라 밀린 일이다.
 	 *
-	 * <table>
-	 *   <tr><th>지표</th><th>뜻</th><th>봐야 하는 이유</th></tr>
-	 *   <tr><td>{@code ...credit.unknown}</td><td>보냈는데 모른다</td>
-	 *       <td><b>돈이 나갔을 수 있다.</b> 0에서 뜨면 지연·처리량보다 먼저 본다</td></tr>
-	 *   <tr><td>{@code ...credit.unsent}</td><td>보내지도 못했다</td>
-	 *       <td>회로·격벽이 일하고 있다는 뜻. 상대가 살아나면 빠져야 한다</td></tr>
-	 * </table>
+	 *   {@code ...credit.unknown}  보냈는데 모른다
+	 *       돈이 나갔을 수 있다. 0에서 뜨면 지연·처리량보다 먼저 본다
 	 *
-	 * <p>0일 때도 시계열이 있어야 "0건"과 "수집이 안 됨"이 구분된다.
+	 *   {@code ...credit.unsent}   보내지도 못했다
+	 *       회로·격벽이 일하고 있다는 뜻. 상대가 살아나면 빠져야 한다
+	 *
+	 * 0일 때도 시계열이 있어야 "0건"과 "수집이 안 됨"이 구분된다.
 	 */
 	@PostConstruct
 	void 미해소_건수를_지표로_낸다() {

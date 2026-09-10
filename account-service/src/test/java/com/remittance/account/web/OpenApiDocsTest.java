@@ -12,16 +12,16 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * API 문서를 <b>손으로 쓰지 않고 코드에서 낸다</b> (Phase 4).
+ * API 문서를 손으로 쓰지 않고 코드에서 낸다 (Phase 4).
  *
- * <h2>왜 이 테스트가 있나</h2>
- * 손으로 쓴 `docs/openapi.yaml`은 <b>이미 코드와 어긋나 있었다.</b> 문서는 코드가 바뀔 때
- * 같이 바뀌지 않으면 <b>틀린 문서</b>가 되고, 틀린 문서는 없느니만 못하다 —
+ * 왜 이 테스트가 있나
+ * 손으로 쓴 `docs/openapi.yaml`은 이미 코드와 어긋나 있었다. 문서는 코드가 바뀔 때
+ * 같이 바뀌지 않으면 틀린 문서가 되고, 틀린 문서는 없느니만 못하다 —
  * 읽는 사람이 그걸 믿고 호출하기 때문이다.
  *
- * <p>그래서 거는 계약은 하나다. <b>뜬 서비스가 자기 입으로 자기 계약을 말한다.</b>
+ * 그래서 거는 계약은 하나다. 뜬 서비스가 자기 입으로 자기 계약을 말한다.
  * 생성되는지만 보면 "생성은 되는데 낡은 것"과 구분이 안 되므로,
- * <b>최근에 추가한 경로까지 따라오는지</b>를 함께 본다.
+ * 최근에 추가한 경로까지 따라오는지를 함께 본다.
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -50,8 +50,8 @@ class OpenApiDocsTest extends AbstractIntegrationTest {
 	}
 
 	/**
-	 * <b>이게 이 PR에서 가장 중요한 계약이다.</b> Gateway가 공개 그룹을 그대로 노출할 것이므로,
-	 * 여기 `/internal/*`이 섞여 들어가면 <b>잔액을 고치는 문이 공개 API로</b> 나간다.
+	 * 이게 이 PR에서 가장 중요한 계약이다. Gateway가 공개 그룹을 그대로 노출할 것이므로,
+	 * 여기 `/internal/*`이 섞여 들어가면 잔액을 고치는 문이 공개 API로 나간다.
 	 */
 	@Test
 	void 공개_문서에는_내부_경로가_없다() throws Exception {

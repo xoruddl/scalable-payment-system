@@ -16,7 +16,7 @@ import java.util.UUID;
 /**
  * 계좌를 몇 조각으로 쓸지 바꾸는 운영용 API. Gateway로 노출되지 않는다.
  *
- * <p>업무 흐름이 아니라 <b>붐비는 계좌에 내리는 처방</b>이라 여기 따로 둔다.
+ * 업무 흐름이 아니라 붐비는 계좌에 내리는 처방이라 여기 따로 둔다.
  */
 @RestController
 @RequestMapping("/internal/accounts")

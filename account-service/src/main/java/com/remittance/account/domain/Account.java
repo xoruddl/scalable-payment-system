@@ -37,10 +37,10 @@ public class Account {
 	private UUID ownerId;
 
 	/**
-	 * 이 계좌가 <b>어느 상대 은행의 정산 계좌</b>인가 (Phase 6.5).
+	 * 이 계좌가 어느 상대 은행의 정산 계좌인가 (Phase 6.5).
 	 * 고객 계좌는 {@code null}이다 — 우리 은행 계좌라 상대가 없다.
 	 *
-	 * <p>{@link AccountType#SETTLEMENT}인 계좌만 값을 갖고, 은행당 하나뿐이다.
+	 * {@link AccountType#SETTLEMENT}인 계좌만 값을 갖고, 은행당 하나뿐이다.
 	 * 그래야 "KB로 가는 돈은 어디에 쌓이나"에 답이 하나로 정해진다.
 	 */
 	@Column(length = 11, updatable = false, unique = true)
@@ -56,11 +56,11 @@ public class Account {
 	/**
 	 * 이 계좌의 잔액을 몇 조각으로 쪼갰나 (Phase 6 Step 1). 1이면 안 쪼갠 것이다.
 	 *
-	 * <p><b>잔액 자체는 여기 없다.</b> {@link AccountBalanceShard}에 있고, 계좌의 잔액은
+	 * 잔액 자체는 여기 없다. {@link AccountBalanceShard}에 있고, 계좌의 잔액은
 	 * 그 조각들의 합이다. 한 행에 두면 그 계좌의 입금이 전부 그 행에 줄을 서기 때문이다.
 	 *
-	 * <p>기본이 1인 이유 — 계좌 대부분은 경합이 없다. 경합 없는 계좌를 쪼개면
-	 * 조회할 때마다 합산만 늘어 손해다. <b>쪼개는 것은 붐비는 계좌에만 하는 처방</b>이다.
+	 * 기본이 1인 이유 — 계좌 대부분은 경합이 없다. 경합 없는 계좌를 쪼개면
+	 * 조회할 때마다 합산만 늘어 손해다. 쪼개는 것은 붐비는 계좌에만 하는 처방이다.
 	 */
 	@Column(nullable = false)
 	private short shardCount;
@@ -81,7 +81,7 @@ public class Account {
 	/**
 	 * 개시 잔액을 원장에 이월한 시각. {@code null}이면 아직 이월하지 않았다는 뜻이다.
 	 *
-	 * <p>이월은 <b>계좌당 한 번뿐</b>이어야 한다 — 두 번 심으면 그만큼 원장이 잔액보다 커져,
+	 * 이월은 계좌당 한 번뿐이어야 한다 — 두 번 심으면 그만큼 원장이 잔액보다 커져,
 	 * 맞추려던 대사를 오히려 어긋나게 만든다. 그 한 번을 표시하는 자리다.
 	 */
 	@Column
@@ -108,7 +108,7 @@ public class Account {
 	}
 
 	/**
-	 * 이 계좌로 돈을 움직여도 되는가. 잔액이 조각으로 나가면서 <b>계좌에 남은 규칙은 이것뿐</b>이다.
+	 * 이 계좌로 돈을 움직여도 되는가. 잔액이 조각으로 나가면서 계좌에 남은 규칙은 이것뿐이다.
 	 * 잔액이 모자란지는 조각들의 합을 봐야 알 수 있어 {@link AccountBalance}가 판단한다.
 	 */
 	public void assertUsable(String currency) {
@@ -127,7 +127,7 @@ public class Account {
 	}
 
 	/**
-	 * 개시 잔액을 이월했다고 표시한다. <b>잔액은 건드리지 않는다</b> —
+	 * 개시 잔액을 이월했다고 표시한다. 잔액은 건드리지 않는다 —
 	 * 이월은 없던 돈을 만드는 게 아니라, 이미 있던 잔액을 원장에도 적어두는 일이다.
 	 */
 	public void markOpeningBalanceCarried() {

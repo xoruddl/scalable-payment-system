@@ -24,7 +24,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * 중복 요청 자체의 재현은 {@code TransferIdempotencyReproductionTest}가 담당하고,
  * 여기서는 그 외 분기(다른 payload, 헤더 누락, 응답 동일성)를 확인한다.
  *
- * <p>Step 4a 이후 이 진입점은 송금을 <b>접수</b>만 한다. 따라서 여기서 말하는 "완료"는
+ * Step 4a 이후 이 진입점은 송금을 접수만 한다. 따라서 여기서 말하는 "완료"는
  * 송금이 끝났다는 뜻이 아니라 접수가 끝났다는 뜻이다.
  */
 @SpringBootTest

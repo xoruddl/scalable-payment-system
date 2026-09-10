@@ -24,18 +24,16 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 
 /**
- * 내부 입금과 외부 호출을 <b>다른 컨슈머가</b> 처리하는가 (Phase 6.5).
+ * 내부 입금과 외부 호출을 다른 컨슈머가 처리하는가 (Phase 6.5).
  *
- * <h2>왜 나눴나</h2>
+ * 왜 나눴나
  * 같은 리스너에서 둘 다 하니 느린 상대가 우리 내부 송금을 묶었다.
- * 상대 2초 지연에서 내부 종결 p99가 <b>3,071 → 58,790ms</b>. 격벽으로 11,579ms까지
- * 줄였지만 <b>같은 풀을 나눠 쓰는 한 거기까지</b>였다.
+ * 상대 2초 지연에서 내부 종결 p99가 3,071 → 58,790ms. 격벽으로 11,579ms까지
+ * 줄였지만 같은 풀을 나눠 쓰는 한 거기까지였다.
  *
- * <h2>여기서 거는 것</h2>
- * <ol>
- *   <li><b>각자 자기 몫만</b> 처리한다 — 겹치면 같은 송금이 두 번 처리된다</li>
- *   <li><b>그룹이 다르다</b> — 같은 그룹이면 파티션을 나눠 갖게 되어 분리가 아니다</li>
- * </ol>
+ * 여기서 거는 것
+ *   1. 각자 자기 몫만 처리한다 — 겹치면 같은 송금이 두 번 처리된다
+ *   2. 그룹이 다르다 — 같은 그룹이면 파티션을 나눠 갖게 되어 분리가 아니다
  */
 @SpringBootTest
 class ListenerSeparationTest extends AbstractIntegrationTest {
@@ -93,7 +91,7 @@ class ListenerSeparationTest extends AbstractIntegrationTest {
 		String internalGroup = groupOf(TransferEvents.DEBITED);
 		String externalGroup = groupOf(TransferEvents.DEBITED + ".external");
 
-		// 같은 그룹이면 파티션을 나눠 갖게 되어 <b>분리가 아니라 그냥 쪼개기</b>가 된다.
+		// 같은 그룹이면 파티션을 나눠 갖게 되어 분리가 아니라 그냥 쪼개기가 된다.
 		// 그러면 느린 외부 호출이 내부 송금의 파티션을 붙드는 일이 그대로 생긴다.
 		assertThat(externalGroup)
 				.as("그룹이 같으면 스레드도 나눠 갖는다 — 분리한 것이 아니다")

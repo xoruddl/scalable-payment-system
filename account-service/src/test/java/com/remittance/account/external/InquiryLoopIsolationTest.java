@@ -26,20 +26,18 @@ import static org.mockito.BDDMockito.willThrow;
 import static org.mockito.Mockito.verify;
 
 /**
- * <b>한 건의 실패가 뒤에 선 건들을 막으면 안 된다</b> (Phase 6.5 확인 루프).
+ * 한 건의 실패가 뒤에 선 건들을 막으면 안 된다 (Phase 6.5 확인 루프).
  *
- * <h2>왜 이 테스트가 있나</h2>
+ * 왜 이 테스트가 있나
  * 확인 루프가 잡는 예외는 "답이 없다"와 "우리 격벽이 막았다" 둘뿐이었다. 그런데 상대의
- * <b>5xx는 그 둘 중 어느 것도 아니다</b> — {@code isNoAnswer}가 false로 거르므로 그대로 올라온다.
+ * 5xx는 그 둘 중 어느 것도 아니다 — {@code isNoAnswer}가 false로 거르므로 그대로 올라온다.
  *
- * <p>그러면 두 가지가 같이 나빠진다.
- * <ol>
- *   <li>그 tick의 <b>남은 건들이 통째로 건너뛰어진다</b></li>
- *   <li>실패한 건은 {@code nextInquiryAt}이 그대로라 다음 tick에도 <b>맨 앞에 다시 선다</b> —
- *       조회는 그 시각 오름차순이므로, 같은 실패가 반복되면 뒤의 것들은 <b>영영</b> 조회되지 않는다</li>
- * </ol>
+ * 그러면 두 가지가 같이 나빠진다.
+ *   1. 그 tick의 남은 건들이 통째로 건너뛰어진다
+ *   2. 실패한 건은 {@code nextInquiryAt}이 그대로라 다음 tick에도 맨 앞에 다시 선다 —
+ *       조회는 그 시각 오름차순이므로, 같은 실패가 반복되면 뒤의 것들은 영영 조회되지 않는다
  *
- * <p>모르는 돈을 확인하려고 만든 루프가 <b>한 건 때문에 아무도 확인하지 못하는 루프</b>가 된다.
+ * 모르는 돈을 확인하려고 만든 루프가 한 건 때문에 아무도 확인하지 못하는 루프가 된다.
  */
 @ExtendWith(MockitoExtension.class)
 class InquiryLoopIsolationTest {

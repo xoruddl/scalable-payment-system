@@ -21,12 +21,12 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * 게이트웨이가 <b>어디로 보내고 무엇을 안 보내는가</b> (Phase 4).
+ * 게이트웨이가 어디로 보내고 무엇을 안 보내는가 (Phase 4).
  *
- * <h2>가짜 뒤쪽을 세워 쓴다</h2>
- * 진짜 서비스를 띄우면 컨테이너 넷이 필요하고, 그러면 <b>라우팅이 틀린 것</b>과
- * <b>뒤 서비스가 안 뜬 것</b>을 구분하기 어렵다. 여기서 볼 것은 라우팅뿐이므로
- * JDK에 있는 {@link HttpServer}로 <b>자기가 누구인지만 답하는</b> 서버를 둘 세운다.
+ * 가짜 뒤쪽을 세워 쓴다
+ * 진짜 서비스를 띄우면 컨테이너 넷이 필요하고, 그러면 라우팅이 틀린 것과
+ * 뒤 서비스가 안 뜬 것을 구분하기 어렵다. 여기서 볼 것은 라우팅뿐이므로
+ * JDK에 있는 {@link HttpServer}로 자기가 누구인지만 답하는 서버를 둘 세운다.
  * 의존성이 하나도 늘지 않는다.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
@@ -62,7 +62,7 @@ class GatewayRoutingTest {
 	}
 
 	/**
-	 * 라우팅을 보려면 <b>인증을 먼저 통과해야 한다</b> (Phase 4의 3/5에서 붙었다).
+	 * 라우팅을 보려면 인증을 먼저 통과해야 한다 (Phase 4의 3/5에서 붙었다).
 	 * 토큰을 안 붙이면 라우트가 맞는지와 무관하게 401이라, 여기서 보려는 것을 못 본다.
 	 */
 	private String 유효한_토큰() {
@@ -84,7 +84,7 @@ class GatewayRoutingTest {
 
 	@Test
 	void 송금은_transfer로_간다() {
-		// 이 테스트에서는 transfer 뒤쪽을 세우지 않았다. 라우트가 있으면 <b>연결 실패</b>가 나고,
+		// 이 테스트에서는 transfer 뒤쪽을 세우지 않았다. 라우트가 있으면 연결 실패가 나고,
 		// 라우트가 아예 없으면 404가 난다. 둘을 구분하는 것이 여기서 보려는 것이다.
 		client.get().uri("/transfers/{id}", "t-1")
 				.header(HttpHeaders.AUTHORIZATION, "Bearer " + 유효한_토큰())
@@ -102,7 +102,7 @@ class GatewayRoutingTest {
 	}
 
 	/**
-	 * <b>이게 이 PR에서 가장 중요한 계약이다.</b> account와 ledger가 `/accounts`로 겹치는데,
+	 * 이게 이 PR에서 가장 중요한 계약이다. account와 ledger가 `/accounts`로 겹치는데,
 	 * 더 구체적인 원장 경로가 먼저 서지 않으면 거래내역 조회가 account로 가서 404가 된다.
 	 */
 	@Test
@@ -116,12 +116,12 @@ class GatewayRoutingTest {
 	}
 
 	/**
-	 * <b>이 테스트만으로는 가드를 검증하지 못한다.</b> `/internal/**`에 맞는 라우트가 애초에 없어서,
+	 * 이 테스트만으로는 가드를 검증하지 못한다. `/internal/**`에 맞는 라우트가 애초에 없어서,
 	 * 가드를 꺼도 그냥 404이기 때문이다(실제로 꺼보고 확인했다).
 	 *
-	 * <p>그래서 여기서 확인하는 것은 <b>"지금 내부 경로가 나가지 않는다"</b>까지다.
+	 * 그래서 여기서 확인하는 것은 "지금 내부 경로가 나가지 않는다"까지다.
 	 * 가드 자체는 {@link InternalPathGuardTest}가 검증한다 —
-	 * <b>라우트가 있어도 막느냐</b>가 거기서 갈린다.
+	 * 라우트가 있어도 막느냐가 거기서 갈린다.
 	 */
 	@Test
 	void 내부_경로는_라우트가_없어_뒤쪽에_닿지_않는다() {

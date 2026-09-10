@@ -18,32 +18,28 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 
 /**
- * <b>Redis가 죽으면 요청을 받을 것인가</b> — 이 Phase가 미뤄둔 질문의 답 (Phase 4).
+ * Redis가 죽으면 요청을 받을 것인가 — 이 Phase가 미뤄둔 질문의 답 (Phase 4).
  *
- * <h2>답: 받는다 (fail-open)</h2>
- * Spring Cloud Gateway의 기본 동작이고, <b>그대로 두기로 했다.</b> 이 시스템의 다른 두 결정과
+ * 답: 받는다 (fail-open)
+ * Spring Cloud Gateway의 기본 동작이고, 그대로 두기로 했다. 이 시스템의 다른 두 결정과
  * 나란히 놓으면 기준이 보인다.
  *
- * <table>
- *   <tr><th>없으면 무슨 일이 나나</th><th>판단</th></tr>
- *   <tr><td><b>인증</b> — 누군지 모르는 채 통과시킨다</td><td>틀린 동작. <b>fail-closed</b> (401)</td></tr>
- *   <tr><td><b>설정</b> — 다른 값으로 뜬 다른 프로세스가 된다</td>
- *       <td>틀린 동작. <b>fail-closed</b> (Phase 8에서 결정)</td></tr>
- *   <tr><td><b>제한</b> — 제한 없이 통과한다</td>
- *       <td><b>보호가 약해질 뿐</b> 동작은 맞다. <b>fail-open</b></td></tr>
- * </table>
+ *   없으면 무슨 일이 나나                       판단
+ *   인증 — 누군지 모르는 채 통과시킨다          틀린 동작. fail-closed (401)
+ *   설정 — 다른 값으로 뜬 다른 프로세스가 된다  틀린 동작. fail-closed (Phase 8에서 결정)
+ *   제한 — 제한 없이 통과한다                   보호가 약해질 뿐 동작은 맞다. fail-open
  *
- * <p>기준은 <b>"그것이 없으면 틀린 동작이 되는가, 보호가 약해지는가"</b>다.
+ * 기준은 "그것이 없으면 틀린 동작이 되는가, 보호가 약해지는가"다.
  * 인증 없이 통과시키면 남의 돈이 움직이고, 설정 없이 뜨면 다른 프로세스다.
- * 그런데 제한이 없어도 <b>용량 안에서는 정상으로 돈다</b> — 보호 장치 때문에 서비스가 멈추면
+ * 그런데 제한이 없어도 용량 안에서는 정상으로 돈다 — 보호 장치 때문에 서비스가 멈추면
  * 본말전도다.
  *
- * <h2>대신 조용하면 안 된다 ★</h2>
- * fail-open의 대가는 <b>제한이 사라진 걸 아무도 모른다</b>는 것이다. 지금은 `RedisRateLimiter`가
- * ERROR 로그만 남긴다. 로그는 사람이 찾아봐야 보이므로, Redis 상태는 <b>액추에이터 health</b>로
- * 보고 Phase 10의 알림이 그걸 본다. <b>"보호가 꺼진 것"도 사고다.</b>
+ * 대신 조용하면 안 된다 ★
+ * fail-open의 대가는 제한이 사라진 걸 아무도 모른다는 것이다. 지금은 `RedisRateLimiter`가
+ * ERROR 로그만 남긴다. 로그는 사람이 찾아봐야 보이므로, Redis 상태는 액추에이터 health로
+ * 보고 Phase 10의 알림이 그걸 본다. "보호가 꺼진 것"도 사고다.
  *
- * <p>이 테스트는 그 동작을 <b>못 박아두는 것</b>이다. 나중에 라이브러리가 fail-closed로 바뀌면
+ * 이 테스트는 그 동작을 못 박아두는 것이다. 나중에 라이브러리가 fail-closed로 바뀌면
  * 여기서 먼저 드러난다 — 모르고 넘어가면 Redis 장애가 곧 전면 중단이 된다.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
@@ -99,7 +95,7 @@ class RateLimitWithoutRedisTest {
 
 	@Test
 	void 인증은_그대로_막는다() {
-		// Redis가 죽어도 <b>인증은 fail-closed</b>다. 둘의 성격이 다르다는 것이 이 테스트의 요지다.
+		// Redis가 죽어도 인증은 fail-closed다. 둘의 성격이 다르다는 것이 이 테스트의 요지다.
 		client.get().uri("/accounts/{id}", "a-1").exchange()
 				.expectStatus().isUnauthorized();
 	}

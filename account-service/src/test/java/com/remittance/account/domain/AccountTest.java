@@ -12,7 +12,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * 잔액이 {@link AccountBalanceShard}로 나가면서 이 클래스에 남은 규칙은
- * <b>계좌를 쓸 수 있는가</b>뿐이다. 금액 계산은 {@link AccountBalanceTest}에 있다.
+ * 계좌를 쓸 수 있는가뿐이다. 금액 계산은 {@link AccountBalanceTest}에 있다.
  */
 class AccountTest {
 

@@ -14,7 +14,7 @@ import java.util.List;
 
 /**
  * 대사 서비스가 읽어가는 전용 API. Gateway로 노출되지 않는다.
- * <b>읽기만 있다</b> — 고치는 건 데이터 주인의 몫이고, 여기서는 사실만 알려준다.
+ * 읽기만 있다 — 고치는 건 데이터 주인의 몫이고, 여기서는 사실만 알려준다.
  */
 @RestController
 @RequestMapping("/internal/reconciliation")

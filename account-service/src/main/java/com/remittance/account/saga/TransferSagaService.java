@@ -31,19 +31,17 @@ import java.util.function.Function;
 /**
  * 송금 Saga에서 Account Service가 맡은 단계들.
  *
- * <pre>
  *   transfer.requested     ──▶ 출금 ──▶ transfer.debited
  *                            └ 실패 ──▶ transfer.debit-failed
  *   transfer.debited       ──▶ 입금 ──▶ transfer.credited
  *                            └ 실패 ──▶ transfer.credit-failed
  *   transfer.credit-failed ──▶ 환불 ──▶ transfer.debit-reversed   (보상)
- * </pre>
  *
- * <p>오케스트레이터가 지시하는 게 아니라 <b>각 서비스가 이벤트를 보고 스스로 다음을 발행</b>한다
+ * 오케스트레이터가 지시하는 게 아니라 각 서비스가 이벤트를 보고 스스로 다음을 발행한다
  * (Choreography). 대신 흐름 전체를 한눈에 볼 수 있는 곳이 없어지므로,
  * 어떤 이벤트가 어떤 이벤트를 낳는지는 이 클래스 주석과 {@link TransferEvents}에 남긴다.
  *
- * <p><b>전진 단계와 보상 단계는 실패했을 때의 처신이 다르다.</b>
+ * 전진 단계와 보상 단계는 실패했을 때의 처신이 다르다.
  * 전진 단계는 실패하면 실패 이벤트를 남기고 물러난다. 보상 단계는 물러날 곳이 없다 —
  * 보상의 보상은 없으므로 예외를 그대로 밖으로 내보내 재배달에 맡긴다.
  */
@@ -95,39 +93,39 @@ public class TransferSagaService {
 	/**
 	 * 상대 은행으로 나가는 입금 (Phase 6.5).
 	 *
-	 * <h2>HTTP 호출이 트랜잭션 밖에 있다 ★</h2>
-	 * <b>느린 상대가 DB 트랜잭션을 붙들면 안 된다.</b> 상대 은행이 3초를 끌면 커넥션도 3초
-	 * 묶이고, 그 커넥션은 우리 <b>내부</b> 송금이 쓸 것이었다. 남의 사정으로 우리 일이 멈춘다.
+	 * HTTP 호출이 트랜잭션 밖에 있다 ★
+	 * 느린 상대가 DB 트랜잭션을 붙들면 안 된다. 상대 은행이 3초를 끌면 커넥션도 3초
+	 * 묶이고, 그 커넥션은 우리 내부 송금이 쓸 것이었다. 남의 사정으로 우리 일이 멈춘다.
 	 *
-	 * <p>그래도 응답을 기다리는 동안 스레드는 묶인다. 외부 전용 리스너로 내부 송금과 분리하고,
+	 * 그래도 응답을 기다리는 동안 스레드는 묶인다. 외부 전용 리스너로 내부 송금과 분리하고,
 	 * 격벽으로 동시 호출 수를 제한하며, 회로 차단기로 계속 느린 은행을 잠시 부르지 않는다.
 	 *
-	 * <h2>재시도가 안전한 이유</h2>
-	 * 호출이 멱등성 흔적({@code processed_events})보다 <b>앞에</b> 있어서, 재배달되면
-	 * 상대 은행을 다시 부른다. 그게 안전한 이유는 오직 <b>상대가 송금 ID로 멱등하기 때문</b>이다.
-	 * 우리 DB의 제약이 아니라 <b>남의 약속</b>에 기대고 있다 — 그게 서비스 경계를 넘는 멱등성이다.
+	 * 재시도가 안전한 이유
+	 * 호출이 멱등성 흔적({@code processed_events})보다 앞에 있어서, 재배달되면
+	 * 상대 은행을 다시 부른다. 그게 안전한 이유는 오직 상대가 송금 ID로 멱등하기 때문이다.
+	 * 우리 DB의 제약이 아니라 남의 약속에 기대고 있다 — 그게 서비스 경계를 넘는 멱등성이다.
 	 *
-	 * <h2>정산 계좌로 적는다</h2>
-	 * 상대가 받았다고 하면 <b>그 은행의 정산 계좌</b>에 입금한다. 상대 계좌를 우리 원장에
+	 * 정산 계좌로 적는다
+	 * 상대가 받았다고 하면 그 은행의 정산 계좌에 입금한다. 상대 계좌를 우리 원장에
 	 * 적을 수는 없지만, "그 은행에 지급할 채무"는 우리 장부의 것이다.
-	 * 그래서 원장은 두 다리를 그대로 보고, <b>원장·대사 로직을 하나도 안 고쳐도 된다.</b>
+	 * 그래서 원장은 두 다리를 그대로 보고, 원장·대사 로직을 하나도 안 고쳐도 된다.
 	 */
 	private void creditExternal(TransferEvents.Debited event) {
 		ExternalCreditResult result;
 		try {
-			// 격벽. 자리가 없으면 <b>기다리지 않고</b> 거절한다 —
+			// 격벽. 자리가 없으면 기다리지 않고 거절한다 —
 			// 기다리면 스레드가 묶이는 것은 똑같아서 격벽의 의미가 사라진다.
 			result = bulkhead.call(() -> circuitBreaker.call(event.toBankCode(),
 					() -> externalBankClient.credit(
 							event.toBankCode(), event.transferId(), event.toAccountNumber(),
 							event.amount(), event.currency())));
 		} catch (BulkheadFullException | CallNotPermittedException noRoom) {
-			// 보내지도 못했다. <b>돈은 안 나갔다</b> — 사고가 아니라 미룬 것이다.
+			// 보내지도 못했다. 돈은 안 나갔다 — 사고가 아니라 미룬 것이다.
 			// 내부 송금이 쓸 스레드를 지키려고 일부러 여기서 멈춘다.
 			pendingExternalCredits.rememberUnsent(event);
 			return;
 		} catch (ExternalCreditUnknownException noAnswer) {
-			// ★ 답이 없다. 여기서 <b>재시도하면 안 된다.</b>
+			// ★ 답이 없다. 여기서 재시도하면 안 된다.
 			// 다시 보내는 것은 "안 갔다"를 전제로 하는데 우리는 그걸 모른다.
 			// 맞는 수단은 조회다 — 기록으로 남기고 확인 루프에 넘긴다.
 			pendingExternalCredits.rememberUnknown(event);
@@ -152,15 +150,15 @@ public class TransferSagaService {
 	}
 
 	/**
-	 * 조회로 <b>상대가 받았음이 확인된</b> 건을 흐름에 되돌려 놓는다 (Step 2b).
-	 * 타임아웃 직후의 경로와 <b>같은 코드로 끝난다</b> — 확인만 늦게 됐을 뿐 결과는 같기 때문이다.
+	 * 조회로 상대가 받았음이 확인된 건을 흐름에 되돌려 놓는다 (Step 2b).
+	 * 타임아웃 직후의 경로와 같은 코드로 끝난다 — 확인만 늦게 됐을 뿐 결과는 같기 때문이다.
 	 */
 	public void onExternalCreditAccepted(TransferEvents.Debited event) {
 		UUID settlementAccountId = settlementAccounts.of(event.toBankCode(), event.currency());
 		creditInternal(event, settlementAccountId);
 	}
 
-	/** 조회로 <b>거절이 확인된</b> 건. 출금은 이미 나갔으니 보상으로 넘긴다. */
+	/** 조회로 거절이 확인된 건. 출금은 이미 나갔으니 보상으로 넘긴다. */
 	public void onExternalCreditRejected(TransferEvents.Debited event, String reason) {
 		recordFailure(TransferEvents.DEBITED, event.transferId(),
 				new Fallback(TransferEvents.CREDIT_FAILED, new TransferEvents.CreditFailed(
@@ -175,7 +173,7 @@ public class TransferSagaService {
 				balance -> balance.credit(event.amount(), event.currency()),
 				TransferEvents.CREDITED,
 				balance -> new TransferEvents.Credited(
-						// 외부 송금이면 여기 담기는 것은 <b>정산 계좌</b>다.
+						// 외부 송금이면 여기 담기는 것은 정산 계좌다.
 						// 원장이 두 다리를 맞추는 기준이 되므로 실제로 입금된 계좌여야 한다.
 						event.transferId(), event.fromAccountId(), creditAccountId,
 						event.amount(), event.currency(), event.fromBalanceAfter(), balance.total(),
@@ -189,9 +187,9 @@ public class TransferSagaService {
 	}
 
 	/**
-	 * 입금 실패 → <b>보상</b>: 출금 계좌에 돈을 돌려놓는다.
+	 * 입금 실패 → 보상: 출금 계좌에 돈을 돌려놓는다.
 	 *
-	 * <p>보상도 결국 잔액 변경이라 전진 단계와 똑같은 장치(분산 락 + 처리 흔적 + Outbox)를 쓴다.
+	 * 보상도 결국 잔액 변경이라 전진 단계와 똑같은 장치(분산 락 + 처리 흔적 + Outbox)를 쓴다.
 	 * 다른 점은 실패했을 때다. 전진 단계는 실패 이벤트를 남기고 끝내지만,
 	 * 환불이 실패하면 남길 곳이 없다 — 그대로 두면 고객 돈이 사라진 채로 끝난다.
 	 * 그래서 예외를 밖으로 던져 컨슈머 재시도에 맡기고, 끝내 안 되면 DLT로 보낸다(사람이 봐야 한다).
@@ -209,7 +207,7 @@ public class TransferSagaService {
 	}
 
 	/**
-	 * @param fallback 업무적 실패 시 대신 남길 이벤트를 만든다. {@code null}이면 <b>보상 단계</b>라는
+	 * @param fallback 업무적 실패 시 대신 남길 이벤트를 만든다. {@code null}이면 보상 단계라는
 	 *                 뜻으로, 실패를 삼키지 않고 밖으로 던져 재배달되게 한다.
 	 */
 	private void runStep(String consumedEventType, UUID transferId, UUID accountId,

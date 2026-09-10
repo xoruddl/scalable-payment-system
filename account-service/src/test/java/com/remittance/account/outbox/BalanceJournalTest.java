@@ -20,13 +20,13 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Phase 2 Step 5a — <b>잔액이 움직였으면 예외 없이 분개장에 남는다.</b>
+ * Phase 2 Step 5a — 잔액이 움직였으면 예외 없이 분개장에 남는다.
  *
- * <p>이게 이 단계의 전부이자 가장 깨지기 쉬운 계약이다. 잔액을 바꾸는 경로가 하나라도 분개를
+ * 이게 이 단계의 전부이자 가장 깨지기 쉬운 계약이다. 잔액을 바꾸는 경로가 하나라도 분개를
  * 빠뜨리면 "원장 합 = 잔액"이 무너지고, 그 위에 세울 정합성 대사가 통째로 의미를 잃는다.
  * 실제로 Step 5a 전에는 송금만 원장에 남고 입출금 API와 보상 환불이 빠져 있었다.
  *
- * <p>그래서 <b>잔액이 움직이는 경로를 하나씩 짚어가며</b> 확인한다.
+ * 그래서 잔액이 움직이는 경로를 하나씩 짚어가며 확인한다.
  */
 @SpringBootTest
 class BalanceJournalTest extends AbstractIntegrationTest {
@@ -131,7 +131,7 @@ class BalanceJournalTest extends AbstractIntegrationTest {
 	}
 
 	/**
-	 * 보상 환불이 빠지면 원장에는 나간 돈만 남고 돌아온 돈은 없어, 대사가 <b>있지도 않은 불일치</b>를
+	 * 보상 환불이 빠지면 원장에는 나간 돈만 남고 돌아온 돈은 없어, 대사가 있지도 않은 불일치를
 	 * 보고하게 된다. 되돌린 것도 사실이므로 남겨야 한다.
 	 */
 	@Test
