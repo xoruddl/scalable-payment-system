@@ -63,6 +63,17 @@ CPUSET="${CPUSET:-}"
 # 코드를 고쳐가며 재면 빌드가 달라져 무엇 때문에 숫자가 바뀌었는지 말할 수 없다.
 SERVICE_ENV="${SERVICE_ENV:-}"
 
+# <b>2번째 인스턴스부터만</b> 추가로 넘기는 설정. SERVICE_ENV 뒤에 붙으므로 같은 키면 이긴다.
+#
+#   REPLICAS="account-service=2" SERVICE_ENV_2="OUTBOX_RELAY_ENABLED=false" \
+#     ./scripts/homelab-services.sh restart
+#
+# 왜 필요한가: replica를 늘렸을 때 나빠지는 것이 <b>무엇 때문인지</b> 가르려면
+# 인스턴스마다 다르게 켜봐야 한다. 2026-09-05에 account를 2대로 늘리니 종결 p99가
+# 2,849 → 6,897ms가 됐는데, 락·낙관적 락·조각 선택·컨슈머 수를 전부 배제하고도
+# 원인이 안 나왔다. 남은 후보가 "릴레이가 두 벌"이라 한쪽만 꺼봐야 한다.
+SERVICE_ENV_2="${SERVICE_ENV_2:-}"
+
 # 같은 서비스를 여러 벌 띄운다. 공백으로 구분한 모듈=개수 목록.
 #
 #   REPLICAS="transfer-service=2 account-service=2" ./scripts/homelab-services.sh restart
@@ -88,8 +99,9 @@ replica_count() {
 	echo 1
 }
 
-# SERVICES를 replica까지 펼친 목록. 한 줄에 "모듈 포트 힙 한도 컨테이너이름".
-# start·stop·status가 모두 이걸 돌므로 세 곳이 어긋날 일이 없다.
+# SERVICES를 replica까지 펼친 목록.
+# 한 줄에 "모듈 포트 힙 한도 컨테이너이름 <b>replica번호</b>".
+# start·status가 모두 이걸 돌므로 두 곳이 어긋날 일이 없다.
 expand_instances() {
 	local entry name port heap mem n i
 	for entry in "${SERVICES[@]}"; do
@@ -97,9 +109,9 @@ expand_instances() {
 		n="$(replica_count "$name")"
 		for i in $(seq 1 "$n"); do
 			if [ "$i" -eq 1 ]; then
-				echo "$name $port $heap $mem $(container_name "$name")"
+				echo "$name $port $heap $mem $(container_name "$name") 1"
 			else
-				echo "$name $((port + 100 * (i - 1))) $heap $mem $(container_name "$name")-$i"
+				echo "$name $((port + 100 * (i - 1))) $heap $mem $(container_name "$name")-$i $i"
 			fi
 		done
 	done
@@ -127,15 +139,19 @@ cmd_build() {
 }
 
 cmd_start() {
-	local name port heap mem cname total=0
-	while read -r name port heap mem cname; do
+	local name port heap mem cname idx total=0
+	while read -r name port heap mem cname idx; do
 		docker rm -f "$cname" >/dev/null 2>&1 || true
 
 		local cpuset_arg=()
 		[ -n "$CPUSET" ] && cpuset_arg=(--cpuset-cpus "$CPUSET")
 
+		# SERVICE_ENV_2는 뒤에 붙인다 — 같은 키면 나중 -e가 이기므로 2번째부터 덮어쓴다.
 		local env_args=()
 		for kv in $SERVICE_ENV; do env_args+=(-e "$kv"); done
+		if [ "$idx" -gt 1 ]; then
+			for kv in $SERVICE_ENV_2; do env_args+=(-e "$kv"); done
+		fi
 
 		docker run -d \
 			--name "$cname" \
@@ -158,7 +174,7 @@ cmd_start() {
 	echo "▶ 기동을 기다린다"
 	for _ in $(seq 1 90); do
 		local up=0
-		while read -r _ port _ _ _; do
+		while read -r _ port _ _ _ _; do
 			curl -s -m 1 "http://localhost:$port/actuator/health" 2>/dev/null | grep -q '"status":"UP"' && up=$((up + 1))
 		done < <(expand_instances)
 		[ "$up" -eq "$total" ] && { echo "   ${total}개 전부 UP"; break; }
@@ -194,7 +210,7 @@ cmd_status() {
 	local mismatch=0
 	echo "▶ HEAD=$head"
 	local name port cname
-	while read -r name port _ _ cname; do
+	while read -r name port _ _ cname _; do
 		local commit info extra
 		# replica는 이름이 아니라 컨테이너 이름으로 구분해야 한다 —
 		# 같은 모듈이 두 줄 나오면 어느 쪽이 빨간지 알 수 없다.
