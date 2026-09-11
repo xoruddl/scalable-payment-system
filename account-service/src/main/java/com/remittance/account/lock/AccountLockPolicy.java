@@ -39,8 +39,30 @@ public class AccountLockPolicy {
 		 * 분산 락 없이 낙관적 락 + 재시도만. DB 행 락은 UPDATE부터 커밋까지만 잡으므로
 		 * 경합 구간이 훨씬 짧다. 대신 충돌하면 일을 처음부터 다시 한다 —
 		 * 같은 계좌에 몰릴수록 헛일이 늘어난다.
+		 *
+		 * 2026-08-23 측정에서 핫 계좌에 168건이 갇혔다(재시도 소진 → DLT).
+		 * 용량 구간에서도 종결 p99가 7.0초로 SLO를 넘겼다. 비교용으로만 남긴다.
 		 */
-		OPTIMISTIC
+		OPTIMISTIC,
+
+		/**
+		 * 분산 락 없이 DB 행 락({@code SELECT ... FOR UPDATE})으로 직렬화한다.
+		 *
+		 * 기다린다는 점은 DISTRIBUTED와 같다. 다른 것은 기다리는 자리다 —
+		 * Redis가 아니라 DB이고, 기다리는 동안 커넥션을 쥔다. 그래서 풀(30)이
+		 * 다시 병목이 될 수 있다. 이것이 이 전략의 유일한 열린 질문이고,
+		 * 그래서 판정 지표 1순위가 처리량이 아니라 커넥션 pending이다.
+		 *
+		 * 얻는 것은 속도가 아니라 단순함이다. 잔액을 지키는 장치가 셋(Redis 락 ·
+		 * 낙관적 락 · 재시도)에서 하나로 줄고, Redis가 잔액 경로에서 빠진다.
+		 * 잔액은 account_db 한 곳에 있으므로 원래 분산 락이 필요한 모양이 아니었다
+		 * (D-004 ⑤에 열린 질문으로 적어둔 그것).
+		 *
+		 * 낙관적 락은 여기서도 끄지 않는다. 행 락이 걸린 뒤에는 충돌이 날 수 없으므로
+		 * {@code @Version}은 이제 방어선이 아니라 탐지기가 된다 —
+		 * 충돌이 한 건이라도 세어지면 잠그지 않고 잔액을 만진 경로가 있다는 뜻이다.
+		 */
+		PESSIMISTIC
 	}
 
 	private final Strategy strategy;
@@ -56,6 +78,11 @@ public class AccountLockPolicy {
 
 	public boolean usesDistributedLock() {
 		return strategy == Strategy.DISTRIBUTED;
+	}
+
+	/** 잔액 조각을 읽을 때 행 락을 함께 잡을 것인가. {@code BalanceShards}가 묻는다. */
+	public boolean usesPessimisticLock() {
+		return strategy == Strategy.PESSIMISTIC;
 	}
 
 	/** {@code /actuator/info}로 "지금 어느 전략으로 떠 있나"를 물어볼 수 있게 한다. */

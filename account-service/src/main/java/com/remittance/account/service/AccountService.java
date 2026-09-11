@@ -81,9 +81,16 @@ public class AccountService {
 	 *       분산 락이 뚫린 경우를 잡는 최후 안전망. 그래서 재시도 로직을 그대로 남겨둔다.
 	 * 락은 변경하는 계좌 하나에만 건다. 범위를 넓히면 데드락과 처리량 저하로 이어진다.
 	 *
-	 * 첫 겹은 {@link AccountLockPolicy}로 끌 수 있다 — 분산 락이 정말로 도움이 되는지를
-	 * 숫자로 확인하기 위한 스위치다(Phase 6 Step 1). 둘째 겹은 못 끈다.
-	 * 낙관적 락은 선택이 아니라 마지막 방어선이다.
+	 * 첫 겹은 {@link AccountLockPolicy}로 바꿀 수 있다 — 무엇이 정말로 도움이 되는지를
+	 * 숫자로 확인하기 위한 스위치다(Phase 6 Step 1, Phase 6.7). 셋 중 하나를 고른다.
+	 *
+	 *   DISTRIBUTED  Redis 락으로 기다린다 (지금 기본값)
+	 *   PESSIMISTIC  DB 행 락으로 기다린다 — 기다리는 자리만 다르다
+	 *   OPTIMISTIC   안 기다리고 부딪히면 다시 한다 — 핫 계좌에서 무너진다(측정됨)
+	 *
+	 * 둘째 겹은 못 끈다. 다만 뜻이 전략마다 다르다 — DISTRIBUTED에서는 TTL로 락이 풀린
+	 * 경우를 잡는 마지막 방어선이고, PESSIMISTIC에서는 충돌이 날 수 없으므로
+	 * 0이어야 정상인 탐지기가 된다.
 	 */
 	public AccountBalance debit(UUID accountId, BigDecimal amount, String currency) {
 		return guarded(accountId, AccountEvents.TransactionDirection.DEBIT,
@@ -122,8 +129,10 @@ public class AccountService {
 		Supplier<T> guardedAction = () -> withOptimisticRetry(accountId, () -> action.run(shardNo));
 
 		if (!lockPolicy.usesDistributedLock()) {
-			// 낙관적 락만으로 간다 (Phase 6 Step 1의 비교 실험). 경합 구간이 UPDATE~커밋으로
-			// 짧아지는 대신, 충돌하면 트랜잭션을 처음부터 다시 한다.
+			// 여기로 오는 전략이 둘이고, 둘은 정반대다.
+			//   OPTIMISTIC  — 아무것도 안 잠그고 부딪히면 처음부터 다시 한다.
+			//   PESSIMISTIC — BalanceShards가 읽으면서 행 락을 잡는다. 즉 락이 사라진 게
+			//                 아니라 트랜잭션 안으로 들어갔다. 여기서 할 일이 없을 뿐이다.
 			return guardedAction.get();
 		}
 		return withLocks(lockKeys(accountId, shardNo), guardedAction);

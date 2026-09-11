@@ -9,6 +9,7 @@ import com.remittance.account.exception.LockAcquisitionException;
 import com.remittance.account.exception.StaleBalanceSnapshotException;
 import com.remittance.account.exception.UnpublishedJournalException;
 import com.remittance.account.web.dto.ErrorResponse;
+import org.springframework.dao.PessimisticLockingFailureException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -48,6 +49,16 @@ public class GlobalExceptionHandler {
 	@ExceptionHandler(LockAcquisitionException.class)
 	public ResponseEntity<ErrorResponse> handleLockAcquisition(LockAcquisitionException e) {
 		return error(HttpStatus.CONFLICT, "LOCK_TIMEOUT", e.getMessage());
+	}
+
+	/**
+	 * 행 락을 기다리다 시간을 넘긴 것 ({@code PESSIMISTIC} 전략). 위와 같은 일이라
+	 * 같은 코드로 답한다 — 락을 Redis에서 잡느냐 DB에서 잡느냐는 호출자가 알 바 아니다.
+	 * 교착으로 InnoDB가 이쪽을 죽인 경우도 여기로 온다.
+	 */
+	@ExceptionHandler(PessimisticLockingFailureException.class)
+	public ResponseEntity<ErrorResponse> handlePessimisticLock(PessimisticLockingFailureException e) {
+		return error(HttpStatus.CONFLICT, "LOCK_TIMEOUT", "잔액이 다른 요청에 잠겨 있습니다. 잠시 후 다시 시도해 주세요.");
 	}
 
 	@ExceptionHandler(StaleBalanceSnapshotException.class)

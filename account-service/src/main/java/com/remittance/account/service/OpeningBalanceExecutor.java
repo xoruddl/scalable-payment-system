@@ -35,7 +35,9 @@ public class OpeningBalanceExecutor {
 	@Transactional
 	public OpeningBalanceResult execute(UUID accountId, BigDecimal observedBalance, BigDecimal ledgerBalance) {
 		// 이월은 잔액을 바꾸지 않지만 합을 봐야 한다 — 원장과의 차이를 재는 게 일이다.
-		AccountBalance balance = balanceShards.whole(accountId);
+		// 그래서 보기만 하는 조회가 아니라 잠그며 읽는 쪽을 쓴다. 재는 사이에 조각이
+		// 움직이면 그 차이가 틀린 값이 되고, 틀린 차이를 원장에 심는다.
+		AccountBalance balance = balanceShards.wholeForUpdate(accountId);
 		Account account = balance.account();
 
 		if (account.isOpeningBalanceCarried()) {
