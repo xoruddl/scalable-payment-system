@@ -23,6 +23,13 @@
 > 바꿀지는 홈서버 재측정이 정합니다 — 판정 1순위는 처리량이 아니라 **커넥션 pending**입니다.
 > 자세한 것은 아래 "기다리는 자리를 Redis에서 DB로 옮길 준비" 참고.
 >
+> **2026-09-11 곁가지 리팩터링**: "세 서비스가 결합도 높지 않나"라는 질문에서 시작해
+> **동시성 방어를 `AccountService`에서 `BalanceGuard`로 떼어냈습니다.** Saga는 이제 계좌
+> 응용 서비스를 보지 않습니다. Saga 단계 인자 8개도 파라미터 객체로 묶어 3개로 줄였습니다.
+> **Step 2 측정은 이 뒤로 미뤘습니다** — 쪼개고 재야 숫자와 코드가 맞습니다(건너뛴 것이
+> 아닙니다). 자세한 것은 아래 "동시성 방어를 AccountService에서 떼어냈다" 참고.
+> **동작 변경은 없습니다** (240건 통과).
+>
 > **2026-09-11 Outbox 폴링 주기**: 문서가 말하는 200ms와 실제로 뜨던 500ms가 달랐습니다.
 > 코드 기본값만 200으로 바뀌고 `application.yml`의 500이 계속 이기고 있었습니다.
 > **500으로 맞추고** 문서·SLO 바닥 계산을 고쳤습니다 — 200에 근거가 없고, 종결 p99에
@@ -6272,6 +6279,117 @@ account-service 전체 **238건 통과 · 실패 0**입니다.
 
 **D-004는 아직 안 고쳤습니다.** 결정이 안 끝났기 때문입니다 — 측정 뒤에 "⑤의 열린 질문을
 닫았다"로 갱신하거나, 되돌리면서 "무엇이 막았는지"를 덧붙이거나 둘 중 하나입니다.
+
+## 곁가지 — 동시성 방어를 AccountService에서 떼어냈다 (2026-09-11)
+
+**계기는 질문이었습니다** — *"AccountService, TransferSagaService, ReconciliationService가
+너무 결합도가 높은 것 같은데 괜찮나?"*
+
+### 먼저 전제를 확인했습니다 — 셋은 얽혀 있지 않았습니다
+
+`ReconciliationService`는 **다른 서비스(reconciliation-service)에 있고 account-service
+클래스를 하나도 import하지 않습니다.** `AccountClient` · `LedgerClient` · `TransferClient`로만
+봅니다. 서비스 경계가 제대로 서 있었고, 여기는 결합도를 논할 자리가 아니었습니다.
+
+컴파일 타임 결합은 **`TransferSagaService` → `AccountService` 하나뿐**이었습니다.
+그래서 질문의 답은 "셋이 얽혀 있다"가 아니라 **"그 한 쌍이 얽힌 이유가 따로 있다"**였습니다.
+
+### 진짜 문제는 `guarded`가 공개 API로 새어 나간 것이었습니다
+
+`AccountService`가 두 가지를 겸하고 있었습니다.
+
+| | 무엇 |
+|---|---|
+| 계좌 응용 서비스 | `createAccount` · `getAccount` · `getBalance` · `debit` · `credit` |
+| **동시성 게이트** | `guarded` · `guardedWhole` · `ALL_SHARDS` · 락 키 계산 · 낙관적 락 재시도 |
+
+둘째가 새어 나가서, Saga 단계가 잔액을 바꾸려면 **계좌 응용 서비스를 통째로 주입받고
+내부 샤딩 모델까지 알아야 했습니다** — `ShardedAction`이 왜 조각 번호를 람다 인자로
+받는지, 방향이 왜 조각 선택을 좌우하는지까지.
+
+떼어낼 자리라는 신호가 코드에 이미 있었습니다.
+
+- `guarded` · `guardedWhole` · `ALL_SHARDS`가 `public`인 **유일한 이유가 바깥 호출자**였습니다.
+  내부에서만 쓰였다면 private이었을 것들입니다
+- 주입이 **7개**로 `CLEAN_CODE.md`의 "5개를 넘으면 책임을 쪼갤 신호"를 넘겨 있었고,
+  넘긴 셋이 정확히 동시성 쪽(`distributedLock` · `lockPolicy` · `shardRouter`)이었습니다
+- ★ **javadoc 하나가 죽어 있었습니다.** *"잔액을 바꾸는 모든 경로가 거쳐야 하는 동시성 방어"*가
+  `guarded`를 설명하는 주석인데, 블록 두 개가 연달아 붙는 바람에 컴파일러가 앞엣것을 버리고
+  `guardedWhole` 위에 매달려 있었습니다. **그 주석이 가리키던 대상이 이름 없는 개념으로
+  남아 있었다**는 뜻이라, 이번에 `BalanceGuard`라는 이름을 줬습니다
+
+### 한 일
+
+**`BalanceGuard`를 냈습니다.** 락 키 계산 · 전략 분기 · 낙관적 락 재시도 · 충돌 카운터를
+옮겼습니다.
+
+```
+전                                   후
+AccountService  주입 7개 230줄       AccountService  주입 4개  71줄
+  └ 계좌 + 동시성 방어                  └ 계좌만
+                                     BalanceGuard    주입 4개
+TransferSagaService → AccountService  TransferSagaService → BalanceGuard
+OpeningBalanceService → AccountService  OpeningBalanceService → BalanceGuard
+```
+
+**Saga 인자를 파라미터 객체로 묶었습니다.** `runStep`과 `SagaStepExecutor.execute`가 둘 다
+인자 **8개**로 `CLEAN_CODE.md`의 "4개 이상은 허용하지 않는다"를 어긴 채였습니다. 그런데
+그 다섯(계좌 · 잔액 변경 · 다음 이벤트 타입 · 본문 · 분개 내용)은 원래 한 덩어리입니다 —
+출금이냐 입금이냐 환불이냐가 다섯을 한꺼번에 정합니다.
+
+| record | 묶은 것 |
+|---|---|
+| `ConsumedEvent` | 이벤트 타입 + 송금 ID (= `processed_events` PK) |
+| `SagaStep` | 계좌 + 잔액 변경 + 다음 이벤트 + 분개 내용 |
+| `BalanceChange` | `SagaStepExecutor` 중첩 → top-level |
+| `Fallback` | `TransferSagaService` 중첩 → top-level |
+
+```
+runStep                          8 → 3
+SagaStepExecutor.execute         8 → 3
+SagaStepExecutor.recordFailure   4 → 2
+TransferSagaService.recordFailure 3 → 2
+```
+
+`SagaStep`에는 getter 대신 `mutate()` · `nextEventPayload()` · `direction()`을 뒀습니다.
+점을 하나로 유지하려는 것만이 아니라, 호출부가 record 속을 몰라도 되게 하려는 것입니다.
+
+### 테스트도 따라갔습니다
+
+낙관적 락 재시도 검증 2건을 `BalanceGuardTest`로 옮겼습니다. **`AccountServiceTest`에
+남겨두면 "입출금 API의 재시도"처럼 읽혀서 범위를 오해하게 됩니다** — 그 재시도는 Saga
+단계와 개시 잔액 이월도 지나는 문입니다.
+
+대신 `AccountServiceTest`에는 **"입출금이 방어의 문을 방향까지 맞게 지나는가"** 2건을
+새로 넣었습니다. 방어를 건너뛰고 `mutationExecutor`를 직접 부르면 스텁이 안 걸려 깨집니다.
+방향을 잰 이유는 틀려도 조용하기 때문입니다 — 입금인데 `DEBIT`으로 들어가면 조각을 고르지
+않고 전부 잠가서, 쪼갠 계좌가 다시 한 줄로 섭니다.
+
+account-service **240건 통과 · 실패 0** (238 + 2). 순수 코드 이동이라 동작 변화는 없습니다.
+
+### ★ 측정보다 리팩터링을 먼저 한 이유
+
+원래 순서는 Step 2 재측정이 먼저였습니다. **뒤집었습니다.**
+
+측정하고 나서 쪼개면 숫자와 코드가 어긋나 결국 다시 재야 합니다. 쪼개고 재면 그 한 번이
+**최종 구조의 숫자**가 되고, D-004에 적을 때도 "이 코드로 이 숫자가 나왔다"가 됩니다.
+측정 한 번이 절약되는 셈입니다.
+
+> **Step 2를 건너뛴 것이 아닙니다.** Phase 6.7은 이 저장소에서 **유일하게 측정이 시키지
+> 않은 Phase**이고, 그 예외를 쓰는 대가로 "판정은 여전히 측정이 한다"를 걸어뒀습니다.
+> 측정 없이 Step 3(기본값 전환 + Redis 락 제거)까지 가면 근거가 하나도 안 남습니다.
+> **미룬 것이지 뺀 것이 아닙니다.**
+
+### 아직 안 한 것
+
+**`TransferSagaService`의 주입은 여전히 7개입니다.** `externalBankClient` + `bulkhead` +
+`circuitBreaker` 셋이 "상대 은행에 입금 요청을 보낸다"는 한 덩어리라 `ExternalCreditGateway`로
+묶으면 5개가 되는데, 이번 범위 밖이라 남겨뒀습니다.
+
+**`ReconciliationService`는 손대지 않았습니다.** 의존이 7개지만 서로 얽혀 있지 않고,
+눈에 걸리는 것은 결합도가 아니라 `runOnce()`에 검사 4종이 나열된 응집도 쪽입니다.
+`ReconciliationCheck` 인터페이스로 가는 건 검사가 6~7개로 늘 때 얘기입니다 —
+지금 하면 "측정이 아프다고 하지 않는 곳은 건드리지 않는다"를 어기는 것입니다.
 
 ## 브랜치 히스토리
 
