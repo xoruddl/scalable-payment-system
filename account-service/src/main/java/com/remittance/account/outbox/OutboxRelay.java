@@ -48,7 +48,15 @@ public class OutboxRelay {
 
 	private final OutboxBatchPublisher batchPublisher;
 
-	@Scheduled(fixedDelayString = "${outbox.relay.interval-ms:200}")
+	/**
+	 * 주기가 정하는 것은 처리량이 아니라 무부하 지연 바닥이다. 적체가 있는 동안은 위 루프가
+	 * 이어서 비우므로 주기를 줄여도 더 빨라지지 않는다. 비어 있을 때만, 커밋 직후 행이
+	 * 최대 이 시간만큼 기다린다.
+	 *
+	 * 기본값은 {@code application.yml}과 같은 값으로 둔다. 둘이 다르면 yml이 이기는데,
+	 * 코드만 읽은 사람은 그 사실을 모른다 (2026-09-11에 실제로 어긋나 있었다).
+	 */
+	@Scheduled(fixedDelayString = "${outbox.relay.interval-ms:500}")
 	public void publishPending() {
 		for (int i = 0; i < MAX_BATCHES_PER_TICK; i++) {
 			// 덜 찼다 = 더 비울 게 없거나 중간에 실패했다. 어느 쪽이든 이번 주기는 여기서 끝.
