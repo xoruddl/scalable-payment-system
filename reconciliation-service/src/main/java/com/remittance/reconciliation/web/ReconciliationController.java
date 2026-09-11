@@ -35,9 +35,13 @@ public class ReconciliationController {
 		return toResponse(reconciliationService.runOnce());
 	}
 
+	/**
+	 * 마지막으로 끝난 회차. 도는 중인 회차는 주지 않는다 — 아직 아무것도 못 세서
+	 * "계좌 0건 확인, 발견 0건"으로 나가는데, 그게 깨끗한 회차와 똑같이 읽힌다.
+	 */
 	@GetMapping("/runs/latest")
 	public ResponseEntity<RunResponse> latest() {
-		return runRepository.findFirstByOrderByIdDesc()
+		return runRepository.findFirstByFinishedAtIsNotNullOrderByIdDesc()
 				.map(run -> ResponseEntity.ok(toResponse(run)))
 				.orElseGet(() -> ResponseEntity.noContent().build());
 	}

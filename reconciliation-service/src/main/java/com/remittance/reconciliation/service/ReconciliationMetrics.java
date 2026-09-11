@@ -102,7 +102,7 @@ public class ReconciliationMetrics {
 	 */
 	private void seedFromLastRun() {
 		try {
-			runRepository.findFirstByOrderByIdDesc()
+			runRepository.findFirstByFinishedAtIsNotNullOrderByIdDesc()
 					.ifPresent(run -> record(run, findingRepository.findByRunIdOrderByIdAsc(run.getId())));
 		} catch (Exception e) {
 			log.warn("마지막 대사 회차를 읽지 못했다 - 다음 회차까지 지표가 비어 있다", e);
