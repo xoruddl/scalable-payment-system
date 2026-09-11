@@ -70,6 +70,8 @@ server:
 
 outbox:
   relay:
+    # 무부하 지연 바닥만 정하고 처리량은 안 정한다.
+    # 근거와 대가는 account-service의 같은 블록에 적어뒀다.
     interval-ms: 500
   # 발행이 끝난 행을 언제 지우나 (Phase 4).
   # 근거와 대가는 account-service의 같은 블록에 적어뒀다.
