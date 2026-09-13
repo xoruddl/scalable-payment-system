@@ -46,7 +46,7 @@ public class SagaStepRunner {
 	 *
 	 * @param fallback 업무적 실패 시 대신 남길 이벤트를 만든다
 	 */
-	public void run(ConsumedEvent consumed, SagaStep step, Function<String, Fallback> fallback) {
+	public void run(ConsumedEvent consumed, SagaStep step, Function<String, NextEvent> fallback) {
 		execute(consumed, step, fallback);
 	}
 
@@ -59,9 +59,9 @@ public class SagaStepRunner {
 	 * 단계를 실행하지 않고 실패 사실만 남긴다.
 	 * 상대 은행이 거절했을 때처럼 잔액을 바꾸기 전에 결론이 난 경우에 쓴다.
 	 */
-	public void recordFailure(ConsumedEvent consumed, Fallback fallback) {
+	public void recordFailure(ConsumedEvent consumed, NextEvent failure) {
 		try {
-			sagaStepExecutor.recordFailure(consumed, fallback);
+			sagaStepExecutor.recordFailure(consumed, failure);
 		} catch (DataIntegrityViolationException duplicate) {
 			// 같은 이벤트가 동시에 두 번 처리돼 둘 다 실패한 경우. 실패 이벤트는 한 번만 나가면 된다.
 			log.info("이미 실패로 기록된 이벤트라 건너뛴다 (event={}, transferId={})",
@@ -73,7 +73,7 @@ public class SagaStepRunner {
 	 * @param fallback {@code null}이면 보상 단계다. 이 뜻은 이 클래스 밖으로 새지 않는다 —
 	 *                 바깥은 {@link #run}과 {@link #compensate} 중 하나를 고른다.
 	 */
-	private void execute(ConsumedEvent consumed, SagaStep step, Function<String, Fallback> fallback) {
+	private void execute(ConsumedEvent consumed, SagaStep step, Function<String, NextEvent> fallback) {
 		try {
 			balanceGuard.guarded(step.accountId(), step.direction(), shardNo -> {
 				sagaStepExecutor.execute(consumed, step, shardNo);
@@ -93,9 +93,9 @@ public class SagaStepRunner {
 						consumed.type(), consumed.transferId(), businessFailure.getMessage());
 				throw businessFailure;
 			}
-			Fallback next = fallback.apply(businessFailure.getMessage());
+			NextEvent next = fallback.apply(businessFailure.getMessage());
 			log.warn("Saga 단계 실패 - {}를 발행해 흐름을 꺾는다 (event={}, transferId={}, reason={})",
-					next.eventType(), consumed.type(), consumed.transferId(), businessFailure.getMessage());
+					next.type(), consumed.type(), consumed.transferId(), businessFailure.getMessage());
 			recordFailure(consumed, next);
 		}
 	}
