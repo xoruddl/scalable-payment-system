@@ -4,10 +4,9 @@ import com.remittance.account.exception.AccountNotActiveException;
 import com.remittance.account.exception.AccountNotFoundException;
 import com.remittance.account.exception.CurrencyMismatchException;
 import com.remittance.account.exception.InsufficientBalanceException;
-import com.remittance.account.external.ExternalBankClient;
+import com.remittance.account.external.ExternalCreditGateway;
+import com.remittance.account.external.ExternalCreditRequest;
 import com.remittance.account.external.ExternalCreditResult;
-import com.remittance.account.external.ExternalCallBulkhead;
-import com.remittance.account.external.ExternalCallCircuitBreaker;
 import com.remittance.account.external.ExternalCreditUnknownException;
 import com.remittance.account.external.PendingExternalCredits;
 import com.remittance.account.settlement.SettlementAccounts;
@@ -51,11 +50,9 @@ public class TransferSagaService {
 
 	private final BalanceGuard balanceGuard;
 	private final SagaStepExecutor sagaStepExecutor;
-	private final ExternalBankClient externalBankClient;
+	private final ExternalCreditGateway externalCreditGateway;
 	private final SettlementAccounts settlementAccounts;
 	private final PendingExternalCredits pendingExternalCredits;
-	private final ExternalCallBulkhead bulkhead;
-	private final ExternalCallCircuitBreaker circuitBreaker;
 
 	/** 송금 접수 → 출금 계좌에서 뺀다. */
 	public void onRequested(TransferEvents.Requested event) {
@@ -108,12 +105,7 @@ public class TransferSagaService {
 	private void creditExternal(TransferEvents.Debited event) {
 		ExternalCreditResult result;
 		try {
-			// 격벽. 자리가 없으면 기다리지 않고 거절한다 —
-			// 기다리면 스레드가 묶이는 것은 똑같아서 격벽의 의미가 사라진다.
-			result = bulkhead.call(() -> circuitBreaker.call(event.toBankCode(),
-					() -> externalBankClient.credit(
-							event.toBankCode(), event.transferId(), event.toAccountNumber(),
-							event.amount(), event.currency())));
+			result = externalCreditGateway.credit(ExternalCreditRequest.of(event));
 		} catch (BulkheadFullException | CallNotPermittedException noRoom) {
 			// 보내지도 못했다. 돈은 안 나갔다 — 사고가 아니라 미룬 것이다.
 			// 내부 송금이 쓸 스레드를 지키려고 일부러 여기서 멈춘다.

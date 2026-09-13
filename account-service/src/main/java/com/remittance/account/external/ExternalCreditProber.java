@@ -59,10 +59,8 @@ public class ExternalCreditProber {
 	private static final int BATCH = 10;
 
 	private final PendingExternalCreditRepository repository;
-	private final ExternalBankClient externalBankClient;
+	private final ExternalCreditGateway gateway;
 	private final ExternalCreditResolver resolver;
-	private final ExternalCallBulkhead bulkhead;
-	private final ExternalCallCircuitBreaker circuitBreaker;
 	private final MeterRegistry meterRegistry;
 
 	/** 다시 묻기까지의 첫 간격. 이후 지수적으로 늘린다. */
@@ -127,10 +125,8 @@ public class ExternalCreditProber {
 
 		ExternalCreditResult result;
 		try {
-			// 이미 보낸 돈의 결과 확인은 회로로 막지 않는다. 새 입금을 지키려다
-			// CREDIT_UNKNOWN 해소까지 늦추면 안 된다. 격벽과 백오프로 부하만 제한한다.
-			result = bulkhead.call(() ->
-					externalBankClient.inquire(credit.getBankCode(), credit.getTransferId()));
+			// 조회는 회로를 지나지 않는다. 그래서 여기에는 CallNotPermittedException이 없다.
+			result = gateway.inquire(credit.getBankCode(), credit.getTransferId());
 		} catch (ExternalCreditUnknownException stillNoAnswer) {
 			// 조회에도 답이 없다. 여전히 모른다 — 간격만 늘리고 다음에 다시 묻는다.
 			pushBack(credit);
@@ -163,10 +159,7 @@ public class ExternalCreditProber {
 		log.warn("조회로 확인했다 - 상대에게 도달하지 않았다. 다시 보낸다 (bank={}, transferId={})",
 				credit.getBankCode(), credit.getTransferId());
 		try {
-			bulkhead.call(() -> circuitBreaker.call(credit.getBankCode(),
-					() -> externalBankClient.credit(
-							credit.getBankCode(), credit.getTransferId(), credit.getToAccountNumber(),
-							credit.getAmount(), credit.getCurrency())));
+			gateway.credit(ExternalCreditRequest.of(credit));
 		} catch (BulkheadFullException
 				| CallNotPermittedException
 				| ExternalCreditUnknownException notDone) {
@@ -187,16 +180,11 @@ public class ExternalCreditProber {
 	 */
 	private void sendDeferred(PendingExternalCredit credit) {
 		try {
-			ExternalCreditResult result = bulkhead.call(() -> circuitBreaker.call(
-					credit.getBankCode(),
-					() -> {
-						// 회로와 격벽이 허가한 뒤, HTTP 직전에 보냈다고 표시한다.
-						credit.markSent();
-						repository.saveAndFlush(credit);
-					},
-					() -> externalBankClient.credit(
-							credit.getBankCode(), credit.getTransferId(), credit.getToAccountNumber(),
-							credit.getAmount(), credit.getCurrency())));
+			ExternalCreditResult result = gateway.credit(ExternalCreditRequest.of(credit), () -> {
+				// 회로와 격벽이 허가한 뒤, HTTP 직전에 보냈다고 표시한다.
+				credit.markSent();
+				repository.saveAndFlush(credit);
+			});
 			// 보냈고 답도 받았다. 결론은 다음 조회에 맡긴다 —
 			// 결론은 늘 조회로만 낸다는 규칙을 하나로 유지한다.
 			if (result != null) {
