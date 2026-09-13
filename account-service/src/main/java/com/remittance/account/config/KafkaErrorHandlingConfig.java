@@ -14,6 +14,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.dao.PessimisticLockingFailureException;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.kafka.listener.ConsumerRecordRecoverer;
 import org.springframework.kafka.listener.DeadLetterPublishingRecoverer;
@@ -55,6 +56,15 @@ import tools.jackson.core.JacksonException;
  *
  * 같은 이유로 {@link ConcurrentUpdateException}(낙관적 락 재시도 소진)도 함께 넣는다.
  * 2026-08-23 비교 실험에서 이쪽은 168건을 갇히게 만들었다.
+ *
+ * 비관적 락도 같은 자리에 들어온다 (Phase 6.7)
+ * {@code PESSIMISTIC} 전략에서 락을 기다리다 시간을 넘기면 위 둘이 아니라 스프링의
+ * {@link PessimisticLockingFailureException}으로 올라온다. 이름만 다르고 뜻은 같다 —
+ * "지금 붐빈다"이지 처리할 수 없는 메시지가 아니다.
+ *
+ * 이 줄을 빼먹으면 갇힘 9건이 그대로 재발한다. 전략을 바꾸는 것이 아니라
+ * 예외 이름이 바뀌는 것만으로 그렇게 된다는 점이 이 자리의 함정이다.
+ * 교착(InnoDB가 한쪽을 죽이는 것)도 이 타입의 하위라 함께 걸린다.
  */
 @Configuration
 public class KafkaErrorHandlingConfig {
@@ -119,7 +129,8 @@ public class KafkaErrorHandlingConfig {
 	 */
 	static boolean isContention(Throwable exception) {
 		for (Throwable cause = exception; cause != null; cause = cause.getCause()) {
-			if (cause instanceof LockAcquisitionException || cause instanceof ConcurrentUpdateException) {
+			if (cause instanceof LockAcquisitionException || cause instanceof ConcurrentUpdateException
+					|| cause instanceof PessimisticLockingFailureException) {
 				return true;
 			}
 			if (cause.getCause() == cause) {

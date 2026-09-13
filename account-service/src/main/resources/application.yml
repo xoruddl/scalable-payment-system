@@ -16,6 +16,16 @@ spring:
       # 무작정 키우면 경합이 DB 안으로 옮겨가므로 재고 한 단계 올린다.
       maximum-pool-size: 30
       minimum-idle: 10
+      # 행 락을 기다리는 시간의 상한 (Phase 6.7).
+      #
+      # InnoDB 기본값은 50초다. PESSIMISTIC 전략에서는 기다리는 동안 커넥션을 쥐고 있으므로,
+      # 50초를 그대로 두면 붐비는 계좌 하나가 풀 30을 통째로 말릴 수 있다.
+      # 3초는 Redis 락의 대기 상한(AccountService.LOCK_WAIT_TIMEOUT)과 맞춘 값이다 —
+      # 두 전략을 같은 잣대로 재려면 기다려주는 시간이 같아야 한다.
+      #
+      # 넘기면 예외가 되고, 컨슈머 경로에서는 경합으로 분류돼 횟수 제한 없이 재시도된다
+      # (KafkaErrorHandlingConfig). 즉 상한을 짧게 두는 것이 돈을 버리는 쪽으로 가지 않는다.
+      connection-init-sql: SET SESSION innodb_lock_wait_timeout = 3
   # 스키마는 앱이 아니라 여기 있는 SQL이 만든다 (DECISIONS.md 교체 4번).
   #   src/main/resources/db/migration/V1__baseline.sql
   flyway:

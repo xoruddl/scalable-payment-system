@@ -1,7 +1,9 @@
 package com.remittance.account.repository;
 
 import com.remittance.account.domain.AccountBalanceShard;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -17,6 +19,22 @@ public interface AccountBalanceShardRepository extends JpaRepository<AccountBala
 	List<AccountBalanceShard> findByAccountIdOrderByShardNoAsc(UUID accountId);
 
 	Optional<AccountBalanceShard> findByAccountIdAndShardNo(UUID accountId, short shardNo);
+
+	/**
+	 * 위 둘과 같은 조회에 행 락을 건다 ({@code SELECT ... FOR UPDATE}).
+	 * {@code PESSIMISTIC} 전략일 때만 쓴다 — 고르는 곳은 {@code BalanceShards}다.
+	 *
+	 * 잠그는 조회를 별도 메서드로 둔 이유는, 안 잠그는 쪽이 조회 API와 대사에도 쓰이기
+	 * 때문이다. 같은 메서드에 락을 얹으면 읽기 전용 트랜잭션에서 터진다.
+	 *
+	 * 정렬은 여기서도 고정한다. 락을 잡는 순서가 곧 교착이 나느냐를 정하고,
+	 * 그 순서는 {@code uk_balance_shard (account_id, shard_no)}가 보장한다.
+	 */
+	@Lock(LockModeType.PESSIMISTIC_WRITE)
+	List<AccountBalanceShard> findForUpdateByAccountIdOrderByShardNoAsc(UUID accountId);
+
+	@Lock(LockModeType.PESSIMISTIC_WRITE)
+	Optional<AccountBalanceShard> findForUpdateByAccountIdAndShardNo(UUID accountId, short shardNo);
 
 	/**
 	 * 여러 계좌의 잔액을 한 번에 합산한다. 대사가 계좌를 페이지로 훑을 때 쓴다.
