@@ -167,7 +167,7 @@ Phase 5(측정 기반)가 Phase 6(고동시성)보다 **앞에 있는 건 의도
 
 ### 지금 걸리는 두 곳 (2026-08-30 점검)
 
-- [ ] **`AccountService`가 두 축이다** (225줄 · 의존성 7)
+- [x] **`AccountService`가 두 축이다** (225줄 · 의존성 7) ✅ 2026-09-11
       계좌 유스케이스(`createAccount`·`getBalance`·`debit`·`credit`)와
       **동시성 방어 조립**(`guarded`·`withLocks`·`withOptimisticRetry`·샤드 라우팅)이 섞여 있다.
       의존성 7개 중 **5개가 후자**이고, `guarded()`가 `public`이라
@@ -175,6 +175,8 @@ Phase 5(측정 기반)가 Phase 6(고동시성)보다 **앞에 있는 건 의도
       → ~~락 교체(Redisson·2차 재판단) 때 함께~~ **2026-08-31에 그 교체가 보류됐다(D-005).**
       묶어둘 상대가 사라졌으므로 **단독으로 남는다** — 근거가 측정이 아니라 **구조**라
       락 결정과 무관하게 유효하다
+      → **`BalanceGuard`로 떼어냈다.** 주입 7 → 4, Saga는 이제 `BalanceGuard`만 본다.
+      이 코드를 연 작업은 락 교체가 아니라 Phase 6.7(`PESSIMISTIC` 전략)이었다
 - [ ] **Outbox 인프라가 두 벌이다** (account · transfer)
       `OutboxRelay` · `OutboxBatchPublisher` · `OutboxChunkDeleter`는 **패키지 빼고 완전 동일**하고
       `OutboxRetention`은 주석만 다르다.
