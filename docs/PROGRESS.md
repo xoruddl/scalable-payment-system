@@ -17,6 +17,12 @@
 
 ## 현재 위치
 
+> **2026-09-13 곁가지 리팩터링**: `TransferSagaService`의 주입을 **7개에서 4개로** 줄였습니다.
+> 상대 은행 호출은 `ExternalCreditGateway`로, 단계 실행 장치는 `SagaStepRunner`로 떼어내
+> **흐름만 남겼습니다.** 함께 `CLEAN_CODE.md`의 쪼갤 신호를 **"5개 초과" → "4개 이상"**으로
+> 낮췄고, 새 기준에 걸리는 9곳 중 7곳은 아직 안 봤습니다. Phase 6.7 Step 2 측정이 여전히 다음 차례입니다.
+> 자세한 것은 아래 "TransferSagaService에 흐름만 남겼다" 참고. **동작 변경은 없습니다** (243건 통과).
+>
 > **2026-09-11 Phase 6.7 Step 1**: 잔액 보호를 비관적 락으로 단순화하는 작업을 시작했습니다.
 > `account.lock.strategy`에 **`PESSIMISTIC`을 추가**했고 기본값은 아직 `DISTRIBUTED`입니다.
 > 근거는 "더 안전해서"가 아니라 **장치 셋 → 하나**(D-004 ⑤의 열린 질문)이고,
@@ -6390,6 +6396,81 @@ account-service **240건 통과 · 실패 0** (238 + 2). 순수 코드 이동이
 눈에 걸리는 것은 결합도가 아니라 `runOnce()`에 검사 4종이 나열된 응집도 쪽입니다.
 `ReconciliationCheck` 인터페이스로 가는 건 검사가 6~7개로 늘 때 얘기입니다 —
 지금 하면 "측정이 아프다고 하지 않는 곳은 건드리지 않는다"를 어기는 것입니다.
+
+## 곁가지 — TransferSagaService에 흐름만 남겼다 (2026-09-13)
+
+**계기는 질문이었습니다** — *"CLEAN_CODE.md에서 TransferSagaService를 고쳐야 한다고 했는데
+고쳐졌나?"* 09-11의 `BalanceGuard` 분리는 인자 수(8 → 3)만 고쳤고 주입은 7개 그대로였습니다
+(바로 위 "아직 안 한 것"). 계획대로 `ExternalCreditGateway`로 묶으면 5개가 되는데,
+*"5개도 많지 않나?"*라는 질문이 이어졌습니다.
+
+### 5개 안에도 두 묶음이 섞여 있었습니다
+
+```
+TransferSagaService (게이트웨이로 묶은 뒤 5개)
+├ balanceGuard, sagaStepExecutor                        단계를 안전하게 실행하는 장치
+└ gateway, pendingExternalCredits, settlementAccounts   외부 입금 처리
+```
+
+5개는 `CLEAN_CODE.md`의 "5개를 넘으면"을 통과하지만 쪼갤 자리는 그대로였습니다.
+**기준이 쪼갤 자리를 가려주지 못한 것**이라, 기준을 **"4개 이상"으로 낮추고** 두 번 쪼갰습니다.
+
+### 한 일
+
+**1. `ExternalCreditGateway` — 격벽·회로·클라이언트를 한 문으로 모았습니다**
+
+`bulkhead.call(() -> circuitBreaker.call(... externalBankClient.credit(...)))`가 세 군데
+(Saga 입금 단계 1, 확인 루프 2)에 똑같이 있었습니다. 하나에서 회로를 빠뜨려도 컴파일은 됩니다.
+
+| | 보호 |
+|---|---|
+| 새 입금 `credit` | 격벽 + 회로 |
+| 조회 `inquire` | 격벽만 — 이미 보낸 돈의 결과 확인을 회로 때문에 늦추면 안 된다 |
+
+★ **조회가 회로를 지나지 않는다는 규칙에는 테스트가 없었습니다.** 주석으로만 지켜지던 규칙이라
+`ExternalCreditGatewayTest`에 3건을 넣었고, 조회를 회로로 감싸도록 일부러 되돌리면
+`회로가_열려도_조회는_나간다`가 `CallNotPermittedException`으로 실패하는 것을 확인했습니다.
+
+인자 다섯(은행 · 송금 ID · 계좌번호 · 금액 · 통화)은 `ExternalCreditRequest`로 묶었습니다.
+예외는 번역하지 않고 그대로 내보냅니다 — 부르는 쪽이 "보내지 않았다"와 "보냈는지 모른다"를
+다르게 다루기 때문입니다.
+
+**2. `SagaStepRunner` — 단계를 감싸는 장치를 흐름에서 떼어냈습니다**
+
+`runStep` · `recordFailure`(락 → 트랜잭션 → 이미 처리함·업무 실패 분류)를 옮겼습니다.
+흐름은 송금 규칙이 바뀔 때, 장치는 동시성·멱등성 방식이 바뀔 때 바뀝니다. 바뀌는 이유가 다릅니다.
+
+떼면서 **보상 단계를 `null`로 표시하던 것을 없앴습니다.** 전에는 `runStep(..., null)`이
+"실패하면 삼키지 말고 던져라"라는 뜻이었는데 호출부에서는 그 뜻이 보이지 않았습니다.
+이제 입구가 `run(consumed, step, fallback)`과 `compensate(consumed, step)` 둘이고,
+`null`은 `SagaStepRunner` 안에서만 쓰입니다.
+
+```
+                        전 → 후
+TransferSagaService     7 → 4   sagaStepRunner · externalCreditGateway · settlementAccounts · pendingExternalCredits
+ExternalCreditProber    6 → 4   repository · gateway · resolver · meterRegistry
+SagaStepRunner          - → 2   balanceGuard · sagaStepExecutor
+ExternalCreditGateway   - → 3   externalBankClient · bulkhead · circuitBreaker
+```
+
+account-service **243건 통과 · 실패 0** (240 + 게이트웨이 3). 동작 변경은 없습니다.
+
+### 새 기준에 걸리는 곳이 9개입니다
+
+"4개 이상"으로 낮추자 **`TransferSagaService` 자신(4)도 여전히 걸립니다.** 남은 넷은 각자 다른
+일이라 더 묶으면 호출을 넘기기만 하는 클래스가 생긴다고 보고 여기서 멈췄습니다.
+나머지(`SagaStepExecutor` 6, `TransferService` 5, 4개짜리 여섯)는 **아직 안 봤습니다.**
+목록과 판단은 `CLEAN_CODE.md`의 "지금 어디에 서 있나"에 있습니다.
+
+### 포기한 것
+
+- 파일이 넷 늘었습니다. Saga 단계 하나를 따라가려면 `TransferSagaService` → `SagaStepRunner`
+  → `BalanceGuard` → `SagaStepExecutor`를 엽니다
+- 게이트웨이가 Resilience4j 예외(`BulkheadFullException` · `CallNotPermittedException`)를 그대로
+  내보내서 `TransferSagaService`는 여전히 Resilience4j를 import합니다. 우리 예외로 번역하면
+  끊기지만 확인 루프의 catch도 함께 바꿔야 해서 이번 범위 밖입니다
+- `ExternalBankClient.credit`의 인자 다섯은 그대로입니다. HTTP 어댑터이고, 바꾸면 이 메서드를
+  스텁하는 테스트들이 함께 흔들립니다
 
 ## 브랜치 히스토리
 
