@@ -1,6 +1,7 @@
 package com.remittance.account.messaging;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.remittance.account.support.Timestamps;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -25,6 +26,11 @@ import java.util.UUID;
  *   debited   ─▶ 입금 실패 ─▶ credit-failed ─▶ 환불 ─▶ debit-reversed   (보상 후 종결)
  * 송금을 최종적으로 FAILED로 찍고 {@code transfer.failed}를 발행하는 건 Transfer Service다.
  * 이 서비스는 계좌에 무슨 일이 있었는지만 알린다 — 송금의 상태는 송금의 주인이 정한다.
+ *
+ * 다음 이벤트는 받은 이벤트에게 만들게 한다 (2026-09-13)
+ * {@code requested.debited(잔액)}처럼 받은 본문이 다음 본문을 만든다. 전에는 Saga 흐름 코드가
+ * 생성자에 필드를 하나씩 옮겨 적어서, 무엇을 하는지가 무엇을 복사하는지에 묻혔다.
+ * 이 메서드들은 인자가 있어 직렬화되지 않으므로 계약(필드)은 그대로다.
  */
 public final class TransferEvents {
 
@@ -81,6 +87,21 @@ public final class TransferEvents {
 				BigDecimal amount, String currency) {
 			return new Requested(transferId, fromAccountId, toAccountId, null, null, amount, currency);
 		}
+
+		/**
+		 * 출금이 끝났다. 출금 단계는 상대 은행 자리를 쓰지 않지만 그대로 옮겨 싣는다 —
+		 * 여기서 빠지면 입금 단계가 어디로 보낼지 모른다 (Phase 6.5).
+		 */
+		public Debited debited(BigDecimal fromBalanceAfter) {
+			return new Debited(transferId, fromAccountId, toAccountId, toBankCode, toAccountNumber,
+					amount, currency, fromBalanceAfter, Timestamps.now());
+		}
+
+		/** 출금하지 못했다. 움직인 돈이 없으므로 되돌릴 것 없이 송금이 종결된다. */
+		public DebitFailed debitFailed(String failureReason) {
+			return new DebitFailed(transferId, fromAccountId, toAccountId,
+					amount, currency, failureReason, Timestamps.now());
+		}
 	}
 
 	/** {@link #DEBITED} 본문. 출금 후 잔액을 함께 실어 다음 단계가 그대로 쓸 수 있게 한다. */
@@ -106,6 +127,28 @@ public final class TransferEvents {
 				BigDecimal amount, String currency, BigDecimal fromBalanceAfter, Instant occurredAt) {
 			return new Debited(transferId, fromAccountId, toAccountId, null, null,
 					amount, currency, fromBalanceAfter, occurredAt);
+		}
+
+		/**
+		 * 입금이 끝났다.
+		 *
+		 * @param creditAccountId 실제로 입금된 계좌. 외부 송금이면 받는 사람이 아니라 정산 계좌다 —
+		 *                        원장이 두 다리를 맞추는 기준이므로 실제로 입금된 계좌여야 한다.
+		 */
+		public Credited credited(UUID creditAccountId, BigDecimal toBalanceAfter) {
+			return new Credited(transferId, fromAccountId, creditAccountId,
+					amount, currency, fromBalanceAfter, toBalanceAfter, Timestamps.now());
+		}
+
+		/**
+		 * 입금하지 못했다. 출금은 이미 나갔으므로 이 이벤트가 환불을 부른다.
+		 *
+		 * @param creditAccountId 입금하려던 계좌. 상대 은행이 거절했으면 우리 쪽 계좌가 없어
+		 *                        이 이벤트의 {@code toAccountId}를 그대로 넘긴다.
+		 */
+		public CreditFailed creditFailed(UUID creditAccountId, String failureReason) {
+			return new CreditFailed(transferId, fromAccountId, creditAccountId,
+					amount, currency, failureReason, Timestamps.now());
 		}
 	}
 
@@ -170,6 +213,11 @@ public final class TransferEvents {
 			String failureReason,
 			Instant occurredAt
 	) {
+		/** 출금을 되돌렸다. 송금을 종결하는 쪽이 왜 실패했는지 알아야 하므로 사유를 이어 싣는다. */
+		public DebitReversed debitReversed(BigDecimal fromBalanceAfter) {
+			return new DebitReversed(transferId, fromAccountId, amount, currency,
+					fromBalanceAfter, failureReason, Timestamps.now());
+		}
 	}
 
 	/** {@link #DEBIT_REVERSED} 본문. */

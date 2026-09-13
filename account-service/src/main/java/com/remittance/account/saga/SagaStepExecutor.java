@@ -66,7 +66,7 @@ public class SagaStepExecutor {
 		measurement.record(SagaStepMetrics.BALANCE_FLUSH, () -> balanceShards.flush(balance));
 
 		measurement.record(SagaStepMetrics.OUTBOX_ENQUEUE, () -> {
-			record(transferId, step.nextEventType(), step.nextEventPayload(balance));
+			record(transferId, step.nextEvent(balance));
 			// 잔액이 움직였으면 반드시 분개장에도 남는다 — 입출금 API와 같은 규칙이다.
 			balanceJournal.record(balance, change.reason(), change.direction(), change.amount(), transferId);
 		});
@@ -82,19 +82,19 @@ public class SagaStepExecutor {
 	 * 실패했다는 사실 자체를 "처리 완료"로 봐야 한다.
 	 */
 	@Transactional
-	public void recordFailure(ConsumedEvent consumed, Fallback fallback) {
+	public void recordFailure(ConsumedEvent consumed, NextEvent failure) {
 		UUID transferId = consumed.transferId();
 		processedEventRepository.saveAndFlush(new ProcessedEvent(consumed.type(), transferId));
-		record(transferId, fallback.eventType(), fallback.body());
+		record(transferId, failure);
 	}
 
-	private void record(UUID transferId, String eventType, Object body) {
+	private void record(UUID transferId, NextEvent event) {
 		outboxEventRepository.save(OutboxEvent.builder()
 				.aggregateType(AGGREGATE_TYPE)
 				// 파티션 키로 쓰이므로 계좌가 아니라 송금 ID다. 같은 송금의 이벤트 순서를 지켜야 한다.
 				.aggregateId(transferId)
-				.eventType(eventType)
-				.payload(objectMapper.writeValueAsString(body))
+				.eventType(event.type())
+				.payload(objectMapper.writeValueAsString(event.body()))
 				.build());
 	}
 }

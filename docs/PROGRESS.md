@@ -17,6 +17,11 @@
 
 ## 현재 위치
 
+> **2026-09-13 곁가지 리팩터링 (2)**: Saga 단계 호출부를 읽히게 했습니다. `onRequested`가
+> 16줄짜리 한 식이었고 "출금"을 람다·방향·이유 세 곳에 적고 있었습니다. `BalanceChange` 팩토리,
+> `NextEvent`(`Fallback`을 넓힘), 이벤트 record의 팩토리로 **같은 사실을 한 번만 적게** 했습니다.
+> 자세한 것은 아래 "Saga 단계 호출부를 읽히게 했다" 참고. **동작 변경은 없습니다** (248건 통과).
+>
 > **2026-09-13 곁가지 리팩터링**: `TransferSagaService`의 주입을 **7개에서 4개로** 줄였습니다.
 > 상대 은행 호출은 `ExternalCreditGateway`로, 단계 실행 장치는 `SagaStepRunner`로 떼어내
 > **흐름만 남겼습니다.** 함께 `CLEAN_CODE.md`의 쪼갤 신호를 **"5개 초과" → "4개 이상"**으로
@@ -6487,6 +6492,57 @@ account-service **243건 통과 · 실패 0** (240 + 게이트웨이 3). 동작 
 이동과 동작 변경이 한 PR에 섞이면 리뷰어가 둘을 가려내야 하기 때문입니다. 옛 규칙이 걱정한
 것(테스트 통과가 당연해 리뷰가 얕아진다)은 PR 본문에 쪼갠 이유와 확인 방법을 적고, 테스트가 없던
 규칙은 고정하는 것으로 대신합니다. 옛 문구와 이유는 `ROADMAP.md`에 인용으로 남겼습니다.
+
+## 곁가지 — Saga 단계 호출부를 읽히게 했다 (2026-09-13)
+
+**계기는 질문이었습니다** — *"코드가 너무 가독성이 떨어지지 않나?"* `onRequested` 하나가
+16줄짜리 한 식이었고 괄호가 4~5단 겹쳐, `BalanceChange`가 누구의 인자인지 괄호를 세어야 했습니다.
+
+### 같은 사실을 여러 번 적고 있었습니다
+
+```
+"출금"         balance.debit(...) · TransactionDirection.DEBIT · BalanceChangeReason.TRANSFER_DEBIT
+다음 이벤트    TransferEvents.DEBITED  +  new Debited(...)
+금액           잔액 변경 · 분개 내용 · 이벤트 본문
+```
+
+어긋나도 컴파일러가 못 잡습니다 — `debit`인데 `CREDIT`을 적어도, `DEBITED`에 `Credited`를 실어도
+컴파일됩니다. `SagaStep` 주석은 *"출금이냐 입금이냐 환불이냐가 다섯을 한꺼번에 정한다"*고 적어 두고,
+부르는 쪽은 다섯을 전부 손으로 적고 있었습니다.
+
+### 한 일
+
+| 바꾼 것 | 효과 |
+|---|---|
+| `BalanceChange.transferDebit / transferCredit / transferRefund` + `applyTo` | 이유·방향·잔액 변경을 한 곳에서 정합니다. `SagaStep`의 잔액 변경 람다가 없어졌습니다 |
+| `Fallback` → `NextEvent`, `NextEvent.of(본문)` 오버로드 | 성공 이벤트도 종류·본문 한 쌍이 되고, 종류는 본문 타입이 정합니다 |
+| `ConsumedEvent.of(본문)` 오버로드 | 같은 이유 |
+| `Requested.debited · debitFailed`, `Debited.credited · creditFailed`, `CreditFailed.debitReversed` | 필드 복사를 이벤트 record로 옮겼습니다. 흐름 코드에서 7~9인자 생성자가 사라졌습니다 |
+| 상대 은행 거절 | `creditExternal`이 `onExternalCreditRejected`를 부릅니다. 똑같은 `CreditFailed` 생성이 두 곳에 있었습니다 |
+
+```
+                        전 → 후
+SagaStep 필드            5 → 3    accountId · balanceChange · next
+onRequested             16 → 7줄
+TransferSagaService    189 → 159줄
+```
+
+★ **출금 이벤트가 상대 은행 자리를 실어 나른다는 규칙에는 테스트가 없었습니다.** 외부 송금
+접수(`toBankCode`가 있는 `Requested`)로 출금 단계를 부르는 테스트가 하나도 없어, 주석으로만
+지켜지던 규칙이었습니다. `TransferEventsTest`에 팩토리 5건을 넣었고, `debited()`에서 상대 은행
+자리를 `null`로 일부러 되돌리면 `출금_완료는_상대_은행_자리까지_그대로_실어_나른다`가 실패하는 것을
+확인했습니다.
+
+account-service **248건 통과 · 실패 0** (243 + 팩토리 5). 동작 변경은 없습니다.
+
+### 포기한 것
+
+- 이벤트 본문이 무엇으로 채워지는지 보려면 `TransferEvents`를 열어야 합니다. 흐름 코드에서는 더 이상 안 보입니다
+- `BalanceChange`의 정식 생성자는 인자가 넷입니다. record라 숨길 수 없어 두고 팩토리만 쓰게 했습니다.
+  금액·통화를 `Money`로 묶으면 셋이 되지만 계좌 도메인 전체에 걸친 일이라 이번 범위 밖입니다
+- `TransferEvents`는 transfer·ledger 서비스에도 같은 계약이 중복 정의되어 있습니다. 팩토리는 이 서비스에만
+  생겼고, 인자가 있는 메서드라 직렬화되지 않아 계약(필드)은 그대로입니다
+- `NextEvent.of` 오버로드는 이벤트 종류가 늘면 함께 늘어야 합니다. 빠뜨리면 컴파일 에러로 드러납니다
 
 ## 브랜치 히스토리
 
