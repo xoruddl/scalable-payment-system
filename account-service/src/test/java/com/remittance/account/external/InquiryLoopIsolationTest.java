@@ -55,9 +55,10 @@ class InquiryLoopIsolationTest {
 
 	private ExternalCreditProber prober() {
 		SimpleMeterRegistry meters = new SimpleMeterRegistry();
-		ExternalCreditProber prober = new ExternalCreditProber(repository, externalBankClient,
-				resolver, new ExternalCallBulkhead(8, meters),
-				new ExternalCallCircuitBreaker(5, Duration.ofSeconds(30), meters), meters);
+		ExternalCreditGateway gateway = new ExternalCreditGateway(externalBankClient,
+				new ExternalCallBulkhead(8, meters),
+				new ExternalCallCircuitBreaker(5, Duration.ofSeconds(30), meters));
+		ExternalCreditProber prober = new ExternalCreditProber(repository, gateway, resolver, meters);
 		// @Value 필드는 스프링 없이는 채워지지 않는다. 운영 기본값과 같은 값을 넣는다.
 		ReflectionTestUtils.setField(prober, "baseBackoff", Duration.ofSeconds(2));
 		ReflectionTestUtils.setField(prober, "maxBackoff", Duration.ofMinutes(1));

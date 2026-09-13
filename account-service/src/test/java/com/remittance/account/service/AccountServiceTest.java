@@ -5,33 +5,25 @@ import com.remittance.account.domain.AccountBalance;
 import com.remittance.account.domain.AccountBalanceShard;
 import com.remittance.account.domain.AccountType;
 import com.remittance.account.exception.AccountNotFoundException;
-import com.remittance.account.exception.ConcurrentUpdateException;
-import com.remittance.account.lock.AccountLockPolicy;
-import com.remittance.account.lock.DistributedLock;
+import com.remittance.account.messaging.AccountEvents;
 import com.remittance.account.repository.AccountRepository;
-import io.micrometer.core.instrument.MeterRegistry;
-import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
-import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.orm.ObjectOptimisticLockingFailureException;
 
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
-import java.util.function.Supplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyShort;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.BDDMockito.given;
-import static org.mockito.Mockito.times;
-import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 @ExtendWith(MockitoExtension.class)
 class AccountServiceTest {
@@ -40,10 +32,7 @@ class AccountServiceTest {
 	private AccountRepository accountRepository;
 
 	@Mock
-	private DistributedLock distributedLock;
-
-	@Mock
-	private AccountLockPolicy lockPolicy;
+	private BalanceGuard balanceGuard;
 
 	@Mock
 	private BalanceMutationExecutor mutationExecutor;
@@ -51,37 +40,14 @@ class AccountServiceTest {
 	@Mock
 	private BalanceShards balanceShards;
 
-	@Mock
-	private ShardRouter shardRouter;
-
-	/**
-	 * 메트릭은 목이 아니라 진짜 레지스트리를 쓴다. 목으로 두면 "increment()가 불렸다"까지만
-	 * 확인하게 되는데, 정작 알고 싶은 건 어떤 태그로 몇이 찍혔나이다.
-	 */
-	@Spy
-	private MeterRegistry meterRegistry = new SimpleMeterRegistry();
-
 	@InjectMocks
 	private AccountService accountService;
 
-	private double conflictCount(String outcome) {
-		return meterRegistry.find("remittance.optimistic.lock.conflict")
-				.tag("entity", "account").tag("outcome", outcome)
-				.counters().stream().mapToDouble(counter -> counter.count()).sum();
-	}
-
-	/**
-	 * 분산 락 전략으로 두되, 락 자체는 여기서 검증 대상이 아니므로 그냥 통과시켜
-	 * 원래 동작을 실행하게 한다.
-	 *
-	 * 전략을 명시하는 이유: 기본값을 안 정해두면 목이 {@code false}를 돌려주어
-	 * 낙관적 락 경로로 새는데, 그러면 이 클래스의 재시도 검증들이 무엇을 재는지 흐려진다.
-	 */
-	@SuppressWarnings("unchecked")
-	private void passThroughLock() {
-		given(lockPolicy.usesDistributedLock()).willReturn(true);
-		given(distributedLock.executeWithLock(any(), any(), any(), any()))
-				.willAnswer(invocation -> ((Supplier<AccountBalance>) invocation.getArgument(3)).get());
+	private AccountBalance 잔액() {
+		Account account = Account.builder().ownerId(UUID.randomUUID()).currency("KRW")
+				.accountType(AccountType.PERSONAL).build();
+		return AccountBalance.whole(account, List.of(
+				new AccountBalanceShard(account.getAccountId(), (short) 0, BigDecimal.valueOf(1000))));
 	}
 
 	@Test
@@ -93,41 +59,34 @@ class AccountServiceTest {
 				.isInstanceOf(AccountNotFoundException.class);
 	}
 
+	/**
+	 * 방어를 건너뛰고 {@code mutationExecutor}를 직접 부르면 이 스텁이 걸리지 않아 깨진다.
+	 * 잔액을 바꾸는 경로가 하나라도 문 밖으로 새면 방어는 없는 것과 같으므로,
+	 * "락 안에서 무슨 일이 일어나나"가 아니라 "문을 지났나"를 잰다.
+	 */
 	@Test
-	void 낙관적_락_충돌시_재조회_후_재시도한다() {
-		passThroughLock();
+	void 출금은_방향까지_맞춰_동시성_방어를_거친다() {
 		UUID accountId = UUID.randomUUID();
-		Account account = Account.builder().ownerId(UUID.randomUUID()).currency("KRW")
-				.accountType(AccountType.PERSONAL).build();
-		AccountBalance balance = AccountBalance.whole(account, List.of(
-				new AccountBalanceShard(account.getAccountId(), (short) 0, BigDecimal.valueOf(1000))));
+		AccountBalance balance = 잔액();
+		given(balanceGuard.<AccountBalance>guarded(eq(accountId),
+				eq(AccountEvents.TransactionDirection.DEBIT), any())).willReturn(balance);
 
-		given(mutationExecutor.execute(any(), anyShort(), any(), any(), any(), any()))
-				.willThrow(new ObjectOptimisticLockingFailureException(Account.class, accountId))
-				.willThrow(new ObjectOptimisticLockingFailureException(Account.class, accountId))
-				.willReturn(balance);
-
-		AccountBalance result = accountService.credit(accountId, BigDecimal.valueOf(100), "KRW");
-
-		assertThat(result).isSameAs(balance);
-		verify(mutationExecutor, times(3)).execute(any(), anyShort(), any(), any(), any(), any());
-		// 충돌이 두 번 났고 둘 다 재시도로 넘겼다. 이 값이 0에서 뜨기 시작하면
-		// 분산 락이 막지 못한 경합이 실제로 있다는 뜻이다 (Phase 5 Step 2).
-		assertThat(conflictCount("retried")).isEqualTo(2);
-		assertThat(conflictCount("exhausted")).isZero();
+		assertThat(accountService.debit(accountId, BigDecimal.valueOf(100), "KRW")).isSameAs(balance);
+		verifyNoInteractions(mutationExecutor);
 	}
 
+	/**
+	 * 방향이 틀리면 조용히 망가진다 — 입금인데 DEBIT으로 들어가면 조각을 고르지 않고
+	 * 전부 잠가서, 쪼갠 계좌가 다시 한 줄로 선다. 그래서 방향까지 못 박는다.
+	 */
 	@Test
-	void 재시도를_모두_소진하면_예외() {
-		passThroughLock();
+	void 입금은_방향까지_맞춰_동시성_방어를_거친다() {
 		UUID accountId = UUID.randomUUID();
-		given(mutationExecutor.execute(any(), anyShort(), any(), any(), any(), any()))
-				.willThrow(new ObjectOptimisticLockingFailureException(Account.class, accountId));
+		AccountBalance balance = 잔액();
+		given(balanceGuard.<AccountBalance>guarded(eq(accountId),
+				eq(AccountEvents.TransactionDirection.CREDIT), any())).willReturn(balance);
 
-		assertThatThrownBy(() -> accountService.credit(accountId, BigDecimal.valueOf(100), "KRW"))
-				.isInstanceOf(ConcurrentUpdateException.class);
-		// 마지막 한 번은 성격이 다르다 — 재시도로 넘긴 게 아니라 요청이 실패한 것이다.
-		assertThat(conflictCount("exhausted")).isEqualTo(1);
-		assertThat(conflictCount("retried")).isEqualTo(4);
+		assertThat(accountService.credit(accountId, BigDecimal.valueOf(100), "KRW")).isSameAs(balance);
+		verifyNoInteractions(mutationExecutor);
 	}
 }

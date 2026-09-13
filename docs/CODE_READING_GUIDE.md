@@ -71,13 +71,14 @@
 ## 3. 정합성 — 보호 장치를 하나씩 빼면 무엇이 깨지는가
 
 ```text
-TransferSagaService.runStep()
-  → AccountService.guarded()       락과 낙관적 충돌 재시도
-    → SagaStepExecutor.execute()   한 단계의 트랜잭션
-      → AccountBalance.debit()     출금 규칙
+TransferSagaService.onRequested()    흐름 — 어느 계좌를 어떻게 바꾸고 무엇을 내는가
+  → SagaStepRunner.run()             이미 처리한 이벤트·업무 실패를 가른다
+    → BalanceGuard.guarded()         락과 낙관적 충돌 재시도
+      → SagaStepExecutor.execute()   한 단계의 트랜잭션
+        → AccountBalance.debit()     출금 규칙
 ```
 
-**읽을 코드**: [AccountService](../account-service/src/main/java/com/remittance/account/service/AccountService.java), [SagaStepExecutor](../account-service/src/main/java/com/remittance/account/saga/SagaStepExecutor.java), [BalanceJournal](../account-service/src/main/java/com/remittance/account/outbox/BalanceJournal.java).
+**읽을 코드**: [SagaStepRunner](../account-service/src/main/java/com/remittance/account/saga/SagaStepRunner.java), [BalanceGuard](../account-service/src/main/java/com/remittance/account/service/BalanceGuard.java), [SagaStepExecutor](../account-service/src/main/java/com/remittance/account/saga/SagaStepExecutor.java), [BalanceJournal](../account-service/src/main/java/com/remittance/account/outbox/BalanceJournal.java).
 
 | 장치 | 설명할 문제 |
 |---|---|
@@ -121,6 +122,7 @@ TransferSagaService.runStep()
 **읽을 코드**
 
 - `TransferSagaService.creditExternal`
+- [ExternalCreditGateway](../account-service/src/main/java/com/remittance/account/external/ExternalCreditGateway.java): 새 입금은 격벽 + 회로, 조회는 격벽만
 - [PendingExternalCredits](../account-service/src/main/java/com/remittance/account/external/PendingExternalCredits.java)
 - [ExternalCreditProber](../account-service/src/main/java/com/remittance/account/external/ExternalCreditProber.java)
 - [ExternalCreditResolver](../account-service/src/main/java/com/remittance/account/saga/ExternalCreditResolver.java)

@@ -1,32 +1,22 @@
 package com.remittance.account.saga;
 
-import com.remittance.account.domain.AccountBalance;
-import com.remittance.account.exception.AccountNotActiveException;
-import com.remittance.account.exception.AccountNotFoundException;
-import com.remittance.account.exception.CurrencyMismatchException;
-import com.remittance.account.exception.InsufficientBalanceException;
-import com.remittance.account.external.ExternalBankClient;
+import com.remittance.account.external.ExternalCreditGateway;
+import com.remittance.account.external.ExternalCreditRequest;
 import com.remittance.account.external.ExternalCreditResult;
-import com.remittance.account.external.ExternalCallBulkhead;
-import com.remittance.account.external.ExternalCallCircuitBreaker;
 import com.remittance.account.external.ExternalCreditUnknownException;
 import com.remittance.account.external.PendingExternalCredits;
 import com.remittance.account.settlement.SettlementAccounts;
 import com.remittance.account.messaging.AccountEvents;
 import com.remittance.account.messaging.TransferEvents;
-import com.remittance.account.service.AccountService;
 import com.remittance.account.support.Timestamps;
 import io.github.resilience4j.bulkhead.BulkheadFullException;
 import io.github.resilience4j.circuitbreaker.CallNotPermittedException;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 
 import java.util.UUID;
-import java.util.function.Consumer;
-import java.util.function.Function;
 
 /**
  * 송금 Saga에서 Account Service가 맡은 단계들.
@@ -41,9 +31,10 @@ import java.util.function.Function;
  * (Choreography). 대신 흐름 전체를 한눈에 볼 수 있는 곳이 없어지므로,
  * 어떤 이벤트가 어떤 이벤트를 낳는지는 이 클래스 주석과 {@link TransferEvents}에 남긴다.
  *
- * 전진 단계와 보상 단계는 실패했을 때의 처신이 다르다.
- * 전진 단계는 실패하면 실패 이벤트를 남기고 물러난다. 보상 단계는 물러날 곳이 없다 —
- * 보상의 보상은 없으므로 예외를 그대로 밖으로 내보내 재배달에 맡긴다.
+ * 이 클래스는 흐름만 정한다 — 어느 이벤트에 어느 계좌를 어떻게 바꾸고 무엇을 내는가.
+ * 그 단계를 락·트랜잭션·예외 분류로 감싸는 일은 {@link SagaStepRunner}가,
+ * 상대 은행을 부르는 일은 {@link ExternalCreditGateway}가 맡는다.
+ * 전진 단계와 보상 단계가 실패했을 때 어떻게 다른지도 {@link SagaStepRunner}에 있다.
  */
 @Service
 @RequiredArgsConstructor
@@ -51,30 +42,24 @@ public class TransferSagaService {
 
 	private static final Logger log = LoggerFactory.getLogger(TransferSagaService.class);
 
-	private final AccountService accountService;
-	private final SagaStepExecutor sagaStepExecutor;
-	private final ExternalBankClient externalBankClient;
+	private final SagaStepRunner sagaStepRunner;
+	private final ExternalCreditGateway externalCreditGateway;
 	private final SettlementAccounts settlementAccounts;
 	private final PendingExternalCredits pendingExternalCredits;
-	private final ExternalCallBulkhead bulkhead;
-	private final ExternalCallCircuitBreaker circuitBreaker;
-
-	/** 실패했을 때 대신 남길 이벤트. 전진 단계만 갖는다. */
-	private record Fallback(String eventType, Object body) {
-	}
 
 	/** 송금 접수 → 출금 계좌에서 뺀다. */
 	public void onRequested(TransferEvents.Requested event) {
-		runStep(TransferEvents.REQUESTED, event.transferId(), event.fromAccountId(),
-				balance -> balance.debit(event.amount(), event.currency()),
-				TransferEvents.DEBITED,
-				balance -> new TransferEvents.Debited(
-						event.transferId(), event.fromAccountId(), event.toAccountId(),
-						// 여기까지 실어 날라야 입금 단계가 어디로 보낼지 안다 (Phase 6.5).
-						event.toBankCode(), event.toAccountNumber(),
-						event.amount(), event.currency(), balance.total(), Timestamps.now()),
-				new SagaStepExecutor.BalanceChange(AccountEvents.BalanceChangeReason.TRANSFER_DEBIT,
-						AccountEvents.TransactionDirection.DEBIT, event.amount()),
+		sagaStepRunner.run(new ConsumedEvent(TransferEvents.REQUESTED, event.transferId()),
+				new SagaStep(event.fromAccountId(),
+						balance -> balance.debit(event.amount(), event.currency()),
+						TransferEvents.DEBITED,
+						balance -> new TransferEvents.Debited(
+								event.transferId(), event.fromAccountId(), event.toAccountId(),
+								// 여기까지 실어 날라야 입금 단계가 어디로 보낼지 안다 (Phase 6.5).
+								event.toBankCode(), event.toAccountNumber(),
+								event.amount(), event.currency(), balance.total(), Timestamps.now()),
+						new BalanceChange(AccountEvents.BalanceChangeReason.TRANSFER_DEBIT,
+								AccountEvents.TransactionDirection.DEBIT, event.amount())),
 				// 출금이 실패했으면 아직 움직인 돈이 없다. 되돌릴 것 없이 송금만 종결하면 된다.
 				reason -> new Fallback(TransferEvents.DEBIT_FAILED, new TransferEvents.DebitFailed(
 						event.transferId(), event.fromAccountId(), event.toAccountId(),
@@ -113,12 +98,7 @@ public class TransferSagaService {
 	private void creditExternal(TransferEvents.Debited event) {
 		ExternalCreditResult result;
 		try {
-			// 격벽. 자리가 없으면 기다리지 않고 거절한다 —
-			// 기다리면 스레드가 묶이는 것은 똑같아서 격벽의 의미가 사라진다.
-			result = bulkhead.call(() -> circuitBreaker.call(event.toBankCode(),
-					() -> externalBankClient.credit(
-							event.toBankCode(), event.transferId(), event.toAccountNumber(),
-							event.amount(), event.currency())));
+			result = externalCreditGateway.credit(ExternalCreditRequest.of(event));
 		} catch (BulkheadFullException | CallNotPermittedException noRoom) {
 			// 보내지도 못했다. 돈은 안 나갔다 — 사고가 아니라 미룬 것이다.
 			// 내부 송금이 쓸 스레드를 지키려고 일부러 여기서 멈춘다.
@@ -137,7 +117,7 @@ public class TransferSagaService {
 			// 출금은 이미 나갔으니 돌려놔야 한다.
 			log.warn("상대 은행이 거절했다 (bank={}, transferId={}, reason={})",
 					event.toBankCode(), event.transferId(), result.reason());
-			recordFailure(TransferEvents.DEBITED, event.transferId(),
+			sagaStepRunner.recordFailure(new ConsumedEvent(TransferEvents.DEBITED, event.transferId()),
 					new Fallback(TransferEvents.CREDIT_FAILED, new TransferEvents.CreditFailed(
 							event.transferId(), event.fromAccountId(), event.toAccountId(),
 							event.amount(), event.currency(),
@@ -160,7 +140,7 @@ public class TransferSagaService {
 
 	/** 조회로 거절이 확인된 건. 출금은 이미 나갔으니 보상으로 넘긴다. */
 	public void onExternalCreditRejected(TransferEvents.Debited event, String reason) {
-		recordFailure(TransferEvents.DEBITED, event.transferId(),
+		sagaStepRunner.recordFailure(new ConsumedEvent(TransferEvents.DEBITED, event.transferId()),
 				new Fallback(TransferEvents.CREDIT_FAILED, new TransferEvents.CreditFailed(
 						event.transferId(), event.fromAccountId(), event.toAccountId(),
 						event.amount(), event.currency(),
@@ -169,17 +149,18 @@ public class TransferSagaService {
 
 	/** 우리 계좌(고객 계좌 또는 정산 계좌)에 입금한다. 여기부터는 내부·외부가 같다. */
 	private void creditInternal(TransferEvents.Debited event, UUID creditAccountId) {
-		runStep(TransferEvents.DEBITED, event.transferId(), creditAccountId,
-				balance -> balance.credit(event.amount(), event.currency()),
-				TransferEvents.CREDITED,
-				balance -> new TransferEvents.Credited(
-						// 외부 송금이면 여기 담기는 것은 정산 계좌다.
-						// 원장이 두 다리를 맞추는 기준이 되므로 실제로 입금된 계좌여야 한다.
-						event.transferId(), event.fromAccountId(), creditAccountId,
-						event.amount(), event.currency(), event.fromBalanceAfter(), balance.total(),
-						Timestamps.now()),
-				new SagaStepExecutor.BalanceChange(AccountEvents.BalanceChangeReason.TRANSFER_CREDIT,
-						AccountEvents.TransactionDirection.CREDIT, event.amount()),
+		sagaStepRunner.run(new ConsumedEvent(TransferEvents.DEBITED, event.transferId()),
+				new SagaStep(creditAccountId,
+						balance -> balance.credit(event.amount(), event.currency()),
+						TransferEvents.CREDITED,
+						balance -> new TransferEvents.Credited(
+								// 외부 송금이면 여기 담기는 것은 정산 계좌다.
+								// 원장이 두 다리를 맞추는 기준이 되므로 실제로 입금된 계좌여야 한다.
+								event.transferId(), event.fromAccountId(), creditAccountId,
+								event.amount(), event.currency(), event.fromBalanceAfter(), balance.total(),
+								Timestamps.now()),
+						new BalanceChange(AccountEvents.BalanceChangeReason.TRANSFER_CREDIT,
+								AccountEvents.TransactionDirection.CREDIT, event.amount())),
 				// 여기서부터가 진짜 문제다. 출금은 이미 나갔는데 입금이 안 됐으므로 돈이 공중에 뜬다.
 				reason -> new Fallback(TransferEvents.CREDIT_FAILED, new TransferEvents.CreditFailed(
 						event.transferId(), event.fromAccountId(), creditAccountId,
@@ -195,59 +176,14 @@ public class TransferSagaService {
 	 * 그래서 예외를 밖으로 던져 컨슈머 재시도에 맡기고, 끝내 안 되면 DLT로 보낸다(사람이 봐야 한다).
 	 */
 	public void onCreditFailed(TransferEvents.CreditFailed event) {
-		runStep(TransferEvents.CREDIT_FAILED, event.transferId(), event.fromAccountId(),
-				balance -> balance.credit(event.amount(), event.currency()),
-				TransferEvents.DEBIT_REVERSED,
-				balance -> new TransferEvents.DebitReversed(
-						event.transferId(), event.fromAccountId(), event.amount(), event.currency(),
-						balance.total(), event.failureReason(), Timestamps.now()),
-				new SagaStepExecutor.BalanceChange(AccountEvents.BalanceChangeReason.TRANSFER_REFUND,
-						AccountEvents.TransactionDirection.CREDIT, event.amount()),
-				null);
-	}
-
-	/**
-	 * @param fallback 업무적 실패 시 대신 남길 이벤트를 만든다. {@code null}이면 보상 단계라는
-	 *                 뜻으로, 실패를 삼키지 않고 밖으로 던져 재배달되게 한다.
-	 */
-	private void runStep(String consumedEventType, UUID transferId, UUID accountId,
-			Consumer<AccountBalance> mutation, String nextEventType,
-			Function<AccountBalance, Object> nextEventBody,
-			SagaStepExecutor.BalanceChange balanceChange, Function<String, Fallback> fallback) {
-		try {
-			// 잔액 변경이므로 REST 진입점과 똑같은 동시성 방어(분산 락 + 낙관적 락)를 거친다.
-			accountService.guarded(accountId, balanceChange.direction(), shardNo -> {
-				sagaStepExecutor.execute(consumedEventType, transferId, accountId, shardNo,
-						mutation, nextEventType, nextEventBody, balanceChange);
-				return null;
-			});
-		} catch (DataIntegrityViolationException duplicate) {
-			// 처리 흔적 INSERT가 PK 중복으로 막혔다 = 이미 처리한 이벤트.
-			// 재전송은 at-least-once의 정상 동작이므로 조용히 넘어간다.
-			log.info("이미 처리한 이벤트라 건너뛴다 (event={}, transferId={})", consumedEventType, transferId);
-		} catch (AccountNotFoundException | InsufficientBalanceException
-				| AccountNotActiveException | CurrencyMismatchException businessFailure) {
-			// 다시 시도해도 결과가 같은 실패다. 재시도해봐야 소용없으므로 흐름을 여기서 꺾는다.
-			if (fallback == null) {
-				log.error("보상 단계가 실패했다 - 출금이 되돌아가지 않았다. 재시도 후에도 실패하면 DLT로 간다"
-						+ " (event={}, transferId={}, reason={})",
-						consumedEventType, transferId, businessFailure.getMessage());
-				throw businessFailure;
-			}
-			Fallback next = fallback.apply(businessFailure.getMessage());
-			log.warn("Saga 단계 실패 - {}를 발행해 흐름을 꺾는다 (event={}, transferId={}, reason={})",
-					next.eventType(), consumedEventType, transferId, businessFailure.getMessage());
-			recordFailure(consumedEventType, transferId, next);
-		}
-	}
-
-	private void recordFailure(String consumedEventType, UUID transferId, Fallback fallback) {
-		try {
-			sagaStepExecutor.recordFailure(consumedEventType, transferId, fallback.eventType(), fallback.body());
-		} catch (DataIntegrityViolationException duplicate) {
-			// 같은 이벤트가 동시에 두 번 처리돼 둘 다 실패한 경우. 실패 이벤트는 한 번만 나가면 된다.
-			log.info("이미 실패로 기록된 이벤트라 건너뛴다 (event={}, transferId={})",
-					consumedEventType, transferId);
-		}
+		sagaStepRunner.compensate(new ConsumedEvent(TransferEvents.CREDIT_FAILED, event.transferId()),
+				new SagaStep(event.fromAccountId(),
+						balance -> balance.credit(event.amount(), event.currency()),
+						TransferEvents.DEBIT_REVERSED,
+						balance -> new TransferEvents.DebitReversed(
+								event.transferId(), event.fromAccountId(), event.amount(), event.currency(),
+								balance.total(), event.failureReason(), Timestamps.now()),
+						new BalanceChange(AccountEvents.BalanceChangeReason.TRANSFER_REFUND,
+								AccountEvents.TransactionDirection.CREDIT, event.amount())));
 	}
 }

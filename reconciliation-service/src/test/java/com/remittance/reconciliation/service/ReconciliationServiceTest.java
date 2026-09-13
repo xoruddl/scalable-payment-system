@@ -8,10 +8,12 @@ import com.remittance.reconciliation.domain.FindingType;
 import com.remittance.reconciliation.domain.ReconciliationFinding;
 import com.remittance.reconciliation.domain.ReconciliationRun;
 import com.remittance.reconciliation.repository.ReconciliationFindingRepository;
+import com.remittance.reconciliation.repository.ReconciliationRunRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.client.ResourceAccessException;
 
 import java.math.BigDecimal;
@@ -19,6 +21,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -40,6 +43,12 @@ class ReconciliationServiceTest extends AbstractIntegrationTest {
 
 	@Autowired
 	private ReconciliationFindingRepository findingRepository;
+
+	@Autowired
+	private ReconciliationRunRepository runRepository;
+
+	@Autowired
+	private ReconciliationRunRecorder recorder;
 
 	@MockitoBean
 	private AccountClient accountClient;
@@ -247,5 +256,55 @@ class ReconciliationServiceTest extends AbstractIntegrationTest {
 				.as("0건이라는 결과를 그대로 믿으면 안 된다는 표시가 남아야 한다")
 				.contains("connection refused");
 		assertThat(run.getFinishedAt()).isNotNull();
+	}
+
+	/**
+	 * 이번 분리의 이유를 그대로 잰다 (2026-09-11).
+	 *
+	 * 검사는 세 서비스에 HTTP를 치고 계좌 수에 비례해 길어진다. 그 사이 트랜잭션이 열려
+	 * 있으면 커넥션이 그만큼 묶인다 — account-service가 상대 은행 호출에 이미 ★를 붙여
+	 * 금지해둔 것과 같은 문제다.
+	 *
+	 * 구조로만 지켜둔 성질은 다음 사람이 {@code @Transactional} 한 줄로 되돌릴 수 있어서,
+	 * 클라이언트가 불리는 순간 트랜잭션이 실제로 없는지를 못 박는다.
+	 */
+	@Test
+	void 검사는_트랜잭션_밖에서_돈다() {
+		AtomicBoolean 트랜잭션_안에서_불렸다 = new AtomicBoolean();
+		UUID accountId = UUID.randomUUID();
+		given(accountClient.balances(any(), anyInt())).willAnswer(invocation -> {
+			트랜잭션_안에서_불렸다.set(TransactionSynchronizationManager.isActualTransactionActive());
+			return new AccountClient.BalancePage(List.of(account(accountId, "1000.00")), null, false);
+		});
+		given(ledgerClient.balancesOf(any())).willReturn(Map.of(accountId, new BigDecimal("1000.00")));
+		noUnsettledWork();
+
+		reconciliationService.runOnce();
+
+		assertThat(트랜잭션_안에서_불렸다)
+				.as("HTTP를 치는 동안 DB 트랜잭션과 커넥션을 쥐고 있으면 안 된다")
+				.isFalse();
+	}
+
+	/**
+	 * 회차가 트랜잭션 둘로 갈리면서 "도는 중인 회차"가 DB에 보이게 됐다.
+	 * 그 행은 아직 아무것도 못 세서 계좌 0건·발견 0건인데, 깨끗하게 끝난 회차와 구분이 안 된다.
+	 * 마지막 회차를 묻는 자리(지표 시드, {@code /runs/latest})가 그걸 집으면
+	 * 배치가 멈춘 것을 정상으로 읽는다 — 이 서비스가 막으려는 바로 그 오해다.
+	 */
+	@Test
+	void 도는_중인_회차는_마지막_회차로_치지_않는다() {
+		UUID accountId = UUID.randomUUID();
+		accountsReturn(account(accountId, "3000.00"));
+		given(ledgerClient.balancesOf(any())).willReturn(Map.of(accountId, new BigDecimal("3000.00")));
+		noUnsettledWork();
+		ReconciliationRun 끝난_회차 = reconciliationService.runOnce();
+
+		recorder.open(Instant.now());
+
+		assertThat(runRepository.findFirstByFinishedAtIsNotNullOrderByIdDesc())
+				.get()
+				.extracting(ReconciliationRun::getId)
+				.isEqualTo(끝난_회차.getId());
 	}
 }
