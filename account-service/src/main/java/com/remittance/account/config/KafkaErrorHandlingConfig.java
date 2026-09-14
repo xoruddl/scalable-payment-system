@@ -6,10 +6,12 @@ import com.remittance.account.exception.ConcurrentUpdateException;
 import com.remittance.account.exception.CurrencyMismatchException;
 import com.remittance.account.exception.InsufficientBalanceException;
 import com.remittance.account.exception.LockAcquisitionException;
+import com.remittance.account.exception.LockUnavailableException;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.common.TopicPartition;
+import org.redisson.client.RedisException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Bean;
@@ -129,8 +131,12 @@ public class KafkaErrorHandlingConfig {
 	 */
 	static boolean isContention(Throwable exception) {
 		for (Throwable cause = exception; cause != null; cause = cause.getCause()) {
+			// Redis에 닿지 못한 것도 "잠시 뒤 다시 하면 되는" 실패다 (Phase 6.7, D-006). 여기서 빠지면
+			// 세 번 만에 DLT로 가 송금이 DEBIT_COMPLETED에 갇힌다 — 갇힘 9건과 같은 모양이다.
+			// LAYERED는 폴백으로 이 예외가 여기까지 오지 않지만, 폴백이 없는 전략을 위해 둔다.
 			if (cause instanceof LockAcquisitionException || cause instanceof ConcurrentUpdateException
-					|| cause instanceof PessimisticLockingFailureException) {
+					|| cause instanceof PessimisticLockingFailureException
+					|| cause instanceof LockUnavailableException || cause instanceof RedisException) {
 				return true;
 			}
 			if (cause.getCause() == cause) {

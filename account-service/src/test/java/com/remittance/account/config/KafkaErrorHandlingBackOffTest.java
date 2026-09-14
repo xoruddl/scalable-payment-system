@@ -3,7 +3,9 @@ package com.remittance.account.config;
 import com.remittance.account.exception.AccountNotFoundException;
 import com.remittance.account.exception.ConcurrentUpdateException;
 import com.remittance.account.exception.LockAcquisitionException;
+import com.remittance.account.exception.LockUnavailableException;
 import org.junit.jupiter.api.Test;
+import org.redisson.client.RedisConnectionException;
 import org.springframework.dao.CannotAcquireLockException;
 import org.springframework.kafka.listener.ListenerExecutionFailedException;
 import org.springframework.util.backoff.BackOff;
@@ -60,6 +62,21 @@ class KafkaErrorHandlingBackOffTest {
 				new CannotAcquireLockException("Lock wait timeout exceeded"));
 
 		assertThat(givesUp(backOff, 1_000)).isFalse();
+	}
+
+	/**
+	 * Redis에 닿지 못한 것도 "잠시 뒤 다시 하면 되는" 실패다 (Phase 6.7, D-006).
+	 * LAYERED는 폴백으로 여기까지 오지 않지만, 폴백이 없는 전략이나 락 밖에서 난 Redis 오류가
+	 * DLT로 가면 Redis가 7초만 멈춰도 송금이 갇힌다.
+	 */
+	@Test
+	void Redis에_못_닿은_것도_포기하지_않는다() {
+		assertThat(givesUp(KafkaErrorHandlingConfig.backOffFor(
+				new LockUnavailableException("lock:account:x", new RuntimeException("연결 거부"))), 1_000))
+				.as("Redis가 잠깐 멈춘 것으로 돈을 가두면 안 된다")
+				.isFalse();
+		assertThat(givesUp(KafkaErrorHandlingConfig.backOffFor(
+				new RedisConnectionException("연결 거부")), 1_000)).isFalse();
 	}
 
 	@Test

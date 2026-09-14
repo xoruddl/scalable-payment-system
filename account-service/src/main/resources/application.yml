@@ -50,6 +50,10 @@ spring:
     properties:
       hibernate:
         format_sql: true
+  # 잔액 분산 락(Redisson)과 health가 여기를 본다 (Phase 6.7, D-006).
+  # spring.data.redis.sentinel.master · nodes가 들어오면 Sentinel로 붙는다 — RedissonConfig가
+  # 이 키를 그대로 읽고, gateway도 같은 키를 쓴다. 기본은 단일 Redis이고 Sentinel은 장애 전환을
+  # 실험할 때만 켠다(REDIS_SENTINEL=1). Redis에 닿지 못하면 행 락만으로 진행한다(폴백).
   data:
     redis:
       host: localhost

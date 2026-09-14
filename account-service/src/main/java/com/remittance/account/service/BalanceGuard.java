@@ -1,6 +1,7 @@
 package com.remittance.account.service;
 
 import com.remittance.account.exception.ConcurrentUpdateException;
+import com.remittance.account.exception.LockUnavailableException;
 import com.remittance.account.lock.AccountLockPolicy;
 import com.remittance.account.lock.DistributedLock;
 import com.remittance.account.messaging.AccountEvents;
@@ -60,9 +61,10 @@ public class BalanceGuard {
 
 	private static final int MAX_OPTIMISTIC_LOCK_RETRIES = 5;
 
-	/** 잔액 변경 한 건이 걸리는 시간보다 넉넉해야 한다 (자동 갱신이 없으므로). */
-	private static final Duration LOCK_TTL = Duration.ofSeconds(3);
-	/** 같은 계좌에 요청이 몰렸을 때 기다려보는 시간. */
+	/**
+	 * 같은 계좌에 요청이 몰렸을 때 기다려보는 시간.
+	 * (락의 TTL은 여기서 정하지 않는다 — Redisson watchdog이 쥐고 있는 동안 연장한다. D-006)
+	 */
 	private static final Duration LOCK_WAIT_TIMEOUT = Duration.ofSeconds(3);
 
 	/** 조각을 전부 다룬다는 표시. 출금과 조회가 쓴다. */
@@ -113,7 +115,32 @@ public class BalanceGuard {
 		}
 		// DISTRIBUTED · LAYERED — Redis에서 줄을 선다. LAYERED면 안에서 BalanceShards가
 		// 행 락을 한 번 더 잡는다. 둘 다 조각 번호 순서로 잡으므로 순서가 엇갈릴 일이 없다.
-		return withLocks(lockKeys(accountId, shardNo), guardedAction);
+		try {
+			return withLocks(lockKeys(accountId, shardNo), guardedAction);
+		} catch (LockUnavailableException redisDown) {
+			return withoutRedisLock(redisDown, guardedAction);
+		}
+	}
+
+	/**
+	 * Redis에 닿지 못했다 — 폴백 (Phase 6.7, D-006).
+	 *
+	 * LAYERED면 행 락만으로 진행한다. 정합성은 원래 행 락이 지키고 Redis 락은 줄 세우기(효율)용이라,
+	 * 빠져도 느려질 뿐 틀리지 않는다. 송금 시스템에서 보호 장치 때문에 송금이 멈추면 안 된다 —
+	 * 게이트웨이 요청 제한의 fail-open과 같은 기준이다("없으면 틀리는가, 약해질 뿐인가").
+	 *
+	 * 두 번 실행되지 않는 근거: {@link LockUnavailableException}은 락을 잡는 단계에서만 나온다
+	 * ({@link DistributedLock}). 이 예외가 여기 왔다면 작업은 아직 한 번도 돌지 않았다.
+	 *
+	 * DISTRIBUTED는 폴백하지 않는다 — 뒤에 행 락이 없어 Redis 락이 유일한 직렬화 장치다.
+	 * 던져서 호출부(컨슈머는 경합으로 보고 재시도, REST는 503)에 맡긴다.
+	 */
+	private <T> T withoutRedisLock(LockUnavailableException redisDown, Supplier<T> guardedAction) {
+		if (!lockPolicy.usesPessimisticLock()) {
+			throw redisDown;
+		}
+		lockFallbacks().increment();
+		return guardedAction.get();
 	}
 
 	/**
@@ -145,14 +172,14 @@ public class BalanceGuard {
 	/**
 	 * 여러 락을 번호 순서대로 겹쳐 잡는다. 순서를 고정하는 것이 핵심이다 —
 	 * 두 출금이 서로 반대 순서로 조각을 잡으면 교착에 빠진다.
-	 * (락에 TTL 3초가 있어 영영 멈추지는 않지만, 3초씩 헛되이 버리게 된다.)
+	 * (대기 상한 3초가 있어 영영 멈추지는 않지만, 3초씩 헛되이 버리게 된다.)
 	 */
 	private <T> T withLocks(List<String> keys, Supplier<T> action) {
 		Supplier<T> nested = action;
 		for (int i = keys.size() - 1; i >= 0; i--) {
 			String key = keys.get(i);
 			Supplier<T> inner = nested;
-			nested = () -> distributedLock.executeWithLock(key, LOCK_TTL, LOCK_WAIT_TIMEOUT, inner);
+			nested = () -> distributedLock.executeWithLock(key, LOCK_WAIT_TIMEOUT, inner);
 		}
 		return nested.get();
 	}
@@ -192,6 +219,18 @@ public class BalanceGuard {
 		conflicts("retried");
 		conflicts("exhausted");
 		lockFailures();
+		lockFallbacks();
+	}
+
+	/**
+	 * Redis에 닿지 못해 행 락만으로 진행한 횟수 (Phase 6.7, D-006).
+	 * 조용하면 안 된다 — 폴백은 틀린 동작이 아니지만, 줄 세우기가 빠진 채 돌고 있다는 뜻이라
+	 * 커넥션 대기가 늘 수 있다. 0이 아니면 Redis를 봐야 한다.
+	 */
+	private Counter lockFallbacks() {
+		return Counter.builder("remittance.balance.lock.fallback")
+				.description("Redis에 닿지 못해 분산 락 없이 행 락만으로 진행한 횟수")
+				.register(meterRegistry);
 	}
 
 	private Counter conflicts(String outcome) {

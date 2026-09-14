@@ -2,6 +2,7 @@ package com.remittance.account.service;
 
 import com.remittance.account.domain.Account;
 import com.remittance.account.exception.ConcurrentUpdateException;
+import com.remittance.account.exception.LockUnavailableException;
 import com.remittance.account.lock.AccountLockPolicy;
 import com.remittance.account.lock.DistributedLock;
 import com.remittance.account.messaging.AccountEvents;
@@ -77,8 +78,15 @@ class BalanceGuardTest {
 	@SuppressWarnings("unchecked")
 	private void passThroughLock() {
 		given(lockPolicy.usesDistributedLock()).willReturn(true);
-		given(distributedLock.executeWithLock(any(), any(), any(), any()))
-				.willAnswer(invocation -> ((Supplier<Object>) invocation.getArgument(3)).get());
+		given(distributedLock.executeWithLock(any(), any(), any()))
+				.willAnswer(invocation -> ((Supplier<Object>) invocation.getArgument(2)).get());
+	}
+
+	/** Redis에 닿지 못한다. 락을 잡는 단계에서 실패하므로 작업은 한 번도 돌지 않는다. */
+	private void redisIsDown() {
+		given(lockPolicy.usesDistributedLock()).willReturn(true);
+		given(distributedLock.executeWithLock(any(), any(), any()))
+				.willThrow(new LockUnavailableException("lock:account:x:s0", new RuntimeException("연결 거부")));
 	}
 
 	/** 앞의 {@code failures}번은 낙관적 락 충돌로 실패하고 그다음에 성공하는 잔액 변경. */
@@ -141,5 +149,44 @@ class BalanceGuardTest {
 
 		assertThat(attempts).as("여기서 다시 하면 락 대기 3초를 한 번 더 쓴다").hasValue(1);
 		assertThat(counterSum("remittance.balance.lock.failure")).isEqualTo(1);
+	}
+
+	/**
+	 * Redis가 없어도 송금은 멈추지 않는다 (Phase 6.7, D-006).
+	 * 뒤에 행 락이 있으므로(LAYERED) 분산 락 없이 진행해도 틀리지 않는다. 한 번만 돈다.
+	 */
+	@Test
+	void LAYERED면_Redis에_못_닿아도_행_락만으로_한_번_진행한다() {
+		redisIsDown();
+		given(lockPolicy.usesPessimisticLock()).willReturn(true);
+		AtomicInteger attempts = new AtomicInteger();
+
+		String result = balanceGuard.guarded(UUID.randomUUID(),
+				AccountEvents.TransactionDirection.CREDIT, shardNo -> {
+					attempts.incrementAndGet();
+					return "진행했다";
+				});
+
+		assertThat(result).isEqualTo("진행했다");
+		assertThat(attempts).as("폴백이 작업을 두 번 돌리면 안 된다").hasValue(1);
+		assertThat(counterSum("remittance.balance.lock.fallback")).isEqualTo(1);
+	}
+
+	/** 뒤에 행 락이 없으면 Redis 락이 유일한 직렬화 장치다. 빼고 진행하면 안 된다. */
+	@Test
+	void DISTRIBUTED면_폴백하지_않고_그대로_던진다() {
+		redisIsDown();
+		given(lockPolicy.usesPessimisticLock()).willReturn(false);
+		AtomicInteger attempts = new AtomicInteger();
+
+		assertThatThrownBy(() -> balanceGuard.guarded(UUID.randomUUID(),
+				AccountEvents.TransactionDirection.CREDIT, shardNo -> {
+					attempts.incrementAndGet();
+					return "진행했다";
+				}))
+				.isInstanceOf(LockUnavailableException.class);
+
+		assertThat(attempts).hasValue(0);
+		assertThat(counterSum("remittance.balance.lock.fallback")).isZero();
 	}
 }

@@ -11,6 +11,9 @@ dependencies {
 	implementation 'org.springframework.boot:spring-boot-starter-flyway'
 	// MySQL 8은 별도 모듈이 있어야 Flyway가 방언을 인식한다. 없으면 기동 시 "Unsupported Database"로 죽는다.
 	runtimeOnly 'org.flywaydb:flyway-mysql'
+	// 잔액 분산 락 (Phase 6.7, D-006). watchdog · pub/sub 대기 · Sentinel 연결.
+	implementation "org.redisson:redisson:${redissonVersion}"
+	// Redis 상태를 /actuator/health에 싣기 위해 남긴다 — 락은 위 Redisson이 잡는다.
 	implementation 'org.springframework.boot:spring-boot-starter-data-redis'
 	implementation 'org.springframework.boot:spring-boot-starter-kafka'
 	implementation 'org.springframework.boot:spring-boot-starter-validation'

@@ -1007,6 +1007,17 @@
           "legendFormat": "행 락 포기 (LAYERED에서 뜨면 Redis 락이 TTL로 풀린 틈)",
           "range": true,
           "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum(rate(remittance_balance_lock_fallback_total[1m]))",
+          "legendFormat": "폴백 — Redis 없이 행 락만으로 진행 (0이 아니면 Redis를 봐야 한다)",
+          "range": true,
+          "refId": "C"
         }
       ],
       "fieldConfig": {

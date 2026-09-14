@@ -4,6 +4,12 @@ spring:
   data:
     # Rate Limiting의 카운터를 여기 둔다. 인메모리로 두면 게이트웨이를 여러 대 띄우는 순간
     # 각자 세고, 재기동하면 리셋된다 — "초당 10건"이 "대수 × 10건"이 된다.
+    #
+    # 기본은 단일 Redis다. Redis가 죽으면 요청 제한은 통과시킨다(fail-open) — 그래서 Sentinel은
+    # 장애 전환을 볼 때만 켠다 (Phase 6.7, D-006). spring.data.redis.sentinel.master · nodes가 들어오면
+    # Lettuce가 Sentinel에게 주 노드를 묻고, 장애 전환 뒤에도 새 주 노드를 따라간다.
+    # 코드는 그대로이고 값만 넣는다 — scripts/homelab-services.sh의 REDIS_SENTINEL=1.
+    # account(Redisson)도 같은 키를 읽는다. 둘이 다른 Redis를 보면 안 된다.
     redis:
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}

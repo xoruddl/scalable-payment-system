@@ -235,7 +235,7 @@ class BalanceShardingTest extends AbstractIntegrationTest {
 	private Set<String> lockedKeysFor(UUID accountId) {
 		ArgumentCaptor<String> keys = ArgumentCaptor.forClass(String.class);
 		verify(distributedLock, atLeastOnce())
-				.executeWithLock(keys.capture(), any(Duration.class), any(Duration.class), any());
+				.executeWithLock(keys.capture(), any(Duration.class), any());
 		return keys.getAllValues().stream()
 				.filter(key -> key.startsWith("lock:account:" + accountId))
 				.collect(Collectors.toSet());

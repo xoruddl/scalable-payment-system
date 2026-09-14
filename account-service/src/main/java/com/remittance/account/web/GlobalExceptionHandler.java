@@ -6,6 +6,7 @@ import com.remittance.account.exception.ConcurrentUpdateException;
 import com.remittance.account.exception.CurrencyMismatchException;
 import com.remittance.account.exception.InsufficientBalanceException;
 import com.remittance.account.exception.LockAcquisitionException;
+import com.remittance.account.exception.LockUnavailableException;
 import com.remittance.account.exception.StaleBalanceSnapshotException;
 import com.remittance.account.exception.UnpublishedJournalException;
 import com.remittance.account.web.dto.ErrorResponse;
@@ -49,6 +50,16 @@ public class GlobalExceptionHandler {
 	@ExceptionHandler(LockAcquisitionException.class)
 	public ResponseEntity<ErrorResponse> handleLockAcquisition(LockAcquisitionException e) {
 		return error(HttpStatus.CONFLICT, "LOCK_TIMEOUT", e.getMessage());
+	}
+
+	/**
+	 * Redis에 닿지 못해 분산 락을 못 잡았다 (Phase 6.7, D-006). 기본 전략(LAYERED)은 행 락만으로
+	 * 진행하므로 여기까지 오지 않는다 — 폴백이 없는 전략(DISTRIBUTED)에서만 온다.
+	 * 붐빈 것(409)이 아니라 잠시 쓸 수 없는 것이라 503이다.
+	 */
+	@ExceptionHandler(LockUnavailableException.class)
+	public ResponseEntity<ErrorResponse> handleLockUnavailable(LockUnavailableException e) {
+		return error(HttpStatus.SERVICE_UNAVAILABLE, "LOCK_UNAVAILABLE", "잠시 후 다시 시도해 주세요.");
 	}
 
 	/**
