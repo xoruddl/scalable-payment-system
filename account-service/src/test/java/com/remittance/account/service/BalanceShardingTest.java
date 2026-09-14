@@ -10,7 +10,10 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.dao.PessimisticLockingFailureException;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
 import java.time.Duration;
@@ -24,7 +27,9 @@ import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.BDDMockito.willReturn;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.verify;
 
@@ -34,6 +39,10 @@ import static org.mockito.Mockito.verify;
  * 빠른지는 여기서 답하지 않는다. 그건 홈서버 부하 시험의 몫이다.
  * 여기서 볼 것은 그보다 앞선 두 가지다 — 총액이 맞는가, 그리고 락이 조각별로 갈리는가.
  * 락이 안 갈리면 조각을 아무리 나눠도 거기서 다시 줄을 서므로 빨라질 수가 없다.
+ *
+ * 락이 둘이라 갈리는지도 두 번 본다 (Phase 6.7)
+ * 기본 전략(LAYERED)은 Redis 락과 행 락을 둘 다 잡는다. Redis 쪽은 잡은 키를 세고,
+ * 행 쪽은 실제로 조각 하나를 잠가 두고 입금이 비켜 가는지와 출금이 기다리는지를 본다.
  */
 @SpringBootTest
 class BalanceShardingTest extends AbstractIntegrationTest {
@@ -49,8 +58,15 @@ class BalanceShardingTest extends AbstractIntegrationTest {
 	@Autowired
 	private AccountBalanceShardRepository shardRepository;
 
+	@Autowired
+	private PlatformTransactionManager transactionManager;
+
 	@MockitoSpyBean
 	private DistributedLock distributedLock;
+
+	/** 입금이 어느 조각으로 갈지를 시험에서 정하려고 감싼다. 무작위면 "잠긴 조각을 비켜 간다"를 못 잰다. */
+	@MockitoSpyBean
+	private ShardRouter shardRouter;
 
 	private UUID shardedAccount() {
 		Account account = accountService.createAccount(UUID.randomUUID(), "KRW", AccountType.BUSINESS);
@@ -129,6 +145,50 @@ class BalanceShardingTest extends AbstractIntegrationTest {
 		assertThat(lockedKeysFor(accountId)).hasSize(SHARDS);
 	}
 
+	/**
+	 * 행 락도 조각별로 갈려야 한다. Redis 키가 갈려도 행 락이 계좌 단위면 트랜잭션 안에서
+	 * 다시 줄을 선다. 0번 조각을 다른 트랜잭션이 쥐고 있어도 1번에 넣는 입금은 기다리지 않아야 한다.
+	 */
+	@Test
+	void 입금은_잠긴_조각의_행을_비켜_간다() throws Exception {
+		UUID accountId = shardedAccount();
+		willReturn((short) 1).given(shardRouter).pickForCredit(accountId);
+
+		long elapsedMs;
+		try (RowLockHolder ignored = holdRowLock(accountId, (short) 0)) {
+			long startedAt = System.nanoTime();
+			accountService.credit(accountId, BigDecimal.valueOf(10), "KRW");
+			elapsedMs = Duration.ofNanos(System.nanoTime() - startedAt).toMillis();
+		}
+
+		assertThat(elapsedMs)
+				.as("0번 조각의 행 락을 기다렸다면 대기 상한 3초 가까이 걸린다")
+				.isLessThan(2_000);
+		assertThat(shardsOf(accountId).get(1).getBalance()).isEqualByComparingTo("10");
+	}
+
+	/**
+	 * 출금은 합을 보므로 조각 하나라도 행이 잠겨 있으면 들어가지 못하고, 대기 상한 3초를 넘기면
+	 * 포기한다. 잠근 쪽이 Redis를 거치지 않았으므로 출금은 Redis 락은 잡는다 — 막는 것은 행 락이다.
+	 */
+	@Test
+	void 출금은_조각의_행이_하나라도_잠겨_있으면_기다린다() throws Exception {
+		UUID accountId = shardedAccount();
+		for (int i = 0; i < 8; i++) {
+			accountService.credit(accountId, BigDecimal.valueOf(100), "KRW");
+		}
+
+		try (RowLockHolder ignored = holdRowLock(accountId, (short) (SHARDS - 1))) {
+			assertThatThrownBy(() -> accountService.debit(accountId, BigDecimal.valueOf(100), "KRW"))
+					.as("마지막 조각의 행이 잠겨 있으면 출금은 거기서 막혀야 한다")
+					.isInstanceOf(PessimisticLockingFailureException.class);
+		}
+
+		assertThat(accountService.getBalance(accountId).total())
+				.as("포기한 출금은 아무것도 움직이지 않았어야 한다")
+				.isEqualByComparingTo("800");
+	}
+
 	@Test
 	void 한_조각에는_모자라도_합이_되면_출금된다() {
 		UUID accountId = shardedAccount();
@@ -175,7 +235,7 @@ class BalanceShardingTest extends AbstractIntegrationTest {
 	private Set<String> lockedKeysFor(UUID accountId) {
 		ArgumentCaptor<String> keys = ArgumentCaptor.forClass(String.class);
 		verify(distributedLock, atLeastOnce())
-				.executeWithLock(keys.capture(), any(Duration.class), any(Duration.class), any());
+				.executeWithLock(keys.capture(), any(Duration.class), any());
 		return keys.getAllValues().stream()
 				.filter(key -> key.startsWith("lock:account:" + accountId))
 				.collect(Collectors.toSet());
@@ -183,6 +243,38 @@ class BalanceShardingTest extends AbstractIntegrationTest {
 
 	private void clearLockKeys() {
 		org.mockito.Mockito.clearInvocations(distributedLock);
+	}
+
+	/** 다른 트랜잭션이 Redis를 거치지 않고 조각 하나의 행을 잠그고 쥐고 있다. 닫으면 커밋해 놓는다. */
+	private RowLockHolder holdRowLock(UUID accountId, short shardNo) throws InterruptedException {
+		CountDownLatch locked = new CountDownLatch(1);
+		CountDownLatch release = new CountDownLatch(1);
+		ExecutorService holder = Executors.newSingleThreadExecutor();
+		holder.submit(() -> new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
+			shardRepository.findForUpdateByAccountIdAndShardNo(accountId, shardNo);
+			locked.countDown();
+			awaitQuietly(release);
+		}));
+		assertThat(locked.await(10, TimeUnit.SECONDS)).as("조각을 잠그지 못했다").isTrue();
+		return new RowLockHolder(release, holder);
+	}
+
+	private record RowLockHolder(CountDownLatch release, ExecutorService holder) implements AutoCloseable {
+
+		@Override
+		public void close() throws InterruptedException {
+			release.countDown();
+			holder.shutdown();
+			holder.awaitTermination(10, TimeUnit.SECONDS);
+		}
+	}
+
+	private static void awaitQuietly(CountDownLatch latch) {
+		try {
+			latch.await(30, TimeUnit.SECONDS);
+		} catch (InterruptedException e) {
+			Thread.currentThread().interrupt();
+		}
 	}
 
 	private static Throwable catchThrowable(Runnable runnable) {

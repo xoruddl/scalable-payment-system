@@ -100,7 +100,7 @@
 `MeterRegistry`도 주입으로 센다 — 계측도 협력자다.
 
 아래 스크립트는 `private final` 필드를 모두 세므로 주입이 아닌 필드도 들어간다.
-`ReconciliationMetrics`(주입 3 + 상태 4), `DistributedLock`(주입 1 + 계측 5 + 스크립트 1),
+`ReconciliationMetrics`(주입 3 + 상태 4), `DistributedLock`(주입 2 + 회로 1 + 계측 3),
 `ExternalCallCircuitBreaker`(주입 필드 없음)는 스크립트에는 걸리지만 위 표에서 뺐다.
 주입 수는 생성자를 보고 셌다.
 

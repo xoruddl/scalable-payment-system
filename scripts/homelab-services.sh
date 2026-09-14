@@ -63,6 +63,20 @@ CPUSET="${CPUSET:-}"
 # 코드를 고쳐가며 재면 빌드가 달라져 무엇 때문에 숫자가 바뀌었는지 말할 수 없다.
 SERVICE_ENV="${SERVICE_ENV:-}"
 
+# 장애 전환을 보려고 Redis를 Sentinel로 띄웠을 때만(docker-compose.sentinel.yml) 켠다 (Phase 6.7, D-006).
+# 기본은 0 — 단일 Redis이고, Redis가 죽으면 잔액 락은 행 락만으로 진행한다(폴백).
+#
+#   REDIS_SENTINEL=1 CPUSET=0-9 ./scripts/homelab-services.sh restart
+#
+# 모든 서비스에 같은 값을 넘긴다 — account(Redisson)와 gateway(Lettuce)가 같은 키를 읽는다.
+# 한쪽만 Sentinel을 보면 장애 전환 뒤 둘이 다른 주 노드를 본다: gateway는 옛 주 노드에 붙은 채
+# 요청 제한이 조용히 꺼지고(fail-open), 누구도 그걸 모른다.
+REDIS_SENTINEL="${REDIS_SENTINEL:-0}"
+if [ "$REDIS_SENTINEL" = "1" ]; then
+	SERVICE_ENV="$SERVICE_ENV SPRING_DATA_REDIS_SENTINEL_MASTER=remittance"
+	SERVICE_ENV="$SERVICE_ENV SPRING_DATA_REDIS_SENTINEL_NODES=127.0.0.1:26379,127.0.0.1:26380,127.0.0.1:26381"
+fi
+
 # <b>2번째 인스턴스부터만</b> 추가로 넘기는 설정. SERVICE_ENV 뒤에 붙으므로 같은 키면 이긴다.
 #
 #   REPLICAS="account-service=2" SERVICE_ENV_2="OUTBOX_RELAY_ENABLED=false" \

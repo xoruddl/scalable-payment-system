@@ -155,7 +155,7 @@ DTO가 중복되더라도 서비스 경계를 유지하는 쪽을 택했다.
 
 | 모듈 | 포트 | 저장소 |
 |---|---|---|
-| `account-service` | 8081 | MySQL `account_db` (+ Redis 분산 락) |
+| `account-service` | 8081 | MySQL `account_db` (+ Redis 분산 락 — Redisson. Redis가 없으면 행 락만으로 진행) |
 | `transfer-service` | 8082 | MySQL `transfer_db` |
 | `ledger-service` | 8083 | MongoDB `ledger_db` |
 | `reconciliation-service` | 8084 | MySQL `reconciliation_db` |

@@ -58,6 +58,13 @@ ext {
 	 * 두 줄기가 같은 날 함께 릴리스되므로 최신 숫자만 보고 2.9.0을 고르면 조용히 어긋난다.
 	 */
 	springdocVersion = '3.1.0'
+
+	/*
+	 * Redisson도 Boot의 BOM이 관리하지 않는다 (Phase 6.7, DECISIONS.md D-006).
+	 * 스타터가 아니라 코어만 쓴다 — Boot 4용 자동 설정에 기대지 않고 RedissonClient를 직접
+	 * 조립한다(Resilience4j와 같은 방식, D-002). 락과 Sentinel 연결만 필요하다.
+	 */
+	redissonVersion = '4.7.0'
 }
 
 allprojects {

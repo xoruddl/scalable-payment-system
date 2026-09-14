@@ -1,190 +1,272 @@
 package com.remittance.account.lock;
 
 import com.remittance.account.exception.LockAcquisitionException;
+import com.remittance.account.exception.LockUnavailableException;
+import io.github.resilience4j.circuitbreaker.CircuitBreaker;
+import io.github.resilience4j.circuitbreaker.CircuitBreakerConfig;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
+import org.redisson.api.RLock;
+import org.redisson.api.RedissonClient;
+import org.redisson.client.RedisException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.data.redis.core.StringRedisTemplate;
-import org.springframework.data.redis.core.script.DefaultRedisScript;
-import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
-import java.util.List;
-import java.util.UUID;
+import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 
 /**
- * Redis 기반 분산 락.
+ * Redis 분산 락 — Redisson {@link RLock} (Phase 6.7, DECISIONS.md D-006).
  *
- * 동작은 두 줄로 요약된다.
- *   - 획득: {@code SET key <내 토큰> NX PX <ttl>} — 키가 없을 때만 성공한다.
- *   - 해제: 저장된 값이 내 토큰일 때만 삭제한다. 단순 DEL을 쓰면, 내 작업이 늦어져
- *       TTL로 락이 풀린 뒤 다른 서버가 잡은 락을 내가 지워버릴 수 있다.
- *       비교와 삭제가 원자적이어야 하므로 Lua 스크립트로 처리한다.
+ * 왜 Redisson으로 갈아탔나 (2026-09-14)
+ * Phase 2부터 {@code SET NX PX} + Lua로 직접 만들어 썼다. 한계가 둘이었다.
  *
- * Redisson 같은 라이브러리와 달리 자동 갱신(watchdog)이 없다.
- * 따라서 TTL은 임계 구역이 걸리는 최대 시간보다 넉넉해야 하고, 그보다 오래 걸리는 작업을
- * 이 락으로 감싸면 안 된다.
+ *   - 자동 갱신(watchdog)이 없다 — 임계 구역이 TTL보다 길면 락이 풀린 채로 진행된다
+ *   - 못 잡으면 50ms마다 다시 묻는다 — 락이 5ms 만에 풀려도 50ms를 채운다 (08-31 측정 12.6%)
  *
- * 왜 대기 시간을 재는가 (Phase 5 Step 2)
- * 핫 계좌 부하에서 접수는 계속 202를 주고 HTTP 에러율도 안 오른다. 경합은 비동기
- * 파이프라인 뒤에서 벌어지기 때문이다. 그 뒤에서 무슨 일이 나는지는 이 대기 시간이 답한다 —
- * 같은 계좌로 몰릴수록 여기가 먼저 부풀고, 대기가 {@code waitTimeout}을 넘기는 순간
- * {@code outcome=timeout}으로 떨어진다.
+ * Redisson은 둘 다 없앤다. 쥐고 있는 동안 watchdog이 lease를 늘리고, 풀리면 pub/sub으로 알려준다.
+ * 그리고 Sentinel(장애 전환)을 설정만으로 붙일 수 있다 ({@code RedissonConfig}).
+ * 측정이 시킨 교체는 아니다 — 08-31에 lost 0건이라 보류했었고(D-005), 소유자가 넣기로 정했다.
+ * Sentinel은 장애 전환을 볼 때만 켜는 실험용이고 기본은 단일 Redis다(D-006). 손으로 만든 구현이 가르쳐준 것(토큰 비교 해제, 대기와 보유를 나눠 재기)은
+ * 이 클래스의 지표와 {@code PROGRESS.md}에 남는다.
  *
- * Phase 6에서 락을 다른 방식으로 바꿀 때 무엇이 나아졌는지 말할 수 있는 근거가 이 값이다.
+ * Redis가 없을 때 (2026-09-14) ★
+ * 이 락은 효율용이다 — 정합성은 뒤의 행 락이 지킨다(LAYERED, D-004). 그래서 Redis에 닿지 못하면
+ * 기다리지 않고 {@link LockUnavailableException}을 던져, {@code BalanceGuard}가 행 락만으로
+ * 진행하게 한다. 송금이 보호 장치 때문에 멈추면 안 된다.
  *
- * 대기와 보유를 나눠 재는 이유 (Phase 6 Step 1)
- * 2026-08-23 핫 계좌 측정에서 대기 p99가 95~100ms로 나왔다. 그런데 그게 왜 100ms인지는
- * 대기 시간만으로 알 수 없다. 두 가지가 섞여 있기 때문이다.
+ *   - 락을 잡는 단계에서만 던진다 — 그래야 호출부가 대신 진행해도 작업이 두 번 돌지 않는다
+ *   - 연속 {@value #FAILURES_TO_OPEN}번 닿지 못하면 회로를 열어 {@link #OPEN_DURATION} 동안 부르지 않는다.
+ *     안 그러면 Redis가 죽은 동안 모든 요청이 연결 타임아웃을 한 번씩 기다린다
+ *   - 붐벼서 못 잡은 것({@link LockAcquisitionException})은 Redis가 답한 것이라 회로에 실패로 세지 않는다
+ *   - 해제 단계에서 닿지 못한 것은 삼키고 센다 — 작업은 이미 끝났다
  *
- *   - 보유 시간 — 앞사람이 임계 구역을 붙들고 있는 시간. 여기서는 JPA 트랜잭션
- *       전체(INSERT 3번 + UPDATE 1번 + 커밋)가 락 안에서 돈다.
- *   - 넘겨받는 지연 — 앞사람이 놓은 것을 뒷사람이 알아채기까지 걸리는 시간.
- *       이 구현은 {@link #RETRY_INTERVAL}마다 Redis에 다시 물어보므로,
- *       락이 5ms 만에 풀려도 최대 50ms를 더 기다린다.
+ * 무엇을 재나 — 이름은 자체 구현 때와 같다. 바꾸면 지나간 기록의 숫자와 이어지지 않는다.
  *
- * 둘은 처방이 다르다. 보유가 길면 임계 구역을 줄여야 하고, 넘겨받는 지연이 크면
- * 폴링을 그만두고 알림을 받아야 한다(Redisson은 pub/sub을 쓴다).
- * 가르지 않고 고치면 어느 쪽을 고친 건지 말할 수 없다.
+ *   remittance.lock.wait{outcome}        락을 잡기까지 기다린 시간 (acquired / timeout)
+ *   remittance.lock.hold                 락을 쥐고 있던 시간 — 한 계좌 조각의 처리량 상한이다
+ *   remittance.lock.release{outcome}     released / lost / unreachable
+ *   remittance.lock.unavailable{reason}  Redis에 닿지 못해 락 없이 넘긴 횟수 (redis_error / circuit_open)
  *
- * 해제 실패를 세는 이유 (2026-08-30)
- * 위의 "남의 락은 지우지 않는다"는 안전 장치다. 그런데 그 장치가 실제로 걸렸다는 것은
- * 이미 사고가 났다는 뜻이다 — 내 TTL이 내 작업보다 먼저 끝나서, 임계 구역이 두 서버에서
- * 겹쳐 돌았다는 말이기 때문이다. 지우지 않은 덕에 피해는 막았지만 원인은 그대로 있다.
- *
- * Lua가 그때 {@code 0}을 돌려주는데, 이 값을 버리면 겹쳤는지 아닌지를 말할 방법이 없다.
- * 겹치는 동안 낙관적 락(@Version)이 뒤에서 막아주므로 지표에도 에러율에도 안 나타난다.
- * 그래서 세어둔다.
- *
- * 이 숫자는 다음 결정의 근거이기도 하다. 0이 아니면 TTL 문제가 실재하므로
- * watchdog(Redisson)이 값을 한다. 계속 0이면 Redisson을 넣는 이유는 TTL이 아니라
- * 위의 50ms 폴링을 pub/sub으로 바꾸는 것이 된다. 근거가 다르면 교체의 성공 조건도 다르다.
+ * lost의 뜻이 바뀌었다
+ * 자체 구현에서 lost는 "TTL이 작업보다 먼저 끝났다"였다. 이제는 watchdog이 늘리지 못한 경우 —
+ * Redis 단절이나 Sentinel 장애 전환으로 락이 사라진 경우 — 가 여기로 온다.
  */
 @Component
 public class DistributedLock {
 
 	private static final Logger log = LoggerFactory.getLogger(DistributedLock.class);
 
-	/** 값이 내 토큰일 때만 삭제한다. 반환값 1 = 해제 성공, 0 = 이미 남의 락. */
-	private static final String RELEASE_SCRIPT = """
-			if redis.call('get', KEYS[1]) == ARGV[1] then
-				return redis.call('del', KEYS[1])
-			else
-				return 0
-			end
-			""";
+	/** lease를 따로 주지 않는다는 뜻. 그러면 Redisson이 watchdog으로 쥐고 있는 동안 연장한다. */
+	private static final long WATCHDOG_LEASE = -1;
 
-	private static final Duration RETRY_INTERVAL = Duration.ofMillis(50);
+	/** 연속으로 이만큼 Redis에 닿지 못하면 회로를 연다. */
+	static final int FAILURES_TO_OPEN = 3;
 
-	private final StringRedisTemplate redisTemplate;
-	private final RedisScript<Long> releaseScript = new DefaultRedisScript<>(RELEASE_SCRIPT, Long.class);
+	/**
+	 * 회로를 열어 두는 시간. 지나면 한 건만 보내 Redis가 돌아왔는지 본다.
+	 * Sentinel 장애 전환(down-after 3초 + 선출)을 넘길 만큼이다.
+	 */
+	static final Duration OPEN_DURATION = Duration.ofSeconds(5);
+
+	private final RedissonClient redisson;
+	private final MeterRegistry meterRegistry;
+	private final CircuitBreaker circuit;
 
 	/** 락을 잡기까지 기다린 시간. 잡았든 못 잡았든 잰다 — 못 잡은 쪽이 더 중요하다. */
 	private final Timer acquired;
 	private final Timer timedOut;
 
 	/**
-	 * 락을 쥐고 있던 시간. 이게 곧 한 계좌의 처리량 상한이다 —
-	 * 보유가 10ms면 그 계좌는 아무리 서버를 늘려도 초당 100건을 넘지 못한다.
+	 * 락을 쥐고 있던 시간. 이게 곧 한 계좌 조각의 처리량 상한이다 —
+	 * 보유가 10ms면 그 조각은 아무리 서버를 늘려도 초당 100건을 넘지 못한다.
 	 */
 	private final Timer held;
 
-	/** 내가 놓은 락. 정상. */
-	private final Counter released;
-
-	/**
-	 * 놓으려 했더니 이미 내 락이 아니었던 횟수. TTL이 내 작업보다 먼저 끝났다는 뜻이고,
-	 * 곧 임계 구역이 겹쳐 돌았다는 뜻이다. 0이 아니면 TTL이나 임계 구역 둘 중 하나가 틀렸다.
-	 */
-	private final Counter lost;
-
-	public DistributedLock(StringRedisTemplate redisTemplate, MeterRegistry meterRegistry) {
-		this.redisTemplate = redisTemplate;
+	public DistributedLock(RedissonClient redisson, MeterRegistry meterRegistry) {
+		this.redisson = redisson;
+		this.meterRegistry = meterRegistry;
+		this.circuit = newCircuit();
 		this.acquired = waitTimer(meterRegistry, "acquired");
 		this.timedOut = waitTimer(meterRegistry, "timeout");
 		this.held = Timer.builder("remittance.lock.hold")
 				.description("분산 락을 쥐고 있던 시간 — 한 계좌의 처리량 상한을 정한다")
 				.register(meterRegistry);
-		this.released = releaseCounter(meterRegistry, "released");
-		this.lost = releaseCounter(meterRegistry, "lost");
+		// 한 번도 안 찍혀도 0으로 보이게 미리 만든다 — "0건"과 "수집 안 됨"을 가르기 위해서다.
+		release("released");
+		release("lost");
+		release("unreachable");
+		unavailable("redis_error");
+		unavailable("circuit_open");
 	}
 
-	/**
-	 * 대기 타이머와 같은 모양으로 둔다 — 지표 하나에 결과를 태그로 붙인다.
-	 * 성공과 실패를 다른 이름의 지표로 나누면 분모가 사라져서
-	 * "몇 건 중 몇 건이 겹쳤나"를 말할 수 없다.
-	 */
-	private static Counter releaseCounter(MeterRegistry meterRegistry, String outcome) {
-		return Counter.builder("remittance.lock.release")
-				.description("분산 락 해제 결과 — lost는 TTL이 먼저 끝나 임계 구역이 겹쳤다는 뜻이다")
-				.tag("outcome", outcome)
-				.register(meterRegistry);
+	private static CircuitBreaker newCircuit() {
+		CircuitBreaker circuit = CircuitBreaker.of("redis-lock", CircuitBreakerConfig.custom()
+				.slidingWindowType(CircuitBreakerConfig.SlidingWindowType.COUNT_BASED)
+				.slidingWindowSize(FAILURES_TO_OPEN)
+				.minimumNumberOfCalls(FAILURES_TO_OPEN)
+				.failureRateThreshold(100)
+				.waitDurationInOpenState(OPEN_DURATION)
+				.permittedNumberOfCallsInHalfOpenState(1)
+				.build());
+		circuit.getEventPublisher().onStateTransition(event ->
+				log.warn("분산 락 회로 상태 전이 — Redis 없이 행 락만으로 도는지 확인하라 ({})", event.getStateTransition()));
+		return circuit;
 	}
 
 	private static Timer waitTimer(MeterRegistry meterRegistry, String outcome) {
 		return Timer.builder("remittance.lock.wait")
 				.description("분산 락을 잡기까지 기다린 시간")
 				// 실패 횟수는 별도 카운터를 두지 않는다 — outcome=timeout인 타이머의 count가 곧 그것이다.
-				// 지표를 둘로 나누면 둘이 어긋났을 때 어느 쪽이 맞는지 알 수 없다.
 				.tag("outcome", outcome)
+				.register(meterRegistry);
+	}
+
+	/**
+	 * 대기 타이머와 같은 모양으로 둔다 — 지표 하나에 결과를 태그로 붙인다.
+	 * 성공과 실패를 다른 이름의 지표로 나누면 분모가 사라져서 "몇 건 중 몇 건이 새었나"를 말할 수 없다.
+	 */
+	private Counter release(String outcome) {
+		return Counter.builder("remittance.lock.release")
+				.description("분산 락 해제 결과 — lost는 락이 먼저 사라졌다는 뜻, unreachable은 놓으러 갔는데 Redis가 없었다는 뜻")
+				.tag("outcome", outcome)
+				.register(meterRegistry);
+	}
+
+	private Counter unavailable(String reason) {
+		return Counter.builder("remittance.lock.unavailable")
+				.description("Redis에 닿지 못해 분산 락을 잡지 못한 횟수 — LAYERED에서는 행 락만으로 진행한다")
+				.tag("reason", reason)
 				.register(meterRegistry);
 	}
 
 	/**
 	 * {@code key} 락을 잡고 {@code action}을 실행한다.
 	 *
-	 * @param ttl         락 자동 만료 시간. 프로세스가 죽어도 이 시간이 지나면 풀린다.
-	 * @param waitTimeout 락을 기다려보는 최대 시간. 넘기면 예외.
+	 * TTL은 받지 않는다. 쥐고 있는 동안은 watchdog이 늘리고, 프로세스가 죽으면
+	 * {@code RedissonConfig.LOCK_WATCHDOG_TIMEOUT} 뒤에 풀린다.
+	 *
+	 * @param waitTimeout 락을 기다려보는 최대 시간. 넘기면 {@link LockAcquisitionException}.
+	 * @throws LockUnavailableException Redis에 닿지 못했다. 이때 {@code action}은 실행되지 않았다.
 	 */
-	public <T> T executeWithLock(String key, Duration ttl, Duration waitTimeout, Supplier<T> action) {
-		String token = UUID.randomUUID().toString();
-		acquire(key, token, ttl, waitTimeout);
+	public <T> T executeWithLock(String key, Duration waitTimeout, Supplier<T> action) {
+		RLock lock = acquire(key, waitTimeout);
 		long heldFrom = System.nanoTime();
 		try {
 			return action.get();
 		} finally {
 			// 해제보다 먼저 잰다. 해제(Redis 왕복)는 임계 구역이 아니라 뒷정리다.
 			held.record(System.nanoTime() - heldFrom, TimeUnit.NANOSECONDS);
-			release(key, token);
+			release(lock, key);
 		}
 	}
 
-	private void acquire(String key, String token, Duration ttl, Duration waitTimeout) {
+	private RLock acquire(String key, Duration waitTimeout) {
+		if (!circuit.tryAcquirePermission()) {
+			unavailable("circuit_open").increment();
+			throw new LockUnavailableException(key);
+		}
 		long startedAt = System.nanoTime();
-		long deadline = startedAt + waitTimeout.toNanos();
-		while (true) {
-			if (Boolean.TRUE.equals(redisTemplate.opsForValue().setIfAbsent(key, token, ttl))) {
-				acquired.record(System.nanoTime() - startedAt, TimeUnit.NANOSECONDS);
-				return;
-			}
-			if (System.nanoTime() >= deadline) {
-				timedOut.record(System.nanoTime() - startedAt, TimeUnit.NANOSECONDS);
-				throw new LockAcquisitionException(key, waitTimeout);
-			}
-			try {
-				Thread.sleep(RETRY_INTERVAL.toMillis());
-			} catch (InterruptedException e) {
-				Thread.currentThread().interrupt();
-				timedOut.record(System.nanoTime() - startedAt, TimeUnit.NANOSECONDS);
-				throw new LockAcquisitionException(key, waitTimeout);
-			}
+		Optional<RLock> lock = lockThroughCircuit(key, waitTimeout);
+		if (lock.isPresent()) {
+			acquired.record(System.nanoTime() - startedAt, TimeUnit.NANOSECONDS);
+			return lock.get();
+		}
+		timedOut.record(System.nanoTime() - startedAt, TimeUnit.NANOSECONDS);
+		throw new LockAcquisitionException(key, waitTimeout);
+	}
+
+	/**
+	 * Redis가 답하면(잡았든 붐벼서 못 잡았든) 회로에 성공으로, 답하지 않으면 실패로 알린다.
+	 * 붐빔을 실패로 세면 핫 계좌에서 회로가 열려, 멀쩡한 Redis를 두고 폴백으로 새게 된다.
+	 *
+	 * {@code getLock}도 이 안에 둔다. 연결을 늦게 여는(lazy) Redisson은 첫 사용 때 붙으므로
+	 * 어느 호출에서 연결 실패가 터질지 모른다.
+	 *
+	 * @return 잡았으면 그 락, 붐벼서 못 잡았으면 비어 있다
+	 */
+	private Optional<RLock> lockThroughCircuit(String key, Duration waitTimeout) {
+		long startedAt = System.nanoTime();
+		try {
+			RLock lock = redisson.getLock(key);
+			boolean locked = tryLock(lock, waitTimeout);
+			circuit.onSuccess(System.nanoTime() - startedAt, TimeUnit.NANOSECONDS);
+			return locked ? Optional.of(lock) : Optional.empty();
+		} catch (RuntimeException failure) {
+			throw toAcquireFailure(key, failure, startedAt);
 		}
 	}
 
-	private void release(String key, String token) {
-		Long deleted = redisTemplate.execute(releaseScript, List.of(key), token);
-		if (deleted != null && deleted == 1L) {
-			released.increment();
-			return;
+	/** 잡는 단계의 실패를 가른다. Redis 탓이면 회로에 알리고 폴백할 수 있게 바꾼다. */
+	private RuntimeException toAcquireFailure(String key, RuntimeException failure, long startedAt) {
+		if (!isRedisFailure(failure)) {
+			// Redis 탓인지 모르는 실패다. 회로를 여닫는 근거로 쓰지 않고 허가만 돌려준다.
+			circuit.releasePermission();
+			return failure;
 		}
-		// null은 나오지 않아야 하는 값이지만, 나오면 lost로 센다.
-		// "확실히 놓았다"고 말할 수 없는 건 안전 지표에서 못 놓은 쪽으로 세는 게 맞다.
-		lost.increment();
-		log.warn("락 해제 실패 — 이미 내 락이 아니다. TTL이 작업보다 먼저 끝났다. key={}", key);
+		circuit.onError(System.nanoTime() - startedAt, TimeUnit.NANOSECONDS, failure);
+		unavailable("redis_error").increment();
+		return new LockUnavailableException(key, failure);
+	}
+
+	/**
+	 * Redis에 닿지 못해 난 실패인가. 원인 사슬을 따라간다.
+	 *
+	 * Redisson은 연결을 늦게 여는 동안 여러 스레드가 몰리면 {@code RedisConnectionException}을
+	 * {@code CompletionException}으로 감싸서 던진다. 맨 바깥만 보면 모른다 — 2026-09-14
+	 * {@code RedisDownFallbackTest}에서 동시 입금 20건 중 19건이 이 모양으로 폴백하지 못하고 실패했다.
+	 */
+	static boolean isRedisFailure(Throwable failure) {
+		for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+			if (cause instanceof RedisException) {
+				return true;
+			}
+			if (cause.getCause() == cause) {
+				break;
+			}
+		}
+		return false;
+	}
+
+	/** 폴링이 아니라 pub/sub으로 기다린다 — 앞사람이 놓는 순간 알림을 받는다. */
+	private static boolean tryLock(RLock lock, Duration waitTimeout) {
+		try {
+			return lock.tryLock(waitTimeout.toMillis(), WATCHDOG_LEASE, TimeUnit.MILLISECONDS);
+		} catch (InterruptedException e) {
+			Thread.currentThread().interrupt();
+			return false;
+		}
+	}
+
+	/**
+	 * 내 락일 때만 놓는다. Redisson은 다른 스레드(다른 소유자)의 락을 놓으려 하면 예외를 던진다 —
+	 * 자체 구현에서 Lua로 토큰을 비교하던 것과 같은 장치다. 그 예외를 삼키지 않고 센다.
+	 */
+	private void release(RLock lock, String key) {
+		try {
+			lock.unlock();
+			release("released").increment();
+		} catch (IllegalMonitorStateException notMine) {
+			release("lost").increment();
+			log.warn("락 해제 실패 — 이미 내 락이 아니다. watchdog이 연장하지 못했다(Redis 단절·장애 전환). key={}", key);
+		} catch (RuntimeException failure) {
+			countUnreachableOrRethrow(key, failure);
+		}
+	}
+
+	/**
+	 * 작업은 이미 끝났다. Redis에 닿지 못해 못 놓은 것이라면 여기서 던지면 끝난 작업이 실패로 보인다 —
+	 * 삼키고 센다. 락은 watchdog이 더 늘리지 못하므로 LOCK_WATCHDOG_TIMEOUT 뒤에 저절로 풀린다.
+	 */
+	private void countUnreachableOrRethrow(String key, RuntimeException failure) {
+		if (!isRedisFailure(failure)) {
+			throw failure;
+		}
+		release("unreachable").increment();
+		log.warn("락을 놓으러 갔는데 Redis에 닿지 못했다 — watchdog 타임아웃 뒤 저절로 풀린다. key={}", key);
 	}
 }

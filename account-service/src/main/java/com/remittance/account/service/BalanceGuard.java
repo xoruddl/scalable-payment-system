@@ -1,6 +1,7 @@
 package com.remittance.account.service;
 
 import com.remittance.account.exception.ConcurrentUpdateException;
+import com.remittance.account.exception.LockUnavailableException;
 import com.remittance.account.lock.AccountLockPolicy;
 import com.remittance.account.lock.DistributedLock;
 import com.remittance.account.messaging.AccountEvents;
@@ -8,6 +9,7 @@ import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
+import org.springframework.dao.PessimisticLockingFailureException;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.stereotype.Component;
 
@@ -34,17 +36,22 @@ import java.util.function.Supplier;
  * 따라가려면 이제 파일 두 개를 연다. 그게 이 분리의 대가다.
  *
  * 두 겹으로 지킨다
- *   1. 첫 겹 — {@link AccountLockPolicy}가 고른다. 정상 경로를 계좌 단위로 직렬화해
+ *   1. 첫 겹 — {@link AccountLockPolicy}가 고른다. 정상 경로를 계좌 조각 단위로 직렬화해
  *       애초에 충돌이 생기지 않게 한다. 무엇이 정말로 도움이 되는지를 숫자로 확인하려고
- *       스위치로 두었다(Phase 6 Step 1, Phase 6.7). 셋 중 하나다.
+ *       스위치로 두었다(Phase 6 Step 1, Phase 6.7). 넷 중 하나다.
  *
- *       DISTRIBUTED  Redis 락으로 기다린다 (지금 기본값)
- *       PESSIMISTIC  DB 행 락으로 기다린다 — 기다리는 자리만 다르다
+ *       LAYERED      Redis 락으로 줄을 세우고, 트랜잭션 안에서 행 락을 한 번 더 (지금 기본값)
+ *       DISTRIBUTED  Redis 락만 — Phase 6.7 전 기본값
+ *       PESSIMISTIC  DB 행 락만 — 기다리는 자리가 DB라 기다리는 동안 커넥션을 쥔다
  *       OPTIMISTIC   안 기다리고 부딪히면 다시 한다 — 핫 계좌에서 무너진다(측정됨)
  *
+ *       Redis 락은 여기서 잡고, 행 락은 {@link BalanceShards}가 조각을 읽으면서 잡는다.
+ *       Redis 락이 트랜잭션 밖이라 Redis에서 기다리는 동안은 DB 커넥션을 쓰지 않는다.
+ *
  *   2. 둘째 겹 — 낙관적 락(@Version) + 재시도. 못 끈다. 다만 뜻이 전략마다 다르다 —
- *       DISTRIBUTED에서는 TTL로 락이 풀린 경우를 잡는 마지막 방어선이고,
- *       PESSIMISTIC에서는 충돌이 날 수 없으므로 0이어야 정상인 탐지기가 된다.
+ *       DISTRIBUTED에서는 Redis 락이 사라진 경우(연장 실패 · 장애 전환)를 잡는 마지막 방어선이고,
+ *       행 락을 쓰는 전략(LAYERED · PESSIMISTIC)에서는 충돌이 날 수 없으므로
+ *       0이어야 정상인 탐지기가 된다.
  *
  * 락은 변경하는 계좌 하나에만 건다. 범위를 넓히면 데드락과 처리량 저하로 이어진다.
  */
@@ -54,9 +61,10 @@ public class BalanceGuard {
 
 	private static final int MAX_OPTIMISTIC_LOCK_RETRIES = 5;
 
-	/** 잔액 변경 한 건이 걸리는 시간보다 넉넉해야 한다 (자동 갱신이 없으므로). */
-	private static final Duration LOCK_TTL = Duration.ofSeconds(3);
-	/** 같은 계좌에 요청이 몰렸을 때 기다려보는 시간. */
+	/**
+	 * 같은 계좌에 요청이 몰렸을 때 기다려보는 시간.
+	 * (락의 TTL은 여기서 정하지 않는다 — Redisson watchdog이 쥐고 있는 동안 연장한다. D-006)
+	 */
 	private static final Duration LOCK_WAIT_TIMEOUT = Duration.ofSeconds(3);
 
 	/** 조각을 전부 다룬다는 표시. 출금과 조회가 쓴다. */
@@ -87,7 +95,17 @@ public class BalanceGuard {
 		// 조각별로 갈리기 때문이다. 계좌 하나에 락 하나면 조각을 나눠도 거기서 다시 줄을 선다.
 		short shardNo = credit ? shardRouter.pickForCredit(accountId) : ALL_SHARDS;
 		Supplier<T> guardedAction = () -> withOptimisticRetry(accountId, () -> action.run(shardNo));
+		try {
+			return lockAndRun(accountId, shardNo, guardedAction);
+		} catch (PessimisticLockingFailureException lockNotAcquired) {
+			// 행 락을 3초 안에 못 잡았거나, 교착으로 InnoDB가 이쪽을 골랐다.
+			// 처리는 호출부가 한다(컨슈머는 횟수 제한 없이 재시도, REST는 409). 여기서는 세기만 한다.
+			lockFailures().increment();
+			throw lockNotAcquired;
+		}
+	}
 
+	private <T> T lockAndRun(UUID accountId, short shardNo, Supplier<T> guardedAction) {
 		if (!lockPolicy.usesDistributedLock()) {
 			// 여기로 오는 전략이 둘이고, 둘은 정반대다.
 			//   OPTIMISTIC  — 아무것도 안 잠그고 부딪히면 처음부터 다시 한다.
@@ -95,7 +113,34 @@ public class BalanceGuard {
 			//                 아니라 트랜잭션 안으로 들어갔다. 여기서 할 일이 없을 뿐이다.
 			return guardedAction.get();
 		}
-		return withLocks(lockKeys(accountId, shardNo), guardedAction);
+		// DISTRIBUTED · LAYERED — Redis에서 줄을 선다. LAYERED면 안에서 BalanceShards가
+		// 행 락을 한 번 더 잡는다. 둘 다 조각 번호 순서로 잡으므로 순서가 엇갈릴 일이 없다.
+		try {
+			return withLocks(lockKeys(accountId, shardNo), guardedAction);
+		} catch (LockUnavailableException redisDown) {
+			return withoutRedisLock(redisDown, guardedAction);
+		}
+	}
+
+	/**
+	 * Redis에 닿지 못했다 — 폴백 (Phase 6.7, D-006).
+	 *
+	 * LAYERED면 행 락만으로 진행한다. 정합성은 원래 행 락이 지키고 Redis 락은 줄 세우기(효율)용이라,
+	 * 빠져도 느려질 뿐 틀리지 않는다. 송금 시스템에서 보호 장치 때문에 송금이 멈추면 안 된다 —
+	 * 게이트웨이 요청 제한의 fail-open과 같은 기준이다("없으면 틀리는가, 약해질 뿐인가").
+	 *
+	 * 두 번 실행되지 않는 근거: {@link LockUnavailableException}은 락을 잡는 단계에서만 나온다
+	 * ({@link DistributedLock}). 이 예외가 여기 왔다면 작업은 아직 한 번도 돌지 않았다.
+	 *
+	 * DISTRIBUTED는 폴백하지 않는다 — 뒤에 행 락이 없어 Redis 락이 유일한 직렬화 장치다.
+	 * 던져서 호출부(컨슈머는 경합으로 보고 재시도, REST는 503)에 맡긴다.
+	 */
+	private <T> T withoutRedisLock(LockUnavailableException redisDown, Supplier<T> guardedAction) {
+		if (!lockPolicy.usesPessimisticLock()) {
+			throw redisDown;
+		}
+		lockFallbacks().increment();
+		return guardedAction.get();
 	}
 
 	/**
@@ -127,22 +172,22 @@ public class BalanceGuard {
 	/**
 	 * 여러 락을 번호 순서대로 겹쳐 잡는다. 순서를 고정하는 것이 핵심이다 —
 	 * 두 출금이 서로 반대 순서로 조각을 잡으면 교착에 빠진다.
-	 * (락에 TTL 3초가 있어 영영 멈추지는 않지만, 3초씩 헛되이 버리게 된다.)
+	 * (대기 상한 3초가 있어 영영 멈추지는 않지만, 3초씩 헛되이 버리게 된다.)
 	 */
 	private <T> T withLocks(List<String> keys, Supplier<T> action) {
 		Supplier<T> nested = action;
 		for (int i = keys.size() - 1; i >= 0; i--) {
 			String key = keys.get(i);
 			Supplier<T> inner = nested;
-			nested = () -> distributedLock.executeWithLock(key, LOCK_TTL, LOCK_WAIT_TIMEOUT, inner);
+			nested = () -> distributedLock.executeWithLock(key, LOCK_WAIT_TIMEOUT, inner);
 		}
 		return nested.get();
 	}
 
 	/**
-	 * 충돌을 센다 (Phase 5 Step 2). 이 값이 0에서 뜨기 시작하면 분산 락이
-	 * 막지 못한 경합이 실제로 있다는 뜻이다 — 락은 이 서비스 안에서만 유효하고,
-	 * 낙관적 락은 그 바깥까지 막는 최후 안전망이라 둘의 차이가 여기 드러난다.
+	 * 충돌을 센다 (Phase 5 Step 2). 이 값이 0에서 뜨기 시작하면 첫 겹이
+	 * 막지 못한 경합이 실제로 있다는 뜻이다. DISTRIBUTED에서는 Redis 락이 사라진 틈이고,
+	 * 행 락을 쓰는 전략에서는 잠그지 않고 잔액을 만진 경로다.
 	 *
 	 * {@code outcome=retried}는 다시 읽어 넘긴 것이고, {@code exhausted}는 끝내 포기한 것이다.
 	 * retried가 늘어나는 건 견딜 만하지만 exhausted는 요청이 실패했다는 뜻이라 성격이 다르다.
@@ -163,16 +208,29 @@ public class BalanceGuard {
 	}
 
 	/**
-	 * 충돌이 한 번도 없어도 0으로 보이게 미리 만들어 둔다 (Phase 5 Step 2).
+	 * 지표가 한 번도 안 찍혀도 0으로 보이게 미리 만들어 둔다 (Phase 5 Step 2).
 	 *
-	 * 카운터는 처음 증가할 때 생긴다. 그대로 두면 충돌이 없는 동안 시계열 자체가 없어서
-	 * 화면에서 "충돌 0건"과 "수집이 안 되고 있다"가 똑같이 빈 칸으로 보인다.
-	 * 정작 이 지표는 평소에 0인 게 정상이라, 0을 그릴 수 있어야 값어치가 있다.
+	 * 카운터는 처음 증가할 때 생긴다. 그대로 두면 한 건도 없는 동안 시계열 자체가 없어서
+	 * 화면에서 "0건"과 "수집이 안 되고 있다"가 똑같이 빈 칸으로 보인다.
+	 * 정작 이 지표들은 평소에 0인 게 정상이라, 0을 그릴 수 있어야 값어치가 있다.
 	 */
 	@PostConstruct
-	void 충돌_카운터를_미리_만든다() {
+	void 카운터를_미리_만든다() {
 		conflicts("retried");
 		conflicts("exhausted");
+		lockFailures();
+		lockFallbacks();
+	}
+
+	/**
+	 * Redis에 닿지 못해 행 락만으로 진행한 횟수 (Phase 6.7, D-006).
+	 * 조용하면 안 된다 — 폴백은 틀린 동작이 아니지만, 줄 세우기가 빠진 채 돌고 있다는 뜻이라
+	 * 커넥션 대기가 늘 수 있다. 0이 아니면 Redis를 봐야 한다.
+	 */
+	private Counter lockFallbacks() {
+		return Counter.builder("remittance.balance.lock.fallback")
+				.description("Redis에 닿지 못해 분산 락 없이 행 락만으로 진행한 횟수")
+				.register(meterRegistry);
 	}
 
 	private Counter conflicts(String outcome) {
@@ -180,6 +238,18 @@ public class BalanceGuard {
 				.description("낙관적 락 충돌 횟수")
 				.tag("entity", "account")
 				.tag("outcome", outcome)
+				.register(meterRegistry);
+	}
+
+	/**
+	 * 행 락을 못 잡고 포기한 횟수 (Phase 6.7). Redis 락의 {@code remittance.lock.wait{outcome=timeout}}과
+	 * 짝이다 — 그쪽은 Redis에서 줄 서다 포기한 것, 이쪽은 DB에서 포기한 것이다.
+	 * LAYERED에서는 Redis가 먼저 줄을 세우므로, 폴백 중이 아닌데 이 값이 뜨면 Redis 락이 먼저 사라진 틈
+	 * (연장 실패 · 장애 전환)이 실제로 있다는 뜻이다. 폴백 중에는 줄 세우기가 빠지므로 뜰 수 있다.
+	 */
+	private Counter lockFailures() {
+		return Counter.builder("remittance.balance.lock.failure")
+				.description("잔액 행 락을 대기 상한 안에 못 잡았거나 교착으로 포기한 횟수")
 				.register(meterRegistry);
 	}
 }

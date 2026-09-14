@@ -216,11 +216,70 @@ ssh home1 'docker update --restart=always grafana prometheus alertmanager node-e
   node-exporter monitoring-postgres postgres-exporter'
 ```
 
+## Redis Sentinel — 장애 전환을 볼 때만 얹는다
+
+**기본은 단일 Redis다.** 잔액 분산 락(Redisson)은 Redis에 닿지 못하면 행 락만으로 진행하고(폴백),
+게이트웨이 요청 제한은 Redis가 없으면 통과시킨다(fail-open). 둘 다 Redis 없이 맞게 돌므로 노드 다섯을
+상시로 두지 않는다. Sentinel은 **장애 전환을 직접 보고 싶을 때만** 아래처럼 얹는다 (Phase 6.7, `DECISIONS.md` D-006).
+
+```bash
+ssh home1 'cd ~/remittance && docker compose -f docker-compose.dev.yml -f docker-compose.homelab.yml \
+  -f docker-compose.sentinel.yml up -d'
+ssh home1 'cd ~/remittance && REDIS_SENTINEL=1 CPUSET=0-9 ./scripts/homelab-services.sh restart'
+```
+
+| | 주소 |
+|---|---|
+| 주 노드 (처음) | `127.0.0.1:6379` |
+| 복제본 | `127.0.0.1:6380` |
+| Sentinel × 3 | `127.0.0.1:26379` · `26380` · `26381` — master 이름 `remittance`, 정족수 2 |
+
+**전부 호스트 네트워크다.** Sentinel이 클라이언트에게 알려주는 주 노드 주소가 `127.0.0.1`이어야
+`--network host`로 뜬 서비스가 그대로 닿는다. 브리지 네트워크면 컨테이너 IP를 알려줘서 닿지 못한다.
+
+**`REDIS_SENTINEL=1`을 빼먹지 않는다.** 빼면 서비스는 단일 모드로 `6379`에 직접 붙는다 —
+평소엔 똑같이 돌다가 장애 전환 순간에만 옛 주 노드를 붙든 채 멈춘다. 틀려도 평소에는 증상이 없다.
+
+지금 누가 주 노드인가:
+
+```bash
+ssh home1 'docker exec remittance-redis-sentinel-1 redis-cli -p 26379 sentinel get-master-addr-by-name remittance'
+```
+
+> Sentinel은 뜰 때마다 설정을 새로 만든다. 재기동하면 처음 토폴로지(6379가 주 노드)로 돌아가므로,
+> 장애 전환을 시험한 뒤에는 **Sentinel까지 다시 올려** 출발선을 맞춘다.
+
+### 장애 시험 — 둘로 나눠 본다
+
+**1은 기본 구성에서 하고, 2만 Sentinel 오버레이가 필요하다.** 폴백은 Redis가 없을 때를 받고, Sentinel은
+주 노드 장애를 몇 초로 줄인다 (D-006). 둘 다 부하를 건 채로 한다 — 조용할 때 죽이면 볼 것이 없다.
+
+```bash
+# 1. 기본 구성(단일 Redis) — Redis를 죽인다. 행 락만으로 계속 도는가
+ssh home1 'docker stop remittance-redis'
+
+# 2. Sentinel 오버레이 — 주 노드만 죽인다. Sentinel이 6380을 올리는가, 클라이언트가 따라가는가
+ssh home1 'docker stop remittance-redis'
+```
+
+| 볼 것 | 1 (Redis 없음 · 기본) | 2 (주 노드만 · Sentinel) |
+|---|---|---|
+| 송금이 계속 종결되는가 | 끝까지 폴백으로 | 전환하는 몇 초 동안만 폴백, 이후 새 주 노드 |
+| `remittance_balance_lock_fallback_total` | 계속 오른다 | 전환 구간에만 오른다 |
+| `remittance_lock_unavailable_total{reason="circuit_open"}` | 계속 (5초마다 한 건씩 확인) | 잠깐 |
+| 드레인 뒤 미종결 · 대사 불일치 | **0** | **0** |
+| account 풀 pending | 줄 세우기가 빠진 만큼 오를 수 있다 — 여기가 폴백의 대가다 | 0 근처 |
+
+1은 `docker start remittance-redis`로 되살린다. 2를 한 뒤에는 Sentinel까지 내렸다 올려 출발선을 맞춘다(위 경고).
+
 ## 정리
 
 ```bash
 ssh home1 'cd ~/remittance && ./scripts/homelab-services.sh stop'
 ssh home1 'cd ~/remittance && docker compose -f docker-compose.dev.yml -f docker-compose.homelab.yml down'
+# Sentinel로 띄웠다면 그 파일까지 같이 준다. 빼면 복제본과 Sentinel이 남는다
+ssh home1 'cd ~/remittance && docker compose -f docker-compose.dev.yml -f docker-compose.homelab.yml \
+  -f docker-compose.sentinel.yml down'
 # 측정을 새 출발선에서 하려면 볼륨까지
 ssh home1 'docker volume rm remittance_remittance-mysql-data remittance_remittance-mongo-data'
 ```

@@ -6,10 +6,12 @@ import com.remittance.account.exception.ConcurrentUpdateException;
 import com.remittance.account.exception.CurrencyMismatchException;
 import com.remittance.account.exception.InsufficientBalanceException;
 import com.remittance.account.exception.LockAcquisitionException;
+import com.remittance.account.exception.LockUnavailableException;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.common.TopicPartition;
+import org.redisson.client.RedisException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Bean;
@@ -52,7 +54,8 @@ import tools.jackson.core.JacksonException;
  *
  * 대가는 그 파티션이 그동안 막힌다는 것이다. 하지만 그게 맞는 동작이다 —
  * 처리할 수 있는 것보다 많이 들어오는 중이니 받는 속도를 늦추는 것(배압)이 옳다.
- * 영영 막히지도 않는다. 락에는 TTL 3초가 있어 붙들려 있는 상태 자체가 지속될 수 없다.
+ * 영영 막히지도 않는다. 기다리는 쪽은 3초만 기다리고, 쥔 쪽이 죽으면 watchdog 연장이 끊겨
+ * 5초 안에 풀린다(행 락은 트랜잭션이 끝나면 풀린다). 붙들려 있는 상태 자체가 지속될 수 없다.
  *
  * 같은 이유로 {@link ConcurrentUpdateException}(낙관적 락 재시도 소진)도 함께 넣는다.
  * 2026-08-23 비교 실험에서 이쪽은 168건을 갇히게 만들었다.
@@ -82,8 +85,9 @@ public class KafkaErrorHandlingConfig {
 	/**
 	 * 경합 때문에 실패한 것은 포기하지 않는다. 간격만 두고 계속 다시 한다.
 	 *
-	 * 1초로 잡은 이유: 락 TTL이 3초라 그보다 짧게 잡으면 아직 남의 락이 살아 있는 동안
-	 * 헛되이 여러 번 두드린다. 반대로 너무 길면 붐빔이 풀린 뒤에도 놀게 된다.
+	 * 1초로 잡은 이유: 락이 붙들리는 시간의 상한이 초 단위라(대기 상한 3초, 주인이 죽은 락은
+	 * watchdog이 끊겨 5초) 너무 짧게 잡으면 아직 남의 락이 살아 있는 동안 헛되이 여러 번 두드린다.
+	 * 반대로 너무 길면 붐빔이 풀린 뒤에도 놀게 된다.
 	 */
 	private static final BackOff CONTENTION_BACKOFF =
 			new FixedBackOff(1_000, FixedBackOff.UNLIMITED_ATTEMPTS);
@@ -129,8 +133,12 @@ public class KafkaErrorHandlingConfig {
 	 */
 	static boolean isContention(Throwable exception) {
 		for (Throwable cause = exception; cause != null; cause = cause.getCause()) {
+			// Redis에 닿지 못한 것도 "잠시 뒤 다시 하면 되는" 실패다 (Phase 6.7, D-006). 여기서 빠지면
+			// 세 번 만에 DLT로 가 송금이 DEBIT_COMPLETED에 갇힌다 — 갇힘 9건과 같은 모양이다.
+			// LAYERED는 폴백으로 이 예외가 여기까지 오지 않지만, 폴백이 없는 전략을 위해 둔다.
 			if (cause instanceof LockAcquisitionException || cause instanceof ConcurrentUpdateException
-					|| cause instanceof PessimisticLockingFailureException) {
+					|| cause instanceof PessimisticLockingFailureException
+					|| cause instanceof LockUnavailableException || cause instanceof RedisException) {
 				return true;
 			}
 			if (cause.getCause() == cause) {

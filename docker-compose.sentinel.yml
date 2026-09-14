@@ -1,0 +1,78 @@
+# 장애 전환 실험용 오버레이 — 평소에는 띄우지 않는다 (Phase 6.7, DECISIONS.md D-006).
+#
+# 기본 운영은 단일 Redis + 폴백이다. 잔액 락도 게이트웨이 요청 제한도 Redis 없이 맞게 돌기 때문에
+# 노드 다섯(주 · 복제 · Sentinel 셋)을 상시로 둘 이유가 없다. Sentinel 장애 전환을 직접 볼 때만 얹는다.
+#
+#   docker compose -f docker-compose.dev.yml -f docker-compose.homelab.yml -f docker-compose.sentinel.yml up -d
+#   REDIS_SENTINEL=1 CPUSET=0-9 ./scripts/homelab-services.sh restart
+#
+#   주 노드       127.0.0.1:6379   dev.yml의 redis를 덮어쓴다 — 처음에는 여기가 주 노드다
+#   복제본        127.0.0.1:6380
+#   Sentinel × 3  127.0.0.1:26379 · 26380 · 26381   master 이름 remittance, 정족수 2
+#
+# 왜 호스트 네트워크인가 ★
+# Sentinel은 클라이언트에게 "지금 주 노드는 여기다"라고 주소를 알려준다. 브리지 네트워크면 그 주소가
+# 컨테이너 IP라, 호스트에서 뜬 서비스(--network host)가 닿지 못한다 — Sentinel과 Docker를 함께 쓸 때
+# 가장 흔히 막히는 자리다. 전부 호스트 네트워크에 두면 모두가 127.0.0.1로 서로를 부르므로 알려준 주소가
+# 그대로 맞는다. 리눅스에서만 되는 방식이라 홈서버에서만 얹을 수 있다.
+#
+# 왜 셋인가
+# Sentinel 하나면 그 Sentinel이 곧 단일 장애점이고, 둘이면 하나가 죽었을 때 과반을 못 만든다.
+# 셋이어야 하나가 죽어도 정족수 2로 장애 전환을 결정할 수 있다. 한 머신에 셋을 띄우는 것은
+# 머신 장애를 막지 못한다 — 여기서 보려는 것은 머신 장애가 아니라 "주 노드가 죽으면 클라이언트가
+# 따라가는가"다.
+#
+# down-after 3초
+# 주 노드가 3초 응답이 없으면 그 Sentinel이 다운으로 보고, 둘이 동의하면 장애 전환을 시작한다.
+# 락 대기 상한(3초)과 같은 값이다. 전환하는 동안 잡지 못한 락은 경합으로 분류돼 재시도되고,
+# 그 사이 사라진 락은 행 락이 막는다(LAYERED).
+
+x-sentinel: &sentinel
+  image: redis:7-alpine
+  network_mode: host
+  mem_limit: 64m
+  depends_on:
+    - redis
+    - redis-replica
+  # Sentinel은 설정 파일을 스스로 고쳐 쓴다(현재 주 노드를 기록한다). 그래서 읽기 전용 마운트가 아니라
+  # 뜰 때마다 컨테이너 안에 새로 만든다 — 재기동하면 처음 토폴로지(6379가 주 노드)로 돌아간다.
+  command:
+    - sh
+    - -c
+    - |
+      printf 'port %s\nsentinel monitor remittance 127.0.0.1 6379 2\nsentinel down-after-milliseconds remittance 3000\nsentinel failover-timeout remittance 10000\nsentinel parallel-syncs remittance 1\n' "$$SENTINEL_PORT" > /tmp/sentinel.conf
+      exec redis-sentinel /tmp/sentinel.conf
+
+services:
+  redis:
+    network_mode: host
+    # 호스트 네트워크에서는 포트를 따로 열 필요가 없고, 열려 있으면 compose가 거절한다.
+    ports: !reset []
+    command: ["redis-server", "--port", "6379"]
+
+  redis-replica:
+    image: redis:7-alpine
+    container_name: remittance-redis-replica
+    network_mode: host
+    mem_limit: 256m
+    command: ["redis-server", "--port", "6380", "--replicaof", "127.0.0.1", "6379"]
+    depends_on:
+      - redis
+
+  redis-sentinel-1:
+    <<: *sentinel
+    container_name: remittance-redis-sentinel-1
+    environment:
+      SENTINEL_PORT: "26379"
+
+  redis-sentinel-2:
+    <<: *sentinel
+    container_name: remittance-redis-sentinel-2
+    environment:
+      SENTINEL_PORT: "26380"
+
+  redis-sentinel-3:
+    <<: *sentinel
+    container_name: remittance-redis-sentinel-3
+    environment:
+      SENTINEL_PORT: "26381"
