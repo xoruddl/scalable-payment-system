@@ -27,7 +27,8 @@ import java.util.UUID;
  * 이제 N행을 읽는다. 핫 계좌는 받는 쪽이라 그 대가를 치를 만하다고 봤다.
  *
  * 잠그며 읽느냐는 여기서 갈린다 (Phase 6.7)
- * {@code PESSIMISTIC} 전략이면 잔액을 바꾸려고 읽는 자리에서 행 락을 함께 잡는다.
+ * 행 락을 쓰는 전략({@code LAYERED} · {@code PESSIMISTIC})이면 잔액을 바꾸려고 읽는 자리에서
+ * 행 락을 함께 잡는다. {@code LAYERED}는 그 앞에 Redis 락이 한 겹 더 있다({@link BalanceGuard}).
  * 읽기만 하는 자리({@link #whole})는 어느 전략에서도 안 잠근다 — 조회 API와 대사가
  * 그 길로 들어오는데, 읽기 전용 트랜잭션에서 {@code FOR UPDATE}는 실행되지 않는다.
  *
@@ -72,7 +73,8 @@ public class BalanceShards {
 	 *
 	 * 둘 다 합을 보고 판단한다 — 모자란지, 원장과 얼마나 벌어졌는지. 판단과 반영 사이에
 	 * 조각이 움직이면 그 판단이 헛것이 된다. {@code DISTRIBUTED}는 그 구간을 Redis 락으로
-	 * 막고, {@code PESSIMISTIC}은 여기서 행 락으로 막는다.
+	 * 막고, {@code PESSIMISTIC}은 여기서 행 락으로 막는다. {@code LAYERED}는 둘 다다 —
+	 * Redis 락이 TTL로 먼저 풀려도 여기서 한 번 더 막힌다.
 	 */
 	public AccountBalance wholeForUpdate(UUID accountId) {
 		return AccountBalance.whole(account(accountId), shardsForUpdate(accountId));

@@ -13,6 +13,7 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.CannotAcquireLockException;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
 
 import java.util.UUID;
@@ -30,6 +31,9 @@ import static org.mockito.BDDMockito.given;
  *
  * 이 재시도는 입출금 API만의 것이 아니다 — Saga 단계와 개시 잔액 이월도 같은 문을 지난다.
  * 계좌 서비스 테스트에 남겨두면 "입출금 API의 재시도"처럼 읽혀서 범위를 오해하게 된다.
+ *
+ * 행 락 자체는 여기서 보지 않는다. 락은 {@link BalanceShards}가 조각을 읽으면서 잡으므로
+ * 진짜 InnoDB가 필요하다 — {@code BalanceShardingTest}와 {@code LayeredLockStrategyTest}의 몫이다.
  */
 @ExtendWith(MockitoExtension.class)
 class BalanceGuardTest {
@@ -57,6 +61,10 @@ class BalanceGuardTest {
 		return meterRegistry.find("remittance.optimistic.lock.conflict")
 				.tag("entity", "account").tag("outcome", outcome)
 				.counters().stream().mapToDouble(counter -> counter.count()).sum();
+	}
+
+	private double counterSum(String name) {
+		return meterRegistry.find(name).counters().stream().mapToDouble(counter -> counter.count()).sum();
 	}
 
 	/**
@@ -94,7 +102,7 @@ class BalanceGuardTest {
 		assertThat(result).isEqualTo("성공");
 		assertThat(attempts).hasValue(3);
 		// 충돌이 두 번 났고 둘 다 재시도로 넘겼다. 이 값이 0에서 뜨기 시작하면
-		// 분산 락이 막지 못한 경합이 실제로 있다는 뜻이다 (Phase 5 Step 2).
+		// 첫 겹이 막지 못한 경합이 실제로 있다는 뜻이다 (Phase 5 Step 2).
 		assertThat(conflictCount("retried")).isEqualTo(2);
 		assertThat(conflictCount("exhausted")).isZero();
 	}
@@ -112,5 +120,26 @@ class BalanceGuardTest {
 		// 마지막 한 번은 성격이 다르다 — 재시도로 넘긴 게 아니라 요청이 실패한 것이다.
 		assertThat(conflictCount("exhausted")).isEqualTo(1);
 		assertThat(conflictCount("retried")).isEqualTo(4);
+	}
+
+	/**
+	 * 행 락을 못 잡은 것은 여기서 재시도하지 않는다. 트랜잭션이 이미 락 대기로 3초를 썼고,
+	 * 다시 하는 것은 호출부의 몫이다(컨슈머는 횟수 제한 없이, REST는 409로 돌려준다).
+	 * 여기서 할 일은 세는 것뿐이다 — Redis 락의 타임아웃 지표와 짝을 이룬다.
+	 */
+	@Test
+	void 행_락을_못_잡으면_세고_그대로_던진다() {
+		passThroughLock();
+		AtomicInteger attempts = new AtomicInteger();
+
+		assertThatThrownBy(() -> balanceGuard.guarded(UUID.randomUUID(),
+				AccountEvents.TransactionDirection.CREDIT, shardNo -> {
+					attempts.incrementAndGet();
+					throw new CannotAcquireLockException("Lock wait timeout exceeded");
+				}))
+				.isInstanceOf(CannotAcquireLockException.class);
+
+		assertThat(attempts).as("여기서 다시 하면 락 대기 3초를 한 번 더 쓴다").hasValue(1);
+		assertThat(counterSum("remittance.balance.lock.failure")).isEqualTo(1);
 	}
 }

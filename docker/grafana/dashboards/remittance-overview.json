@@ -993,9 +993,20 @@
           },
           "editorMode": "code",
           "expr": "sum(rate(remittance_lock_wait_seconds_count{outcome=\"timeout\"}[1m])) or sum(rate(remittance_lock_wait_seconds_count[1m])) * 0",
-          "legendFormat": "timeout",
+          "legendFormat": "Redis 락 timeout",
           "range": true,
           "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum(rate(remittance_balance_lock_failure_total[1m]))",
+          "legendFormat": "행 락 포기 (LAYERED에서 뜨면 Redis 락이 TTL로 풀린 틈)",
+          "range": true,
+          "refId": "B"
         }
       ],
       "fieldConfig": {

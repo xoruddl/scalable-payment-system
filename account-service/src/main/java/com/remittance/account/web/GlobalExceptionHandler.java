@@ -52,7 +52,7 @@ public class GlobalExceptionHandler {
 	}
 
 	/**
-	 * 행 락을 기다리다 시간을 넘긴 것 ({@code PESSIMISTIC} 전략). 위와 같은 일이라
+	 * 행 락을 기다리다 시간을 넘긴 것 ({@code LAYERED} · {@code PESSIMISTIC} 전략). 위와 같은 일이라
 	 * 같은 코드로 답한다 — 락을 Redis에서 잡느냐 DB에서 잡느냐는 호출자가 알 바 아니다.
 	 * 교착으로 InnoDB가 이쪽을 죽인 경우도 여기로 온다.
 	 */
