@@ -73,17 +73,19 @@
 ```text
 TransferSagaService.onRequested()    흐름 — 어느 계좌를 어떻게 바꾸고 무엇을 내는가
   → SagaStepRunner.run()             이미 처리한 이벤트·업무 실패를 가른다
-    → BalanceGuard.guarded()         락과 낙관적 충돌 재시도
+    → BalanceGuard.guarded()         Redisson 락으로 조각 단위 줄을 세운다 (트랜잭션 밖)
       → SagaStepExecutor.execute()   한 단계의 트랜잭션
-        → AccountBalance.debit()     출금 규칙
+        → BalanceShards.load()       조각을 읽으면서 행 락을 한 번 더 잡는다
+          → AccountBalance.debit()   출금 규칙
 ```
 
-**읽을 코드**: [SagaStepRunner](../account-service/src/main/java/com/remittance/account/saga/SagaStepRunner.java), [BalanceGuard](../account-service/src/main/java/com/remittance/account/service/BalanceGuard.java), [SagaStepExecutor](../account-service/src/main/java/com/remittance/account/saga/SagaStepExecutor.java), [BalanceJournal](../account-service/src/main/java/com/remittance/account/outbox/BalanceJournal.java).
+**읽을 코드**: [SagaStepRunner](../account-service/src/main/java/com/remittance/account/saga/SagaStepRunner.java), [BalanceGuard](../account-service/src/main/java/com/remittance/account/service/BalanceGuard.java), [BalanceShards](../account-service/src/main/java/com/remittance/account/service/BalanceShards.java), [SagaStepExecutor](../account-service/src/main/java/com/remittance/account/saga/SagaStepExecutor.java), [BalanceJournal](../account-service/src/main/java/com/remittance/account/outbox/BalanceJournal.java).
 
 | 장치 | 설명할 문제 |
 |---|---|
-| 분산 락 | 같은 잔액을 여러 요청이 동시에 변경하는 경합 |
-| 낙관적 락 | 분산 락의 TTL 만료 등으로 보호가 깨졌을 때의 동시 갱신 |
+| 분산 락 | 같은 잔액에 몰린 요청을 DB 밖에서 줄 세운다 — 기다리는 동안 커넥션을 쥐지 않게 |
+| 행 락 | 분산 락이 TTL로 먼저 풀린 틈 — 락 수명이 트랜잭션과 같아 여기서 막힌다 |
+| 낙관적 락 | 행 락 뒤에서는 날 수 없는 충돌 — 잠그지 않고 잔액을 만진 경로를 찾아내는 탐지기 |
 | 처리 흔적 | 같은 이벤트가 다시 왔을 때의 중복 출금·입금 |
 | Outbox | DB 변경과 Kafka 발행 사이의 부분 실패 |
 | BalanceJournal | 잔액은 변했는데 원장에 남지 않는 경로 |
@@ -92,11 +94,12 @@ TransferSagaService.onRequested()    흐름 — 어느 계좌를 어떻게 바�
 
 - 처리 흔적·잔액·후속 이벤트·분개 이벤트 중 하나만 별도 커밋하면 무엇이 깨지는가?
 - 중복 여부를 먼저 조회하는 대신 처리 흔적을 INSERT하는 이유는?
-- 분산 락이 있는데 낙관적 락도 필요한 이유는?
+- 분산 락과 행 락을 둘 다 잡는 이유는? 각각 무엇을 막는가? "정합성이 더 좋아서"가 왜 틀린 답인가? 대가는? (D-004)
+- 행 락이 있는데 낙관적 락(`@Version`)을 남겨둔 이유는? 방어선과 탐지기는 무엇이 다른가?
 - 재시도와 트랜잭션 실행을 다른 빈으로 나눈 이유는?
 - Kafka 발행 후 Outbox 마킹 전에 죽으면? 왜 소비자의 멱등성이 계속 필요한가?
 
-**같이 볼 테스트**: [TransferEventConsumerConcurrencyTest](../account-service/src/test/java/com/remittance/account/messaging/TransferEventConsumerConcurrencyTest.java), [DistributedLockTest](../account-service/src/test/java/com/remittance/account/lock/DistributedLockTest.java), [BalanceJournalTest](../account-service/src/test/java/com/remittance/account/outbox/BalanceJournalTest.java).
+**같이 볼 테스트**: [TransferEventConsumerConcurrencyTest](../account-service/src/test/java/com/remittance/account/messaging/TransferEventConsumerConcurrencyTest.java), [LayeredLockStrategyTest](../account-service/src/test/java/com/remittance/account/lock/LayeredLockStrategyTest.java), [DistributedLockTest](../account-service/src/test/java/com/remittance/account/lock/DistributedLockTest.java), [BalanceShardingTest](../account-service/src/test/java/com/remittance/account/service/BalanceShardingTest.java), [BalanceJournalTest](../account-service/src/test/java/com/remittance/account/outbox/BalanceJournalTest.java).
 
 ## 4. 완료와 실패 — 성공을 언제 확정하는가
 
