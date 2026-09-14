@@ -22,7 +22,7 @@ public interface AccountBalanceShardRepository extends JpaRepository<AccountBala
 
 	/**
 	 * 위 둘과 같은 조회에 행 락을 건다 ({@code SELECT ... FOR UPDATE}).
-	 * {@code PESSIMISTIC} 전략일 때만 쓴다 — 고르는 곳은 {@code BalanceShards}다.
+	 * 행 락을 쓰는 전략({@code LAYERED} · {@code PESSIMISTIC})일 때만 쓴다 — 고르는 곳은 {@code BalanceShards}다.
 	 *
 	 * 잠그는 조회를 별도 메서드로 둔 이유는, 안 잠그는 쪽이 조회 API와 대사에도 쓰이기
 	 * 때문이다. 같은 메서드에 락을 얹으면 읽기 전용 트랜잭션에서 터진다.

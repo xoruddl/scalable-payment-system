@@ -679,10 +679,13 @@ Redis는 **단일 노드가 기본**이고, Sentinel(주 1 · 복제 1 · Sentin
 - **측정 근거 없이 넣었다.** D-005가 보류한 이유는 그대로다. 얻는 것을 숫자로 보인 적이 없다
 - **의존성이 늘었다.** Redisson 코어가 Kryo · RxJava · Jackson 2를 끌고 온다. Netty는 Boot BOM이
   4.2.15로 고정한다(Redisson 4.7.0은 4.2.16 기준) — 테스트는 통과했지만 어긋나 있다
-- **Redis 클라이언트가 둘이다.** account에서 Redisson(락)과 Lettuce(`/actuator/health`)가 같이 돈다
+- **Redis 클라이언트가 둘이다.** account에서 Redisson(락)과 Lettuce(`/actuator/health`)가 같이 돈다 —
+  **설정도 둘이다.** 2026-09-14 장애 시험에서 Lettuce에만 명령 타임아웃이 없어 health가 60초 붙들렸다.
+  둘 다 1초로 맞췄다(`spring.data.redis.timeout` · `RedissonConfig.REDIS_TIMEOUT`)
 - **watchdog 타임아웃 5초** — 락을 쥔 인스턴스가 죽으면 그 조각이 최대 5초 막힌다(자체 구현 TTL 3초보다 길다)
 - **Redis 고가용성은 없다.** 기본 구성에서 Redis가 죽어 있는 동안은 폴백(줄 세우기 없음)이고 게이트웨이
-  요청 제한이 꺼진다(fail-open). Sentinel 오버레이를 켜면 이 구간이 장애 전환 몇 초로 줄지만, 한 머신에
+  요청 제한이 꺼진다(fail-open). 게이트웨이를 지나는 요청은 그동안 하나하나 명령 타임아웃(1초)을 기다린 뒤
+  지나간다 — 끊긴 동안의 명령도 줄을 서기 때문이다(2026-09-14 홈서버, 타임아웃을 넣기 전에는 60초). Sentinel 오버레이를 켜면 이 구간이 장애 전환 몇 초로 줄지만, 한 머신에
   노드 다섯이라 머신 장애는 여전히 못 막는다. 운영이라면 관리형 Redis의 다중 AZ 구성으로 받을 자리다
 - **Redis가 통째로 죽어도 멈추지 않게 했다 — 대신 줄 세우기가 빠진 채 돈다.** 락을 잡는 단계에서 Redis에
   닿지 못하면 행 락만으로 진행하고(폴백, LAYERED에서만), 연속 3번이면 회로를 열어 5초 동안 부르지 않는다.
@@ -704,8 +707,9 @@ Redis는 **단일 노드가 기본**이고, Sentinel(주 1 · 복제 1 · Sentin
 | Redis가 없어도 뜨고 입금되는가 | `RedisDownFallbackTest` — Sentinel 주소를 모두 죽은 포트로 준다. 한 건, 그리고 동시 20건이 전부 성공 · 합 일치 · 충돌 0 | 통과 |
 | 폴백이 안전한가 (작업은 한 번만 · 붐빔은 폴백 아님 · 회로 · 해제 실패 삼킴) | `DistributedLockUnavailableTest` · `BalanceGuardTest` | 통과 |
 | Redis 오류가 DLT로 가지 않는가 | `KafkaErrorHandlingBackOffTest` | 통과 |
-| 기존 동작 | account-service 264건 · gateway 19건 | 통과 |
-| **Redis 장애 (기본 구성)** | 홈서버에서 부하 중 Redis를 죽인다 → 송금이 계속 종결되는가, 폴백 · 행 락 포기가 몇 건인가, 대사 0인가, account 풀 pending | **통과 (2026-09-14, 핫 계좌 8조각 40 TPS)** — 약 62초 꺼도 종결 p99 2,047ms(기준선 2,048) · 대사 0 · 풀 pending 0 · 폴백 5,397 · 행 락 포기 0. 대신 `/actuator/health`가 60초 붙들렸다 (PROGRESS "Redis 장애 시험 1") |
+| Redis가 답하지 않을 때 health · 게이트웨이 요청이 붙들리지 않는가 | `RedisHealthTimeoutTest` · `RateLimitRedisDisconnectTest` — 한 번 붙은 뒤 컨테이너를 멈춘다(pause). 타임아웃을 빼면 둘 다 3초를 넘겨 실패 | 통과 |
+| 기존 동작 | account-service 270건 · gateway 20건 (2026-09-14 타임아웃 수정 뒤) | 통과 |
+| **Redis 장애 (기본 구성)** | 홈서버에서 부하 중 Redis를 죽인다 → 송금이 계속 종결되는가, 폴백 · 행 락 포기가 몇 건인가, 대사 0인가, account 풀 pending | **통과 (2026-09-14, 핫 계좌 8조각 40 TPS)** — 약 62초 꺼도 종결 p99 2,047ms(기준선 2,048) · 대사 0 · 풀 pending 0 · 폴백 5,397 · 행 락 포기 0. 대신 `/actuator/health`가 60초 붙들렸다 → 명령 타임아웃 1초로 고쳤다 (PROGRESS "Redis 장애 시험 1") |
 | **장애 전환 (Sentinel 오버레이)** | 부하 중 주 노드만 죽인다 → 클라이언트가 새 주 노드를 따라가는가, `lost`가 몇 건인가 | **아직 안 했다** |
 
 #### 언제 뒤집나
@@ -713,7 +717,7 @@ Redis는 **단일 노드가 기본**이고, Sentinel(주 1 · 복제 1 · Sentin
 - **폴백 구간이 받아들일 수 없을 때** — Redis 장애 시험에서 커넥션 대기가 SLO를 깨거나, 게이트웨이 요청
   제한이 꺼지는 것(fail-open)이 받아들일 수 없게 되면 Sentinel(또는 관리형 다중 AZ)을 **기본으로 올린다.**
   코드는 그대로이고 설정만 바꾼다. **2026-09-14 40 TPS에서는 오지 않았다** — pending 0 · SLO 통과.
-  60 TPS 이상과 게이트웨이를 지나는 경로는 아직 안 쟀다
+  60 TPS 이상은 아직 안 쟀다. 게이트웨이를 지나는 요청은 장애 동안 1초씩 늦는다 — 부하로는 안 쟀다
 - 장애 전환 시험에서 **클라이언트가 새 주 노드를 따라가지 못할 때** — Sentinel 모드를 코드에서 뺀다
 - Redisson이 **Boot 업그레이드를 막을 때** — 코어만 쓰므로 바꿀 곳은 `DistributedLock`과 `RedissonConfig` 둘이다
 - LAYERED를 재서 **Redis 락을 뺄 때**(D-004) — 그러면 Redisson은 필요 없어지고, Redis는 게이트웨이를 위해 남는다
