@@ -37,9 +37,9 @@ public class AccountLockPolicy {
 		 * 두 락이 맡는 일이 다르다.
 		 *
 		 *   Redis 락  기다리는 줄을 DB 밖에 세운다 — 기다리는 동안 DB 커넥션을 쥐지 않는다
-		 *   행 락     락 수명이 트랜잭션과 같다 — Redis 락이 TTL로 먼저 풀려도 여기서 막힌다
+		 *   행 락     락 수명이 트랜잭션과 같다 — Redis 락이 먼저 사라져도(연장 실패 · 장애 전환 · 폴백) 여기서 막힌다
 		 *
-		 * {@code DISTRIBUTED}에서는 TTL로 풀린 틈을 {@code @Version}이 막았다(충돌 → 처음부터 다시).
+		 * {@code DISTRIBUTED}에서는 Redis 락이 사라진 틈을 {@code @Version}이 막았다(충돌 → 처음부터 다시).
 		 * 여기서는 행 락이 기다리게 해서 막으므로 {@code @Version}까지 가지 않는다 —
 		 * {@code @Version}은 탐지기로 남는다.
 		 *

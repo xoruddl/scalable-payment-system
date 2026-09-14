@@ -30,8 +30,8 @@ import java.util.function.Supplier;
  *
  * Redisson은 둘 다 없앤다. 쥐고 있는 동안 watchdog이 lease를 늘리고, 풀리면 pub/sub으로 알려준다.
  * 그리고 Sentinel(장애 전환)을 설정만으로 붙일 수 있다 ({@code RedissonConfig}).
- * 측정이 시킨 교체는 아니다 — 08-31에 lost 0건이라 보류했었고(D-005), 소유자가 Sentinel과 함께
- * 넣기로 정했다. 손으로 만든 구현이 가르쳐준 것(토큰 비교 해제, 대기와 보유를 나눠 재기)은
+ * 측정이 시킨 교체는 아니다 — 08-31에 lost 0건이라 보류했었고(D-005), 소유자가 넣기로 정했다.
+ * Sentinel은 장애 전환을 볼 때만 켜는 실험용이고 기본은 단일 Redis다(D-006). 손으로 만든 구현이 가르쳐준 것(토큰 비교 해제, 대기와 보유를 나눠 재기)은
  * 이 클래스의 지표와 {@code PROGRESS.md}에 남는다.
  *
  * Redis가 없을 때 (2026-09-14) ★

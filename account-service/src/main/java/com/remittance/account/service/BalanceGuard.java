@@ -49,7 +49,7 @@ import java.util.function.Supplier;
  *       Redis 락이 트랜잭션 밖이라 Redis에서 기다리는 동안은 DB 커넥션을 쓰지 않는다.
  *
  *   2. 둘째 겹 — 낙관적 락(@Version) + 재시도. 못 끈다. 다만 뜻이 전략마다 다르다 —
- *       DISTRIBUTED에서는 TTL로 락이 풀린 경우를 잡는 마지막 방어선이고,
+ *       DISTRIBUTED에서는 Redis 락이 사라진 경우(연장 실패 · 장애 전환)를 잡는 마지막 방어선이고,
  *       행 락을 쓰는 전략(LAYERED · PESSIMISTIC)에서는 충돌이 날 수 없으므로
  *       0이어야 정상인 탐지기가 된다.
  *
@@ -186,7 +186,7 @@ public class BalanceGuard {
 
 	/**
 	 * 충돌을 센다 (Phase 5 Step 2). 이 값이 0에서 뜨기 시작하면 첫 겹이
-	 * 막지 못한 경합이 실제로 있다는 뜻이다. DISTRIBUTED에서는 락이 TTL로 풀린 틈이고,
+	 * 막지 못한 경합이 실제로 있다는 뜻이다. DISTRIBUTED에서는 Redis 락이 사라진 틈이고,
 	 * 행 락을 쓰는 전략에서는 잠그지 않고 잔액을 만진 경로다.
 	 *
 	 * {@code outcome=retried}는 다시 읽어 넘긴 것이고, {@code exhausted}는 끝내 포기한 것이다.
@@ -244,7 +244,8 @@ public class BalanceGuard {
 	/**
 	 * 행 락을 못 잡고 포기한 횟수 (Phase 6.7). Redis 락의 {@code remittance.lock.wait{outcome=timeout}}과
 	 * 짝이다 — 그쪽은 Redis에서 줄 서다 포기한 것, 이쪽은 DB에서 포기한 것이다.
-	 * LAYERED에서는 Redis가 먼저 줄을 세우므로 이 값이 뜨면 Redis 락이 TTL로 풀린 틈이 실제로 있다는 뜻이다.
+	 * LAYERED에서는 Redis가 먼저 줄을 세우므로, 폴백 중이 아닌데 이 값이 뜨면 Redis 락이 먼저 사라진 틈
+	 * (연장 실패 · 장애 전환)이 실제로 있다는 뜻이다. 폴백 중에는 줄 세우기가 빠지므로 뜰 수 있다.
 	 */
 	private Counter lockFailures() {
 		return Counter.builder("remittance.balance.lock.failure")

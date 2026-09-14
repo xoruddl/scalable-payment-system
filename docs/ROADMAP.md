@@ -911,7 +911,7 @@ PESSIMISTIC   DB에서 기다린다      대기 중 커넥션을 쥔다      장
 - [x] **Step 3 — 기본값을 정하고 기록한다** ✅ 2026-09-13. **`LAYERED`(Redis 락 + 행 락)를 기본값으로 뒀다.**
       처음에는 판정 1~3순위 통과를 근거로 `PESSIMISTIC` 단독 + Redis 락 제거까지 구현했지만
       (`refs/backup/phase-6-7-step3-remove-redis`), 소유자가 두 락을 함께 쓰기로 정했다 —
-      Redis 락이 대기를 DB 밖에서 받고, 행 락이 TTL로 풀린 틈을 막는다.
+      Redis 락이 대기를 DB 밖에서 받고, 행 락이 Redis 락이 먼저 사라진 틈(연장 실패 · 장애 전환 · 폴백)을 막는다.
       **측정이 시킨 선택이 아니고, `LAYERED`는 아직 재지 않았다.** D-004에 그대로 적었다.
       행 락 포기를 볼 창으로 `remittance.balance.lock.failure`를 새로 뒀다
 - [ ] **`LAYERED`를 잰다.** Step 2와 같은 조건에 **1조각 핫 계좌를 더해** `PESSIMISTIC` ↔ `LAYERED`.

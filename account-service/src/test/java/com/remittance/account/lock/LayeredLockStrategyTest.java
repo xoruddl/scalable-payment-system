@@ -115,7 +115,7 @@ class LayeredLockStrategyTest extends AbstractIntegrationTest {
 	}
 
 	/**
-	 * Redis 락이 TTL로 먼저 풀린 상황을 흉내 낸다. 다른 트랜잭션이 Redis를 거치지 않고 같은 행을
+	 * Redis 락이 먼저 사라진 상황(연장 실패 · 장애 전환 · 폴백)을 흉내 낸다. 다른 트랜잭션이 Redis를 거치지 않고 같은 행을
 	 * 바꾸는 중이다(행 락을 쥔 채 1초). 이때 들어온 입금은 Redis 락은 바로 잡지만 행 락에서 기다리고,
 	 * 앞 트랜잭션이 커밋한 뒤의 값을 읽는다 — 그래서 {@code @Version} 충돌까지 가지 않는다.
 	 *
@@ -132,7 +132,7 @@ class LayeredLockStrategyTest extends AbstractIntegrationTest {
 		CountDownLatch locked = new CountDownLatch(1);
 		ExecutorService holder = Executors.newSingleThreadExecutor();
 		holder.submit(() -> new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
-			// UPDATE가 행 락을 잡는다. Redis는 거치지 않는다 — TTL이 먼저 끝난 것과 같은 모양이다.
+			// UPDATE가 행 락을 잡는다. Redis는 거치지 않는다 — Redis 락이 먼저 사라진 것과 같은 모양이다.
 			jdbcTemplate.update(
 					"UPDATE account_balance_shards SET balance = balance + 10, version = version + 1 WHERE id = ?",
 					shard.getId());

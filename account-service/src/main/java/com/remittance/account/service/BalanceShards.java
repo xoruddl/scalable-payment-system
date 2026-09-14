@@ -74,7 +74,7 @@ public class BalanceShards {
 	 * 둘 다 합을 보고 판단한다 — 모자란지, 원장과 얼마나 벌어졌는지. 판단과 반영 사이에
 	 * 조각이 움직이면 그 판단이 헛것이 된다. {@code DISTRIBUTED}는 그 구간을 Redis 락으로
 	 * 막고, {@code PESSIMISTIC}은 여기서 행 락으로 막는다. {@code LAYERED}는 둘 다다 —
-	 * Redis 락이 TTL로 먼저 풀려도 여기서 한 번 더 막힌다.
+	 * Redis 락이 먼저 사라져도(연장 실패 · 장애 전환 · 폴백) 여기서 한 번 더 막힌다.
 	 */
 	public AccountBalance wholeForUpdate(UUID accountId) {
 		return AccountBalance.whole(account(accountId), shardsForUpdate(accountId));
