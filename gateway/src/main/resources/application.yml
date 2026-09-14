@@ -13,6 +13,10 @@ spring:
     redis:
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
+      # 요청 제한이 Redis 명령 하나를 기다리는 시간. 없으면 Lettuce 기본값 60초라, 붙어 있던 Redis가
+      # 죽으면 fail-open이 되기 전에 요청이 60초 붙들린다(2026-09-14 홈서버에서 health로 확인).
+      # 대가: Redis가 죽어 있는 동안은 요청마다 이만큼 늦는다 — 끊긴 동안의 명령도 줄을 서기 때문이다.
+      timeout: 1s
   cloud:
     gateway:
       server:

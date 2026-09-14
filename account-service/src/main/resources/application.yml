@@ -58,6 +58,10 @@ spring:
     redis:
       host: localhost
       port: 6379
+      # health의 Redis 항목(Lettuce)이 명령 하나를 기다리는 시간. 없으면 Lettuce 기본값 60초라,
+      # Redis가 죽으면 /actuator/health가 60초 붙들린다(2026-09-14 홈서버). Redisson의 1초와 맞췄다.
+      # Redisson은 이 키를 읽지 않는다 — RedissonConfig.REDIS_TIMEOUT.
+      timeout: 1s
 
   kafka:
     bootstrap-servers: localhost:9092
