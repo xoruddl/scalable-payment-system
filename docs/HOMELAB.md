@@ -276,9 +276,10 @@ ssh home1 'docker stop remittance-redis'
 종결 p99가 기준선과 같았고(2,047 vs 2,048ms) 대사 0 · 풀 pending 0이었다. 대가는 active 8 → 13 · 행 락 대기
 약 5배로 나타났다. 자세한 것은 `PROGRESS.md` "Redis 장애 시험 1".
 
-> ⚠️ **장애 중에 전체 `/actuator/health`로 보지 않는다.** Redis가 꺼져 있으면 60초 뒤에야 답한다
-> (health용 Lettuce에 명령 타임아웃이 없었다). 서비스가 살아 있는지는 `/actuator/health/readiness`로,
-> Redis 쪽은 `remittance_lock_unavailable_total`로 본다.
+> ⚠️ **장애 중 서비스가 살아 있는지는 `/actuator/health/readiness`로 본다.** 전체 health는 Redis가 꺼지면
+> 1초 남짓에 DOWN(503)을 낸다 — 명령 타임아웃(1초)을 넣기 전에는 60초 뒤에야 답했다(2026-09-14).
+> Redis 쪽은 `remittance_lock_unavailable_total`로 본다. 게이트웨이를 지나는 요청은 Redis가 죽어 있는 동안
+> 하나하나 1초씩 늦는다 — 게이트웨이 경유 부하로 재면 그만큼을 감안한다.
 
 ## 정리
 
