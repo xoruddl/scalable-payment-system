@@ -272,6 +272,14 @@ ssh home1 'docker stop remittance-redis'
 
 1은 `docker start remittance-redis`로 되살린다. 2를 한 뒤에는 Sentinel까지 내렸다 올려 출발선을 맞춘다(위 경고).
 
+**1의 결과 (2026-09-14)** — `measure-hot-account.sh 40 8`을 돌리는 동안 시작 34초에 끄고 96초에 켰다.
+종결 p99가 기준선과 같았고(2,047 vs 2,048ms) 대사 0 · 풀 pending 0이었다. 대가는 active 8 → 13 · 행 락 대기
+약 5배로 나타났다. 자세한 것은 `PROGRESS.md` "Redis 장애 시험 1".
+
+> ⚠️ **장애 중에 전체 `/actuator/health`로 보지 않는다.** Redis가 꺼져 있으면 60초 뒤에야 답한다
+> (health용 Lettuce에 명령 타임아웃이 없었다). 서비스가 살아 있는지는 `/actuator/health/readiness`로,
+> Redis 쪽은 `remittance_lock_unavailable_total`로 본다.
+
 ## 정리
 
 ```bash

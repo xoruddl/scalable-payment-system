@@ -705,14 +705,15 @@ Redis는 **단일 노드가 기본**이고, Sentinel(주 1 · 복제 1 · Sentin
 | 폴백이 안전한가 (작업은 한 번만 · 붐빔은 폴백 아님 · 회로 · 해제 실패 삼킴) | `DistributedLockUnavailableTest` · `BalanceGuardTest` | 통과 |
 | Redis 오류가 DLT로 가지 않는가 | `KafkaErrorHandlingBackOffTest` | 통과 |
 | 기존 동작 | account-service 264건 · gateway 19건 | 통과 |
-| **Redis 장애 (기본 구성)** | 홈서버에서 부하 중 Redis를 죽인다 → 송금이 계속 종결되는가, 폴백 · 행 락 포기가 몇 건인가, 대사 0인가, account 풀 pending | **아직 안 했다** |
+| **Redis 장애 (기본 구성)** | 홈서버에서 부하 중 Redis를 죽인다 → 송금이 계속 종결되는가, 폴백 · 행 락 포기가 몇 건인가, 대사 0인가, account 풀 pending | **통과 (2026-09-14, 핫 계좌 8조각 40 TPS)** — 약 62초 꺼도 종결 p99 2,047ms(기준선 2,048) · 대사 0 · 풀 pending 0 · 폴백 5,397 · 행 락 포기 0. 대신 `/actuator/health`가 60초 붙들렸다 (PROGRESS "Redis 장애 시험 1") |
 | **장애 전환 (Sentinel 오버레이)** | 부하 중 주 노드만 죽인다 → 클라이언트가 새 주 노드를 따라가는가, `lost`가 몇 건인가 | **아직 안 했다** |
 
 #### 언제 뒤집나
 
 - **폴백 구간이 받아들일 수 없을 때** — Redis 장애 시험에서 커넥션 대기가 SLO를 깨거나, 게이트웨이 요청
   제한이 꺼지는 것(fail-open)이 받아들일 수 없게 되면 Sentinel(또는 관리형 다중 AZ)을 **기본으로 올린다.**
-  코드는 그대로이고 설정만 바꾼다
+  코드는 그대로이고 설정만 바꾼다. **2026-09-14 40 TPS에서는 오지 않았다** — pending 0 · SLO 통과.
+  60 TPS 이상과 게이트웨이를 지나는 경로는 아직 안 쟀다
 - 장애 전환 시험에서 **클라이언트가 새 주 노드를 따라가지 못할 때** — Sentinel 모드를 코드에서 뺀다
 - Redisson이 **Boot 업그레이드를 막을 때** — 코어만 쓰므로 바꿀 곳은 `DistributedLock`과 `RedissonConfig` 둘이다
 - LAYERED를 재서 **Redis 락을 뺄 때**(D-004) — 그러면 Redisson은 필요 없어지고, Redis는 게이트웨이를 위해 남는다
