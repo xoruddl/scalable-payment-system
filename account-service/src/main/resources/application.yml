@@ -50,18 +50,17 @@ spring:
     properties:
       hibernate:
         format_sql: true
-  # 잔액 분산 락(Redisson)과 health가 여기를 본다 (Phase 6.7, D-006).
+  # 잔액 분산 락(Redisson)과 health가 여기를 본다 — 둘 다 같은 Redisson 클라이언트다 (Phase 6.7, D-006).
   # spring.data.redis.sentinel.master · nodes가 들어오면 Sentinel로 붙는다 — RedissonConfig가
   # 이 키를 그대로 읽고, gateway도 같은 키를 쓴다. 기본은 단일 Redis이고 Sentinel은 장애 전환을
   # 실험할 때만 켠다(REDIS_SENTINEL=1). Redis에 닿지 못하면 행 락만으로 진행한다(폴백).
+  #
+  # RedissonConfig는 host · port · sentinel만 읽는다. timeout · password · ssl · database를 여기 적어도
+  # account에는 효과가 없다 — 명령 타임아웃은 RedissonConfig.REDIS_TIMEOUT(1초)이다.
   data:
     redis:
       host: localhost
       port: 6379
-      # health의 Redis 항목(Lettuce)이 명령 하나를 기다리는 시간. 없으면 Lettuce 기본값 60초라,
-      # Redis가 죽으면 /actuator/health가 60초 붙들린다(2026-09-14 홈서버). Redisson의 1초와 맞췄다.
-      # Redisson은 이 키를 읽지 않는다 — RedissonConfig.REDIS_TIMEOUT.
-      timeout: 1s
 
   kafka:
     bootstrap-servers: localhost:9092

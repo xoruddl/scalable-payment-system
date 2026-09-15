@@ -43,7 +43,7 @@ public class RedissonConfig {
 	 */
 	static final Duration LOCK_WATCHDOG_TIMEOUT = Duration.ofSeconds(5);
 
-	/** 명령 하나 · 연결 하나를 기다리는 시간. 넘기면 포기하고 폴백으로 간다. */
+	/** 명령 하나 · 연결 하나를 기다리는 시간. 넘기면 포기하고 폴백으로 간다. health의 PING도 이만큼 기다린다. */
 	static final Duration REDIS_TIMEOUT = Duration.ofSeconds(1);
 
 	@Bean(destroyMethod = "shutdown")
@@ -84,7 +84,12 @@ public class RedissonConfig {
 				.setRetryAttempts(0);
 	}
 
-	/** {@code spring.data.redis.*}에서 읽은 접속 정보. */
+	/**
+	 * {@code spring.data.redis.*}에서 읽은 접속 정보.
+	 *
+	 * host · port · sentinel만 읽는다. password · ssl · database는 읽지 않는다 — 넣으면 gateway(Lettuce)만
+	 * 따라가고 락은 붙지 못한다. 그때 {@code RedisHealthIndicator}가 DOWN으로 드러낸다.
+	 */
 	record RedisEndpoint(String host, int port, Sentinel sentinel) {
 
 		static RedisEndpoint from(Environment environment) {
