@@ -714,7 +714,7 @@ Redis는 **단일 노드가 기본**이고, Sentinel(주 1 · 복제 1 · Sentin
 | Redis가 없어도 뜨고 입금되는가 | `RedisDownFallbackTest` — Sentinel 주소를 모두 죽은 포트로 준다. 한 건, 그리고 동시 20건이 전부 성공 · 합 일치 · 충돌 0 | 통과 |
 | 폴백이 안전한가 (작업은 한 번만 · 붐빔은 폴백 아님 · 회로 · 해제 실패 삼킴) | `DistributedLockUnavailableTest` · `BalanceGuardTest` | 통과 |
 | Redis 오류가 DLT로 가지 않는가 | `KafkaErrorHandlingBackOffTest` | 통과 |
-| Redis가 답하지 않을 때 health · 게이트웨이 요청이 붙들리지 않는가 | `RedisHealthIndicatorTest` · `RateLimitRedisDisconnectTest` — 한 번 붙은 뒤 컨테이너를 멈춘다(pause). account는 `REDIS_TIMEOUT`을 5초로, gateway는 타임아웃을 빼면 3초를 넘겨 실패 | 통과 |
+| Redis가 답하지 않을 때 health · 게이트웨이 요청이 붙들리지 않는가 | `RedisHealthIndicatorTest` · `RateLimitRedisDisconnectTest` — 한 번 붙은 뒤 컨테이너를 멈춘다(pause). account는 `REDIS_TIMEOUT`을 5초로 늘리면, gateway는 타임아웃을 빼면 3초를 넘겨 실패 | 통과 |
 | health와 락이 같은 말을 하는가 | `RedisHealthIndicatorTest` — 비밀번호가 걸린 Redis에 `spring.data.redis.password`만 준다. health UP 여부 = 락이 Redis를 쓰는지. 옛 Lettuce health로 돌리면 UP ≠ 폴백으로 실패 | 통과 |
 | health의 `redis` 항목이 Redisson인가 | `RedisHealthRegistrationTest` — `@Component`를 빼면 실패 | 통과 |
 | 기존 동작 | account-service 273건 (2026-09-15 클라이언트 통일 뒤) · gateway 20건 (09-14, 이번엔 안 바뀜) | 통과 |
