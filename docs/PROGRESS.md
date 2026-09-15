@@ -17,6 +17,11 @@
 
 ## 현재 위치
 
+> **2026-09-15 account의 Redis 클라이언트를 하나로**: account에서 health용 Lettuce(스타터)를 빼고, `/actuator/health`의
+> redis 항목을 락과 같은 Redisson 연결로 PING합니다(`RedisHealthIndicator`). 클라이언트가 둘이라 **health와 락이 다른
+> 말을 할 수 있었습니다** — 비밀번호가 걸린 Redis에서 health UP · 락 폴백으로 재현했습니다. gateway는 Lettuce 그대로입니다.
+> account-service **273건** 통과, 홈서버는 아직입니다. 자세한 것은 아래 "account의 Redis 클라이언트를 Redisson 하나로" 참고.
+>
 > **2026-09-14 Redis 명령 타임아웃**: 장애 시험 1에서 찾은 health 60초를 고쳤습니다 — account · gateway에
 > `spring.data.redis.timeout: 1s`. **게이트웨이 요청도 같은 원인으로 60초 붙들리고 있었습니다**(홈서버, 고치기 전
 > 60.04초). fail-open이라 믿었던 요청 제한이 Redis가 죽으면 요청을 먼저 붙들었던 것입니다. 고친 뒤 health는
@@ -6954,6 +6959,70 @@ SLO(p99 500ms)를 깹니다. Redis를 켜고 5초 뒤 표본에서도 1초가 �
 면접에서는 이렇게 말할 수 있습니다: *"Redis 장애 시험에서 health가 60초 붙들리는 걸 봤고, 따라가 보니 게이트웨이의
 fail-open도 60초 뒤에야 작동하고 있었다. fail-open은 오류가 나야 작동하는데 타임아웃이 없으면 오류가 늦게 난다.
 기존 테스트는 '처음부터 없는 Redis'만 봐서 못 잡았다."*
+
+## account의 Redis 클라이언트를 Redisson 하나로 (2026-09-15)
+
+09-14에 health 60초를 고치면서 D-006의 "포기한 것"에 *"Redis 클라이언트가 둘이다"*를 적어 뒀습니다. 그런데 그 60초가
+바로 둘이라서 생긴 일이었고, 고친 방법도 같은 값을 두 곳에 적는 것이었습니다. 원인은 그대로 남아 있었습니다.
+
+### 무엇이 어긋나 있었나 — 데이터가 아니라 health가 말하는 것
+
+account에서 두 클라이언트는 같은 데이터를 건드리지 않았습니다. Redisson은 락 키를 다루고, Lettuce는 `PING` 하나를
+보냈습니다. 잔액 정합성은 행 락이 지키므로(LAYERED) 여기서 돈이 틀어질 일은 없었습니다.
+
+어긋난 것은 health의 뜻입니다. health의 Redis UP은 "Lettuce가 PING에 성공했다"였지 "락이 돈다"가 아니었습니다.
+`RedissonConfig`는 `spring.data.redis.*` 중 host · port · sentinel만 읽고, 그 밖의 키는 Lettuce만 따라갑니다.
+
+### 먼저 재현했습니다
+
+비밀번호가 걸린 Redis(`--requirepass`)에 `spring.data.redis.password`를 주고 health와 락에 각각 물었습니다.
+
+| | health | 락 (Redisson) |
+|---|---|---|
+| 고치기 전 (Lettuce health) | **UP** | 붙지 못함 → 폴백 |
+| 고친 뒤 (`RedisHealthIndicator`) | DOWN | 붙지 못함 → 폴백 |
+
+폴백은 일부러 조용히 돌게 했으므로, 고치기 전에는 이 상태를 health로 알 수 없었습니다 — `remittance.lock.unavailable`로만 보였습니다.
+시험은 *"health가 UP인가 = 락이 Redis를 쓰는가"*로 적었습니다. 나중에 `RedissonConfig`가 password를 읽게 되면
+둘 다 UP이 되어 그대로 통과합니다.
+
+### 바꾼 것
+
+| | 무엇 |
+|---|---|
+| `build.gradle` (account) | `spring-boot-starter-data-redis` 제거. 실행 클래스패스에 Lettuce · spring-data-redis가 없습니다 |
+| `RedisHealthIndicator` | 락이 쓰는 커넥션 풀로 주 노드에 PING. 단일 서버는 그 서버, Sentinel은 지금의 주 노드. 기다리는 시간은 `REDIS_TIMEOUT`(1초) |
+| `application.yml` (account) | `spring.data.redis.timeout` 제거 — 읽는 곳이 없어졌습니다 |
+| `RedisHealthIndicatorTest` | 옛 `RedisHealthTimeoutTest`를 대체. 멈춘 Redis → 3초 안에 DOWN · 한 번도 못 붙은 Redis → DOWN · 위 재현 |
+| `RedisHealthRegistrationTest` | health의 `redis` 항목이 `RedisHealthIndicator`인가. 이름이 Lettuce 때와 같아 보던 곳이 그대로 봅니다 |
+
+- **Boot의 Redis health를 쓰지 않은 이유** — Boot 것은 Spring Data Redis 위에서 돕니다. 스타터를 두면 클라이언트가
+  다시 둘이 되고, `redisson-spring-data` 연결 팩토리를 쓰면 D-006의 "코어만 쓴다"와 어긋납니다
+- **주 노드만 PING하는 이유** — `pingAll`은 복제본까지 보고, 락이 쓰는 풀이 아니라 새 연결을 열었다 닫습니다
+  (Redisson 4.7.0 소스). 복제본 하나가 죽어도 락은 돌므로 health가 DOWN일 이유가 없습니다
+- **lazy 연결** — health가 첫 사용자가 되어도 됩니다. 노드를 묻는 순간 Redisson이 연결을 열고, 못 열면 던집니다.
+  던진 것은 부모 클래스(`AbstractHealthIndicator`)가 DOWN으로 바꿉니다
+
+### 확인
+
+- account-service **273건** 통과 (270 − 1 + 4)
+- 되돌려 봤습니다 — `REDIS_TIMEOUT`을 5초로 두면 멈춤 시험이 3초를 넘겨 실패, `@Component`를 빼면 등록 시험이 실패,
+  재현 시험은 옛 Lettuce health로 돌리면 실패. "한 번도 못 붙은 Redis" 시험은 되돌려 볼 자리를 찾지 못했습니다
+- **홈서버에서는 아직 재지 않았습니다** — 09-14와 같은 방법(Redis를 끄고 `/actuator/health`)으로 1초 안팎이면 됩니다
+
+### 포기한 것
+
+- **Redis health를 직접 만든 코드가 생겼습니다** (클래스 하나). Boot가 주는 것을 버렸습니다
+- **서비스 사이의 어긋남은 남습니다.** gateway는 Lettuce라 `spring.data.redis.*`를 다 읽고, account는 넷만 읽습니다.
+  password를 넣으면 gateway만 붙습니다 — 달라진 것은 이제 account health가 그걸 DOWN으로 드러낸다는 점입니다
+- **account에서 `spring.data.redis.timeout`은 효과가 없습니다.** 적어도 무시됩니다 — `application.yml` 주석에 적었습니다
+
+면접에서는 이렇게 말할 수 있습니다: *"락은 Redisson, health는 Spring Boot 기본(Lettuce)이라 한 서비스에 Redis 클라이언트가
+둘이었다. 데이터는 겹치지 않았지만 health가 락과 다른 연결을 보고 있어서, 비밀번호 설정 하나로 health는 UP인데 락은
+폴백하는 상태를 재현할 수 있었다. health를 락과 같은 클라이언트로 옮겨 서비스 하나에 클라이언트 하나로 맞췄다.
+gateway는 표준 요청 제한기가 Lettuce 위에서 돌아 그대로 뒀다."*
+
+커밋: `44b377b`
 
 ## 브랜치 히스토리
 

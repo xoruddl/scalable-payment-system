@@ -925,6 +925,10 @@ PESSIMISTIC   DB에서 기다린다      대기 중 커넥션을 쥔다      장
       종결 p99 2,047ms(기준선 2,048) · 대사 0 · 풀 pending 0 · 폴백 5,397. **D-006을 뒤집는 조건은 오지 않았다.**
       `/actuator/health`가 60초 붙들리는 것을 찾았다 (health용 Lettuce에 명령 타임아웃이 없었다)
       → 명령 타임아웃 1초로 고쳤다. 게이트웨이 요청 제한도 같은 원인으로 요청을 붙들고 있었다
+- [x] **account의 Redis 클라이언트를 Redisson 하나로** ✅ 2026-09-15. health용 Lettuce(스타터)를 빼고
+      `/actuator/health`의 redis 항목을 락과 같은 Redisson 연결로 PING한다(`RedisHealthIndicator`).
+      클라이언트가 둘이라 health와 락이 다른 말을 할 수 있었다 — 비밀번호가 걸린 Redis에서 health UP · 락 폴백으로 재현.
+      gateway는 Lettuce 그대로다(Spring Cloud Gateway 요청 제한기)
 - [ ] **Redis 장애 시험을 용량 끝에서 다시 한다.** 60~70 TPS에서 폴백의 DB 쪽 줄이 SLO를 깨는지 본다.
       핫 계좌 용량 후퇴를 찾은 뒤에 한다 — 기준선이 SLO를 깨는 곳에서는 판정이 안 된다
 - [ ] **장애 전환 시험 (Sentinel 오버레이).** 부하 중 주 노드만 죽인다 — 클라이언트가 새 주 노드를 따라가는가,

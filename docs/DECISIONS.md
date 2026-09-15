@@ -679,9 +679,16 @@ Redis는 **단일 노드가 기본**이고, Sentinel(주 1 · 복제 1 · Sentin
 - **측정 근거 없이 넣었다.** D-005가 보류한 이유는 그대로다. 얻는 것을 숫자로 보인 적이 없다
 - **의존성이 늘었다.** Redisson 코어가 Kryo · RxJava · Jackson 2를 끌고 온다. Netty는 Boot BOM이
   4.2.15로 고정한다(Redisson 4.7.0은 4.2.16 기준) — 테스트는 통과했지만 어긋나 있다
-- **Redis 클라이언트가 둘이다.** account에서 Redisson(락)과 Lettuce(`/actuator/health`)가 같이 돈다 —
-  **설정도 둘이다.** 2026-09-14 장애 시험에서 Lettuce에만 명령 타임아웃이 없어 health가 60초 붙들렸다.
-  둘 다 1초로 맞췄다(`spring.data.redis.timeout` · `RedissonConfig.REDIS_TIMEOUT`)
+- **Redis 클라이언트가 서비스마다 다르다.** account는 Redisson 하나(락 + `/actuator/health`), gateway는
+  Lettuce(요청 제한)다. 둘 다 `spring.data.redis.*`를 읽지만 `RedissonConfig`는 host · port · sentinel만 읽는다 —
+  timeout · password · ssl · database는 gateway만 따라간다.
+  처음엔 account에도 health용 Lettuce(스타터)를 두었다가 **2026-09-15에 뺐다.** 설정이 둘이라 health와 락이
+  다른 말을 했다 — 09-14 장애 시험에서 그 Lettuce에만 명령 타임아웃이 없어 health가 60초 붙들렸고, 비밀번호가
+  걸린 Redis에서는 health가 UP인데 락은 폴백이었다(`RedisHealthIndicatorTest`로 재현). 이제 account health는
+  락과 같은 연결로 주 노드에 PING한다
+- **Redis health를 직접 만들었다.** Boot가 주는 Redis health는 Spring Data Redis 위에서 돈다. 쓰려면 스타터(Lettuce)나
+  `redisson-spring-data` 연결 팩토리가 필요한데, 앞은 클라이언트가 다시 둘이 되고 뒤는 "코어만 쓴다"와 어긋난다.
+  `RedisHealthIndicator` 한 클래스다
 - **watchdog 타임아웃 5초** — 락을 쥔 인스턴스가 죽으면 그 조각이 최대 5초 막힌다(자체 구현 TTL 3초보다 길다)
 - **Redis 고가용성은 없다.** 기본 구성에서 Redis가 죽어 있는 동안은 폴백(줄 세우기 없음)이고 게이트웨이
   요청 제한이 꺼진다(fail-open). 게이트웨이를 지나는 요청은 그동안 하나하나 명령 타임아웃(1초)을 기다린 뒤
@@ -707,8 +714,10 @@ Redis는 **단일 노드가 기본**이고, Sentinel(주 1 · 복제 1 · Sentin
 | Redis가 없어도 뜨고 입금되는가 | `RedisDownFallbackTest` — Sentinel 주소를 모두 죽은 포트로 준다. 한 건, 그리고 동시 20건이 전부 성공 · 합 일치 · 충돌 0 | 통과 |
 | 폴백이 안전한가 (작업은 한 번만 · 붐빔은 폴백 아님 · 회로 · 해제 실패 삼킴) | `DistributedLockUnavailableTest` · `BalanceGuardTest` | 통과 |
 | Redis 오류가 DLT로 가지 않는가 | `KafkaErrorHandlingBackOffTest` | 통과 |
-| Redis가 답하지 않을 때 health · 게이트웨이 요청이 붙들리지 않는가 | `RedisHealthTimeoutTest` · `RateLimitRedisDisconnectTest` — 한 번 붙은 뒤 컨테이너를 멈춘다(pause). 타임아웃을 빼면 둘 다 3초를 넘겨 실패 | 통과 |
-| 기존 동작 | account-service 270건 · gateway 20건 (2026-09-14 타임아웃 수정 뒤) | 통과 |
+| Redis가 답하지 않을 때 health · 게이트웨이 요청이 붙들리지 않는가 | `RedisHealthIndicatorTest` · `RateLimitRedisDisconnectTest` — 한 번 붙은 뒤 컨테이너를 멈춘다(pause). account는 `REDIS_TIMEOUT`을 5초로, gateway는 타임아웃을 빼면 3초를 넘겨 실패 | 통과 |
+| health와 락이 같은 말을 하는가 | `RedisHealthIndicatorTest` — 비밀번호가 걸린 Redis에 `spring.data.redis.password`만 준다. health UP 여부 = 락이 Redis를 쓰는지. 옛 Lettuce health로 돌리면 UP ≠ 폴백으로 실패 | 통과 |
+| health의 `redis` 항목이 Redisson인가 | `RedisHealthRegistrationTest` — `@Component`를 빼면 실패 | 통과 |
+| 기존 동작 | account-service 273건 (2026-09-15 클라이언트 통일 뒤) · gateway 20건 (09-14, 이번엔 안 바뀜) | 통과 |
 | **Redis 장애 (기본 구성)** | 홈서버에서 부하 중 Redis를 죽인다 → 송금이 계속 종결되는가, 폴백 · 행 락 포기가 몇 건인가, 대사 0인가, account 풀 pending | **통과 (2026-09-14, 핫 계좌 8조각 40 TPS)** — 약 62초 꺼도 종결 p99 2,047ms(기준선 2,048) · 대사 0 · 풀 pending 0 · 폴백 5,397 · 행 락 포기 0. 대신 `/actuator/health`가 60초 붙들렸다 → 명령 타임아웃 1초로 고쳤다 (PROGRESS "Redis 장애 시험 1") |
 | **장애 전환 (Sentinel 오버레이)** | 부하 중 주 노드만 죽인다 → 클라이언트가 새 주 노드를 따라가는가, `lost`가 몇 건인가 | **아직 안 했다** |
 
@@ -720,7 +729,8 @@ Redis는 **단일 노드가 기본**이고, Sentinel(주 1 · 복제 1 · Sentin
   60 TPS 이상은 아직 안 쟀다. 게이트웨이를 지나는 요청은 장애 동안 1초씩 늦는다 — 부하로는 안 쟀다
 - 장애 전환 시험에서 **클라이언트가 새 주 노드를 따라가지 못할 때** — Sentinel 모드를 코드에서 뺀다
 - Redisson이 **Boot 업그레이드를 막을 때** — 코어만 쓰므로 바꿀 곳은 `DistributedLock`과 `RedissonConfig` 둘이다
-- LAYERED를 재서 **Redis 락을 뺄 때**(D-004) — 그러면 Redisson은 필요 없어지고, Redis는 게이트웨이를 위해 남는다
+- LAYERED를 재서 **Redis 락을 뺄 때**(D-004) — 그러면 Redisson은 필요 없어지고, Redis는 게이트웨이를 위해 남는다.
+  account의 Redis health(`RedisHealthIndicator`)도 함께 뺀다 — account가 Redis를 안 쓰면 볼 이유가 없다
 
 ---
 
@@ -742,7 +752,7 @@ Redis는 **단일 노드가 기본**이고, Sentinel(주 1 · 복제 1 · Sentin
 | ~~—~~ | ~~격벽·회로 차단기~~ | **Resilience4j** ✅ | 표준 상태 머신·지표 | 내부가 블랙박스 · 거절 카운터를 잃었다 | → **D-002** |
 | ~~—~~ | ~~손으로 쓴 `openapi.yaml`~~ | **springdoc** ✅ | 문서가 낡지 않는다 | 스펙이 코드에 종속 · 내부 경로 필터가 필요 | Phase 4 · 1/5 |
 | ~~**1**~~ | ~~락 해제 결과를 버림~~ | **자체 카운터** ✅ | **락이 새는 것을 본다** | 없음 (신호를 버리고 있었다) | 2026-08-31 측정까지 완료 |
-| ~~**2**~~ | ~~`SET NX PX` + Lua~~ | **Redisson** ✅ + 폴백 (Sentinel은 실험용) | watchdog · pub/sub 대기 · Redis가 죽어도 안 멈춘다 | 의존성(Kryo · RxJava · Jackson 2) · 내부가 블랙박스 · Redis 클라이언트가 둘 | → **D-006** (2026-09-14, 소유자 결정 · 측정 전). D-005의 조건은 오지 않았다 |
+| ~~**2**~~ | ~~`SET NX PX` + Lua~~ | **Redisson** ✅ + 폴백 (Sentinel은 실험용) | watchdog · pub/sub 대기 · Redis가 죽어도 안 멈춘다 | 의존성(Kryo · RxJava · Jackson 2) · 내부가 블랙박스 · Redis 클라이언트가 서비스마다 다르다(account Redisson · gateway Lettuce) | → **D-006** (2026-09-14, 소유자 결정 · 측정 전). D-005의 조건은 오지 않았다 |
 | ~~**3**~~ | 낙관적 재시도(2차) | **JPA 비관적 락** ✅ — Redis 락과 **함께**(`LAYERED`) | TTL로 풀린 틈을 충돌 → 재시도 대신 **기다림**으로 막는다 | 장치가 셋으로 남는다(3 → 2를 기대했으나 Redis 락을 남김) · 대기 중 커넥션 보유 · **탐지기는 안 잃었다**(`@Version`을 남김) | → **D-004** (2026-09-13, 소유자 결정 · 측정 전) |
 | **4** | 맨 `@Scheduled` ×10 | **ShedLock** + `SKIP LOCKED` | **수평 확장이 가능해진다** | 잠금 저장소가 새 장애점 · 둘을 갈라 써야 함 | **Phase 8 전 — 지금 여기** |
 | **5** | 폴링 Outbox 릴레이 | **Debezium (CDC)** | 폴링 제거 · 지연 감소 · **테이블이 안 자란다** | Kafka Connect 인프라 · binlog 운영 부담 | 폴링이 병목임을 보인 뒤 |
