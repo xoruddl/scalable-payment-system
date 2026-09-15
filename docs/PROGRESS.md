@@ -21,7 +21,8 @@
 > 돌도록 바꿨습니다(transfer · account). 요청이 밀리지 않을 때 커밋된 이벤트가 다음 주기까지 기다리던 몫 —
 > 홉당 0~500ms, 종결에 최대 1.5초 — 을 없애려는 것입니다. 500ms 주기는 전송 실패를 줍는 안전망으로 남겼습니다.
 > 대신 릴레이가 `@Scheduled`를 떠나 전용 스레드가 됐고, 요청이 적당할 때 트랜잭션이 늘 수 있습니다.
-> transfer-service **170건** · account-service **275건** 통과. **홈서버 측정은 아직입니다** — D-007.
+> transfer-service **170건** · account-service **278건** 통과(account는 Redis 클라이언트 통일 위에서).
+> **홈서버 측정은 아직입니다** — D-007.
 > 자세한 것은 아래 "커밋이 Outbox 릴레이를 깨운다" 참고.
 >
 > **2026-09-15 account의 Redis 클라이언트를 하나로**: account에서 health용 Lettuce(스타터)를 빼고, `/actuator/health`의
@@ -7072,7 +7073,7 @@ gateway는 표준 요청 제한기가 Lettuce 위에서 돌아 그대로 뒀다.
 | `OutboxRelayWakeupTest` (두 서비스) | 주기를 10분으로 두고, 커밋한 행이 10초 안에 나가는가. 한 건은 커밋을 500ms 미룬다 | 커밋 전에 깨움(`@EventListener`) → **둘 다 실패** · `@DomainEvents` 제거 → **둘 다 실패** |
 | `OutboxRelayLoopTest` (두 서비스, 컨텍스트 없음) | 신호에 답하는가 · 한 바퀴가 실패해도 사는가 · 멈추라면 바로 멈추는가 | 예외를 안 잡음 → 스레드가 죽어 **실패** · 멈출 때 안 깨움 → 2초를 넘겨 **실패** |
 
-transfer-service **170건** · account-service **275건** 통과.
+transfer-service **170건** · account-service **278건** 통과 (account는 Redis 클라이언트 통일의 273건 위에 5건).
 
 한계가 하나 있습니다. 릴레이를 켠 다른 테스트 컨텍스트가 같은 JVM에 캐시돼 있으면, 그 릴레이가 같은 DB를 훑어
 대신 발행할 수 있습니다. 그래서 `OutboxRelayWakeupTest`가 결함을 가르는 힘은 그 클래스만 돌릴 때 온전합니다 —
