@@ -22,14 +22,11 @@ import static org.assertj.core.api.Assertions.assertThat;
  * 멈춘다. 처리량 자체는 테스트로 잴 수 없지만, "한 번에 한 배치"라는 제약이 사라졌는지는
  * 여기서 확실히 갈린다.
  *
- * 스케줄러가 끼어들면 무엇이 비운 건지 알 수 없으므로 주기를 아주 길게 줘 재우고,
- * 릴레이를 직접 부른다.
+ * 루프가 끼어들면 무엇이 비운 건지 알 수 없으므로 루프는 켜지 않고(테스트 기본값) 한 바퀴를 직접 부른다.
+ * 예전에는 주기를 10분으로 줘 재웠는데, 이제 루프는 커밋이 깨운다 — 켜 두면 쌓는 동안 루프가 먼저
+ * 비워 버린다 (D-007).
  */
-@SpringBootTest(properties = {
-		"outbox.relay.enabled=true",
-		// 기동 직후 한 번은 도는데, 그때는 비울 게 없다. 그 뒤로는 테스트가 끝날 때까지 안 돈다.
-		"outbox.relay.interval-ms=600000"
-})
+@SpringBootTest
 class OutboxRelayDrainTest extends AbstractIntegrationTest {
 
 	/** 배치 크기보다 확실히 많고, 한 주기 상한(20배치 = 2,000건)보다는 적은 수. */
@@ -52,7 +49,7 @@ class OutboxRelayDrainTest extends AbstractIntegrationTest {
 		for (int i = 0; i < PENDING_COUNT; i++) {
 			outboxRecorder.record(newTransfer(), TransferEventType.REQUESTED);
 		}
-		// 정확히 PENDING_COUNT를 요구하지 않는다 — 기동 직후 스케줄러가 한 번 돌면서 몇 건을
+		// 정확히 PENDING_COUNT를 요구하지 않는다 — 릴레이를 켠 다른 테스트 컨텍스트가 캐시돼 있으면 몇 건을
 		// 먼저 가져갈 수 있고, 같은 DB를 쓰는 다른 테스트가 남긴 행이 섞일 수도 있다.
 		// 이 검증에 필요한 사전조건은 "한 배치보다 많이 쌓여 있다"뿐이다.
 		assertThat(unpublished())

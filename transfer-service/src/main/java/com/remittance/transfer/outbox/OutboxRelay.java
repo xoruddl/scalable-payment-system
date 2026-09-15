@@ -1,14 +1,13 @@
 package com.remittance.transfer.outbox;
 
 import lombok.RequiredArgsConstructor;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 /**
- * Outbox 테이블을 폴링해 Kafka로 발행하고 발행 시각을 기록한다.
+ * Outbox 테이블을 한 바퀴 훑어 Kafka로 발행하고 발행 시각을 기록한다. 언제 돌지는
+ * {@link OutboxRelayLoop}가 정한다 — 커밋이 깨우거나, 깨우는 게 없으면 주기가 된다 (D-007).
  *
- * 발행에 실패하면 {@code publishedAt}을 채우지 않으므로 다음 폴링에서 다시 시도된다.
+ * 발행에 실패하면 {@code publishedAt}을 채우지 않으므로 다음 바퀴에서 다시 시도된다.
  * 반대로 "발행은 성공했지만 마킹 직전에 죽는" 경우가 있을 수 있어 같은 이벤트가 두 번 발행될 수 있다
  * (at-least-once). 소비하는 쪽이 멱등하게 처리해야 한다.
  *
@@ -28,12 +27,14 @@ import org.springframework.stereotype.Component;
  * 편이 락을 짧게 쥐고 메모리도 덜 쓴다. 상한을 없애는 데는 어느 쪽이든 되는데,
  * 대가가 다르다.
  *
- * 왜 무한히 돌지 않는가: {@code @Scheduled}는 스케줄러 스레드를 빌려 쓴다.
- * 끝나지 않으면 같은 스케줄러의 다른 일이 굶는다. 지금 이 서비스에 다른 예약 작업이 없지만,
- * 없다는 사실에 기대는 코드는 나중에 조용히 깨진다.
+ * 왜 한 바퀴가 끝없이 돌지 않는가: 루프는 바퀴 사이에서 "멈춰라"를 확인한다. 한 바퀴가 끝나지 않으면
+ * 종료도 그만큼 늦는다. 남은 적체는 다음 바퀴가 마저 비운다.
+ * (2026-09-15 전에는 {@code @Scheduled}로 돌았고, 스케줄러 스레드를 무한히 붙들지 않으려는 상한이었다.)
+ *
+ * 루프를 끄면({@code outbox.relay.enabled=false}) 아무도 이 빈을 부르지 않는다. 빈은 남겨 둔다 —
+ * 한 바퀴를 직접 불러 확인하는 테스트가 쓴다.
  */
 @Component
-@ConditionalOnProperty(name = "outbox.relay.enabled", matchIfMissing = true)
 @RequiredArgsConstructor
 public class OutboxRelay {
 
@@ -41,22 +42,14 @@ public class OutboxRelay {
 	private static final int BATCH_SIZE = 100;
 
 	/**
-	 * 한 주기에 이어서 비울 최대 배치 수. 적체가 이보다 많으면 다음 주기에 마저 비운다.
-	 * 스케줄러 스레드를 무한히 붙들지 않기 위한 상한일 뿐, 처리량을 정하는 값이 아니다.
+	 * 한 바퀴에 이어서 비울 최대 배치 수. 적체가 이보다 많으면 다음 바퀴에 마저 비운다.
+	 * 루프가 멈추라는 말을 못 듣는 일을 막는 상한일 뿐, 처리량을 정하는 값이 아니다.
 	 */
 	private static final int MAX_BATCHES_PER_TICK = 20;
 
 	private final OutboxBatchPublisher batchPublisher;
 
-	/**
-	 * 주기가 정하는 것은 처리량이 아니라 무부하 지연 바닥이다. 적체가 있는 동안은 위 루프가
-	 * 이어서 비우므로 주기를 줄여도 더 빨라지지 않는다. 비어 있을 때만, 커밋 직후 행이
-	 * 최대 이 시간만큼 기다린다.
-	 *
-	 * 기본값은 {@code application.yml}과 같은 값으로 둔다. 둘이 다르면 yml이 이기는데,
-	 * 코드만 읽은 사람은 그 사실을 모른다 (2026-09-11에 실제로 어긋나 있었다).
-	 */
-	@Scheduled(fixedDelayString = "${outbox.relay.interval-ms:500}")
+	/** 한 바퀴. 배치가 가득 차면 이어서 비우고, 덜 차면 끝낸다. */
 	public void publishPending() {
 		for (int i = 0; i < MAX_BATCHES_PER_TICK; i++) {
 			// 덜 찼다 = 더 비울 게 없거나 중간에 실패했다. 어느 쪽이든 이번 주기는 여기서 끝.
