@@ -13,10 +13,13 @@ import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import org.hibernate.Length;
+import org.springframework.data.domain.DomainEvents;
 
 import com.remittance.account.support.Timestamps;
 
 import java.time.Instant;
+import java.util.Collection;
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -81,5 +84,24 @@ public class OutboxEvent {
 
 	public void markPublished() {
 		this.publishedAt = Timestamps.now();
+	}
+
+	/**
+	 * 저장되면 릴레이를 깨운다 — 다음 폴링을 기다리지 않게 (2026-09-15, D-007).
+	 *
+	 * Spring Data가 {@code save}가 끝날 때 이 값을 이벤트로 내고, {@link OutboxRelayLoop}가 행을 적은
+	 * 트랜잭션이 커밋된 뒤에 받는다. 그래서 행을 적는 곳(잔액 분개 · Saga 단계 · 모르는 입금)마다 깨우라고
+	 * 부르지 않는다 — 모두 {@code save}를 거친다. {@code save}를 거치지 않고 적은 행은 깨우지 못하고
+	 * 주기가 줍는다. 늦을 뿐 빠지지 않는다.
+	 * (Spring Data는 {@code delete}에서도 내지만, 보관 기간 정리는 쿼리로 지워서 이 길을 타지 않는다.)
+	 */
+	@DomainEvents
+	Collection<Recorded> recorded() {
+		return List.of(Recorded.INSTANCE);
+	}
+
+	/** 행이 적혔다는 신호. 내용은 없다 — 릴레이는 어느 행인지가 아니라 "적힌 게 있다"만 알면 된다. */
+	public enum Recorded {
+		INSTANCE
 	}
 }
